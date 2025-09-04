@@ -1,15 +1,4 @@
-COSTCENTERX=PUT(COSTCENTER,Z7.);
-         COSTCTR=SUBSTR(COSTCENTERX,5,3) *1;
-         COSTCTR1=PUT(COSTCTR,Z3.);
-         ACCTOPNDT = TRIM(SUBSTR(PUT(ACCTOPENDATE,Z11.),1,8));
-         OPENMM=SUBSTR(ACCTOPNDT,1,2);
-         OPENDD=SUBSTR(ACCTOPNDT,3,2);
-         OPENYY=SUBSTR(ACCTOPNDT,5,4);
-         DATEOPEN=OPENYY||OPENMM||OPENDD;
-         LASTTRNDT = TRIM(SUBSTR(PUT(LASTTRANDATE,Z11.),1,8));
-         LTRNMM=SUBSTR(LASTTRNDT,1,2);
-         LTRNDD=SUBSTR(LASTTRNDT,3,2);
-         LTRNYY=SUBSTR(LASTTRNDT,5,4);
-         DATECLSE=LTRNYY||LTRNMM||LTRNDD;
-         LEDGERBAL=NOTECURBAL/100;
-         ACCTBRCH = COSTCTR1;
+output_df = pl.concat(
+    [df for df in [mergedp, mergeln, mergesdb, mergeuni, mergecom] if 'ACCTNOC' in df.columns],
+    how="diagonal_relaxed"
+)
