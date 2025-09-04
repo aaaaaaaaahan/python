@@ -1,0 +1,821 @@
+//CICMDRPT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0017082
+//*--------------------------------------------------------------------
+//* ESMR 2022-2450 EXTRACTION OF CUSTOMERS INFORMATION BY MAPPING ID
+//*                TYPE (FROM CMD USER)
+//*---------------------------------------------------------------------
+//* ESMR 2023-5004 ADDITIONAL DEPOSIT INFO TO BE EXTRACTED INTO REPORT
+//* INCLUDE 3 NEW FILES AS BELOW:
+//* -CYCLEFL
+//* -POSTFL
+//* -DEPOFL
+//*---------------------------------------------------------------------
+//* ESMR2024-2598
+//* - TO INITIALIZE AMOUNT FIELDS TO ELIMINATE SPECIAL CHARACTER
+//*   DISPLAYED IN THE REPORT
+//*
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CIS.CMD.RAW,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.CIS.CMD.REPORT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//RPTBRUPT  EXEC SAS609
+//IEFRDER   DD DUMMY
+//CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//PBBRANCH  DD DISP=SHR,DSN=RBP2.B033.PBB.BRANCH
+//ALIAS     DD DISP=SHR,DSN=RBP2.B033.CIS.CMD.ALIAS
+//CISFILE   DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY
+//DPTRBALS  DD DISP=SHR,DSN=RBP2.B033.DPTRBLGS
+//UNICARD   DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.PBCS
+//COMCARD   DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.COMCARD
+//*LOANS FILE WITH NOTE - COPYBOOK LNACCTFL
+//ACCTFILE  DD DISP=SHR,DSN=RBP2.SAS.B033.ACCTFILE
+//SAFEBOX   DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.SDBX
+//OCCUPFL   DD DISP=SHR,DSN=RBP2.B033.BANKCTRL.DEMOCODE
+//MASCOFL   DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.MISC10
+//MSICFL    DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.MISC9
+//CYCLEFL   DD DISP=SHR,DSN=RBP2.B033.DP.STMT.INQ.FILE(0)
+//POSTFL    DD DISP=SHR,DSN=RBP2.B033.DP.POST.IND.EXT(0)
+//DEPOFL    DD DISP=SHR,DSN=RBP2.B033.DP.HOLD.LST.EXT.CNTMAX3.TRANSPO
+//OUTPUT   DD DSN=RBP2.B033.CIS.CMD.RAW,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
+//            DCB=(LRECL=400,BLKSIZE=0,RECFM=FB)
+//OUTFILE  DD DSN=RBP2.B033.CIS.CMD.REPORT,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
+//            DCB=(LRECL=800,BLKSIZE=0,RECFM=FB)
+//*235004     DCB=(LRECL=400,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*    DATE PROCESSING                                             */
+ /*----------------------------------------------------------------*/
+DATA DATE;
+   INFILE CTRLDATE;
+   INPUT @1   TODAYYY          4.
+         @5   TODAYMM          2.
+         @7   TODAYDD          2.;
+         TODAYDATE=MDY(TODAYMM,TODAYDD,TODAYYY);
+         CALL SYMPUT('LOADDATE', PUT(TODAYDATE,YYMMDD10.));
+RUN;
+PROC PRINT;RUN;
+ /*----------------------------------------------------------------*/
+ /*    ALIAS FILE INPUT                                            */
+ /*----------------------------------------------------------------*/
+ DATA ALIASFL;
+      INFILE ALIAS DELIMITER = ';' MISSOVER DSD LRECL=133;
+             INPUT  ALIASKEY       :  $3.
+                    ALIAS          :  $37.;
+    RUN;
+  PROC SORT  DATA=ALIASFL; BY ALIASKEY ALIAS ; RUN;
+  PROC PRINT DATA=ALIASFL; TITLE 'ALIAS' ; RUN;
+ /*----------------------------------------------------------------*/
+ /*    BRANCH FILE PBBRANCH                                        */
+ /*----------------------------------------------------------------*/
+ DATA PBBBRCH;
+    INFILE PBBRANCH MISSOVER;
+    INPUT @02 ACCTBRCH      $3.
+          @06 BRANCH_ABBR   $5.;
+ RUN;
+ PROC SORT  DATA=PBBBRCH NODUPKEY;BY ACCTBRCH;RUN;
+ PROC PRINT DATA=PBBBRCH(OBS=5);TITLE 'PBB BRANCH FILE';
+ /*----------------------------------------------------------------*/
+ /*    OCCUP FILE                                                  */
+ /*----------------------------------------------------------------*/
+ DATA OCCUPAT;
+    INFILE OCCUPFL;
+    INPUT @05 TYPE          $5.
+          @10 DEMOCODE      $3.
+          @40 DEMODESC      $60.;
+         IF TYPE = 'OCCUP';
+ RUN;
+ PROC SORT  DATA=OCCUPAT ;BY DEMOCODE;RUN;
+ /*----------------------------------------------------------------*/
+ /*    MASCO FILE                                                  */
+ /*----------------------------------------------------------------*/
+ DATA MASCO;
+    INFILE MASCOFL;
+    INPUT @08 MASCO2008     $5.
+          @43 MASCODESC     $27.;
+ RUN;
+ PROC SORT  DATA=MASCO ;BY MASCO2008;RUN;
+ /*----------------------------------------------------------------*/
+ /*    MSIC FILE                                                  */
+ /*----------------------------------------------------------------*/
+ DATA MSIC;
+    INFILE MSICFL;
+    INPUT @08 MSICCODE     $5.
+          @43 MSICDESC     $27.;
+ RUN;
+ PROC SORT  DATA=MSIC ;BY MSICCODE;RUN;
+
+ DATA DPSTMT; /*235004*/
+    FORMAT ACCTNOC $11.;
+
+    INFILE CYCLEFL;
+
+    INPUT @001 ACCTNO        10.
+          @011 ACCTNAME     $24.
+          @035 CURR_CYC_DR  PD5.
+          @040 CURR_AMT_DR  PD8.2
+          @048 CURR_CYC_CR  PD5.
+          @053 CURR_AMT_CR  PD8.2
+          @061 PREV_CYC_DR  PD5.
+          @066 PREV_AMT_DR  PD8.2
+          @074 PREV_CYC_CR  PD5.
+          @079 PREV_AMT_CR  PD8.2
+          ;
+
+          ACCTNOC=PUT(ACCTNO,Z11.);
+
+ RUN;
+
+ PROC SORT  DATA=DPSTMT  ; ;BY ACCTNOC;RUN;
+ PROC PRINT DATA=DPSTMT(OBS=5);TITLE 'STATEMENT CYCLE FILE ';
+
+ DATA DPPOST; /*235004 DEPOSIT POST INDICATOR FILE*/
+    INFILE POSTFL;
+
+    INPUT @001 ACCTNOC          $11.
+          @012 ACCT_PST_IND     $01.
+          @013 ACCT_PST_REASON  $20.
+          ;
+
+ RUN;
+
+ PROC SORT  DATA=DPPOST ; ;BY ACCTNOC ;RUN;
+ PROC PRINT DATA=DPPOST(OBS=5);TITLE 'POST INDICATOR FILE ';
+
+ DATA DEPOSIT1;  /*235004 ADDITIONAL DEPOSIT INFO */
+    FORMAT ACCTNOC $11.;
+    INFILE DEPOFL;
+
+    INPUT @001  ACCTNO    10.
+          @012  SEQID_1   $3.
+          @016  SEQID_2   $3.
+          @020  SEQID_3   $3.
+          @024  AMT_1      14.2
+          @039  AMT_2      14.2
+          @054  AMT_3      14.2
+          @069  DESC_1     $20.
+          @090  DESC_2     $20.
+          @111  DESC_3     $20.
+          @132  SOURCE_1   $20.
+          @153  SOURCE_2   $20.
+          @174  SOURCE_3   $20.
+          @195  TOT_HOLD    $2.
+          ;
+
+          ACCTNOC=PUT(ACCTNO,Z11.);
+ RUN;
+
+ PROC SORT  DATA=DEPOSIT1; ;BY ACCTNOC ;RUN;
+ PROC PRINT DATA=DEPOSIT1(OBS=5);TITLE 'ADDITIONAL DP INPUT';
+
+ /*----------------------------------------------------------------*/
+ /*    CIS FILE                                                    */
+ /*----------------------------------------------------------------*/
+DATA CIS;
+   SET CISFILE.CUSTDLY;
+     FORMAT DEMOCODE $3.;
+  /* IF ALIAS = '347235702378'; */
+   DEMOCODE = OCCUP;
+RUN;
+ /* PROC SORT  DATA=CIS ;BY ACCTNOC;RUN; */
+ /*PROC SORT  DATA=CIS ;BY DEMOCODE;RUN;*/
+ PROC SORT  DATA=CIS ;BY ALIASKEY ALIAS;RUN;
+
+ DATA MERGEALS;
+     MERGE ALIASFL(IN=A) CIS(IN=B); BY ALIASKEY ALIAS;
+     IF A AND B;
+ RUN;
+ PROC PRINT DATA=MERGEALS(OBS=10);TITLE 'MERGE ALIAS';RUN;
+
+ PROC SORT  DATA=MERGEALS;BY DEMOCODE;RUN;
+ DATA MERGEOCC;
+     MERGE MERGEALS(IN=C) OCCUPAT(IN=D); BY DEMOCODE;
+     IF C;
+ RUN;
+ PROC PRINT DATA=MERGEOCC(OBS=10);TITLE 'MERGE OCCUP FILE';RUN;
+
+ PROC SORT  DATA=MERGEOCC;BY MASCO2008;RUN;
+ DATA MERGEMSC;
+     MERGE MERGEOCC(IN=G) MASCO(IN=H); BY MASCO2008;
+     IF G;
+ RUN;
+ PROC PRINT DATA=MERGEMSC(OBS=10);TITLE 'MERGE MASCO FILE';RUN;
+ PROC SORT  DATA=MERGEMSC ;BY MSICCODE;RUN;
+
+ DATA MERGEALL1;
+     MERGE MERGEMSC(IN=G) MSIC(IN=H); BY MSICCODE;
+     IF G;
+ RUN;
+ PROC SORT  DATA=MERGEALL1;BY ALIAS    ;RUN;     /*235004*/
+ /*PROC SORT  DATA=MERGEALL;BY ACCTNOC  ;RUN;    /*235004*/
+ PROC PRINT DATA=MERGEALL1(OBS=10);TITLE 'MERGE MSIC FILE';RUN;
+
+
+ /* START 235004 */
+ /*----------------------------------------------------------------*/
+ /*    SAFE DEPOSIT BOX - 235004                                   */
+ /*----------------------------------------------------------------*/
+ DATA SAFEBOX2;
+   INFILE SAFEBOX;
+
+   INPUT @22   INDORG         $1.
+         @26   CUSTNAME_SDB   $40.
+         @69   ALIASKEY_SDB   $03.
+         @75   ALIAS          $20.
+         @192  BRANCH_ABBR    $07.
+         @202  BRANCHNO        $5.
+         @210  ACCTCODE       $05.
+         @218  ACCT_NO        $20.
+      /* @241  NOTENO         $05. CAUSE COMPILE ERROR*/
+         @249  BANKINDC       $01.
+         @281  ACCTSTATUS     $25.
+      /* @309  DATEOPEN    YYMMDD8.  CAUSE COMPILE ERROR*/
+      /* @322  DATECLSE    YYMMDD8.  CAUSE COMPILE ERROR*/
+         @339  BAL1INDC       $05.
+         @350  BAL1           13.2
+         @394  AMT1INDC       $05.
+         @402  AMT1           13.2 ;
+
+         LEDGERBAL  = 0;
+         CATEGORY = '3' ;
+         APPL_CODE = 'SDB  ';
+
+ RUN;
+ PROC SORT  DATA=SAFEBOX2; BY ALIAS   ;RUN;
+ PROC PRINT DATA=SAFEBOX2(OBS=10);TITLE 'SAFEBOX2';RUN;
+
+  /*START NEW SDB MATCHING*/
+
+ DATA MERGEALL;
+     FORMAT SDBIND $3. SDBBRH $3.;
+     MERGE MERGEALL1(IN=E) SAFEBOX2(IN=F); BY ALIAS;
+
+     SDBIND  = 'NIL';
+     SDBBRH  = 'NIL';
+
+     IF (E AND F) THEN DO;
+        SDBIND = 'YES';
+        SDBBRH = BRANCH_ABBR;
+        OUTPUT MERGEALL;
+     END;
+
+     IF (E AND NOT F) THEN DO;
+        OUTPUT MERGEALL;
+     END;
+
+ RUN;
+ PROC SORT  DATA=MERGEALL NODUPKEY;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGEALL(OBS=10);TITLE 'SDB MATCHING';RUN;
+
+  /*END NEW SDB MATCHING*/
+
+
+ /* END  235004*/
+
+ /*----------------------------------------------------------------*/
+ /*    DEPOSIT TRIAL BALANCE                                       */
+ /*----------------------------------------------------------------*/
+  DATA DPTRBALS ;
+     INFILE DPTRBALS ;
+     FORMAT OPENDD $2. OPENMM $2. OPENYY $4. OPENMM1 $2.
+            CLSEDD $2. CLSEMM $2. CLSEYY $4. CLSEMM1 $2.
+            DATECLSE $8. DATEOPEN $8. ODLIMIT 13.2 ACCTNAME40 $40.
+            ACCTSTATUS $24. FOREXAMT 13.2 ACCTNOC $20. PRODTY $3.
+            LEDGERBAL 13.2 ACCTBRCH $3.;
+
+     INPUT @03  BANKNO       PD2.
+           @24  REPTNO       PD3.
+           @27  FMTCODE      PD2. @;
+
+     IF (REPTNO = 1001 AND (FMTCODE IN (1,10,22,019,020,021))) THEN DO;
+        INPUT @106   ACCTBRCH1    PD4.
+              @110   ACCTNO       PD6.
+              @110   ACCTX        $1.
+              @116   ACCTNAME     $15.
+              @158   CLSEDATE     PD6.
+              @164   OPENDATE     PD6.
+              @286   PURPOSECD    $1.
+              @319   LEDGERBAL1   PD7.
+              @341   DECEASED1    $1. /* DETECT VALUE = 'H'         */
+              @342   DECEASED2    $1. /* DETECT VALUE = 'H'         */
+              @343   DECEASED3    $1. /* DETECT VALUE = 'H'         */
+              @397   PRODTYPE     PD2.
+              @403   BALHOLD      $1.  /* HOLD/EARMARK  (Y/N)        */
+              @466   CURBAL       PD7.2 /* CURRENT BALANCE  235004   */
+              @566   ODLIMIT      PD6. /* OD LIMIT                   */
+              @588   CURRCODE     $3.  /* CURRENCY CODE              */
+              @716   OPENIND      $1.  /* VALID VALUE = SPACE,B,C,P,Z*/
+              @830   COSTCTR      PD4.
+              @855   POSTIND      $1.; /*POST INDC = X - NO DEBIT  */
+                                       /*POST INDC = C - NO CREDIT */
+                                       /*POST INDC = T - NO TRX    */
+         ACCTNOC=PUT(ACCTNO,Z11.);
+         ACCTBRCH=PUT(ACCTBRCH1,Z3.);
+         PRODTY =PUT(PRODTYPE,Z3.);
+         IF 3000 < COSTCTR < 3999 THEN BANKINDC = 'I';
+            ELSE BANKINDC = 'C';
+
+         IF '03000000000' < ACCTNOC < '03999999999'
+                   THEN APPL_CODE = 'CA   ';
+         IF '06200000000' < ACCTNOC < '06299999999'
+                   THEN APPL_CODE = 'CA   ';
+         IF '06710000000' < ACCTNOC < '06719999999'
+                   THEN APPL_CODE = 'CA   ';
+         IF '01000000000' < ACCTNOC < '01999999999'
+                   THEN APPL_CODE = 'FD   ';
+         IF '07000000000' < ACCTNOC < '07999999999'
+                   THEN APPL_CODE = 'FD   ';
+         IF '04000000000' < ACCTNOC < '04999999999'
+                   THEN APPL_CODE = 'SA   ';
+         IF '05000000000' < ACCTNOC < '05999999999'
+                   THEN APPL_CODE = 'SA   ';
+         IF '06000000000' < ACCTNOC < '06199999999'
+                   THEN APPL_CODE = 'SA   ';
+         IF '06300000000' < ACCTNOC < '06709999999'
+                   THEN APPL_CODE = 'SA   ';
+         IF '06720000000' < ACCTNOC < '06999999999'
+                   THEN APPL_CODE = 'SA   ';
+
+         ACCTNAME40 = ACCTNAME;
+         LEDGERBAL=LEDGERBAL1/100;
+         IF PRODTYPE  IN ('371', '350', '351', '352'
+                         ,'353', '354', '355', '356'
+                         ,'357', '358', '359', '360'
+                         ,'361', '362')
+            THEN APPL_CODE = 'FCYFD';
+
+         IF PRODTYPE  IN ('400', '401', '402', '403'
+                         ,'404', '405', '406', '407'
+                         ,'408', '409', '410', '411'
+                         ,'413', '414', '420', '421'
+                         ,'422', '423', '424', '425'
+                         ,'426', '427', '428', '429'
+                         ,'430', '431', '432', '433'
+                         ,'434', '440', '441', '442'
+                         ,'443', '444', '450', '451'
+                         ,'452', '453', '454', '460'
+                         ,'461', '473', '474', '475'
+                         ,'476')
+            THEN APPL_CODE = 'FCYCA';
+
+         IF PURPOSECD = '' OR PURPOSECD = '00'X THEN DELETE;
+         ACCT_TYPE = PURPOSECD;
+
+         OPENDD=SUBSTR(OPENDATE,4,2);
+         OPENMM=SUBSTR(OPENDATE,2,2);
+         OPENYY=SUBSTR(OPENDATE,6,4);
+         OPENMM1=OPENMM;
+         IF OPENMM LT 10 THEN OPENMM='0'||SUBSTR(OPENMM1,2,1);
+
+         CLSEDD=SUBSTR(CLSEDATE,4,2);
+         CLSEMM=SUBSTR(CLSEDATE,2,2);
+         CLSEYY=SUBSTR(CLSEDATE,6,4);
+         CLSEMM1=CLSEMM;
+         IF CLSEMM LT 10 THEN CLSEMM='0'||SUBSTR(CLSEMM1,2,1);
+
+         DATEOPEN=OPENYY||OPENMM||OPENDD;
+         DATECLSE=CLSEYY||CLSEMM||CLSEDD ;
+
+         IF OPENIND = ''  THEN ACCTSTATUS='ACTIVE                   ';
+         ELSE IF OPENIND = 'B' THEN ACCTSTATUS='CLOSED              ';
+         ELSE IF OPENIND = 'C' THEN ACCTSTATUS='CLOSED              ';
+         ELSE IF OPENIND = 'P' THEN ACCTSTATUS='CLOSED              ';
+         ELSE IF OPENIND = 'Z' THEN ACCTSTATUS='ZERO BALANCE        ';
+     END;
+ RUN;
+
+ PROC SORT  DATA=DPTRBALS ;BY ACCTBRCH;RUN;
+ PROC PRINT DATA=DPTRBALS(OBS=10);TITLE 'DEPOSIT REC';RUN;
+
+ DATA MERGEBRCH;
+     MERGE DPTRBALS(IN=A) PBBBRCH(IN=B); BY ACCTBRCH;
+     IF A;
+ RUN;
+ PROC SORT  DATA=MERGEBRCH;BY ACCTNOC;RUN;
+ PROC PRINT DATA=MERGEBRCH(OBS=10);TITLE 'DEPOSIT MATCH REC';RUN;
+
+ DATA MERGEDP;
+     MERGE MERGEALL(IN=A) MERGEBRCH(IN=B); BY ACCTNOC;
+     IF A AND B;
+        IF ACCTNOC = ' ' THEN DELETE;
+ RUN;
+ PROC SORT  DATA=MERGEDP NODUPKEY;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGEDP(OBS=10);TITLE 'DEPOSIT MATCH REC';RUN;
+
+ /*235004 START*/
+
+ DATA MERGEDP1;
+     MERGE MERGEDP(IN=A)  DPSTMT(IN=H); BY ACCTNOC;
+     IF A;
+ RUN;
+
+ PROC SORT  DATA=MERGEDP1;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGEDP1(OBS=10);TITLE 'MERGE STMT FILE';RUN;
+
+ DATA MERGEDP2;
+     MERGE MERGEDP1(IN=A)  DPPOST(IN=H); BY ACCTNOC;
+     IF A;
+ RUN;
+
+ PROC SORT  DATA=MERGEDP2;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGEDP2(OBS=10);TITLE 'MERGE POST IND FILE';RUN;
+
+ DATA MERGEDP3;
+     MERGE MERGEDP2(IN=A)  DEPOSIT1(IN=H); BY ACCTNOC;
+     IF A;
+
+ RUN;
+
+ PROC SORT  DATA=MERGEDP3;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGEDP3(OBS=10);TITLE 'ADDITIONAL DP LIST ';RUN;
+ /*235004 END */
+
+ /*----------------------------------------------------------------*/
+ /*    LOANS ACCOUNT FILE                                          */
+ /*----------------------------------------------------------------*/
+ DATA LOANACCT;
+   INFILE ACCTFILE;
+   FORMAT ACCTOPNDT $8. BDD  $11. ACCTSTATUS $25.
+          LASTTRNDT $8.  ACCTNAME40 $40.
+          LTRNMM $2.  LTRNDD $2.   LTRNYY $4. ACCTBRCH $3.
+          OPENMM $2.  OPENDD $2.   OPENYY $4.;
+   INPUT @1     ACCTNO          PD6.
+         @7     ACCTNAME        $24.
+         @42    ORGTYPE          $1.   /* PURPOSE CODE */
+         @81    NOTENO          PD3.
+         @84    NOTEREV          $1.
+         @85    NOTETYPE        PD2.   /* PRODUCT TYPE */
+         @87    BRANCHNOTE      PD4.   /* NOTE BRANCH  */
+         @95    ACCTOPENDATE    PD6.
+         @113   LASTTRANDATE    PD6.
+         @121   NOTECURBAL      PD8.   /* NOTE CURRENT BALANCE */
+         @238   COSTCENTER      PD4.
+         @261   NOTEPAID         $1.
+         @262   APPRVLIMIT      PD8.   /* NOTE ORIGINAL BALANCE */
+         @338   NPLINDC          $1.
+         @596   AANUMBER         $20. ;
+         ACCTNOC=PUT(ACCTNO,Z11.);
+         NOTENOC=PUT(NOTENO,Z5.);
+         ACCTNOTE=ACCTNOC||'-'||NOTENOC;
+
+         IF '02000000000' < ACCTNOC < '02999999999'
+                   THEN APPL_CODE = 'LN   ';
+         IF '08000000000' < ACCTNOC < '08999999999'
+                   THEN APPL_CODE = 'HP   ';
+
+         ACCTNAME40 = ACCTNAME;
+         ACCT_TYPE = ORGTYPE ;
+         IF 3000 =< COSTCENTER =< 3999 THEN DO;
+            BANKINDC = 'I';END;
+         ELSE DO; BANKINDC = 'C';END;
+         COSTCENTERX=PUT(COSTCENTER,Z7.);
+         COSTCTR=SUBSTR(COSTCENTERX,5,3) *1;
+         COSTCTR1=PUT(COSTCTR,Z3.);
+         ACCTOPNDT = TRIM(SUBSTR(PUT(ACCTOPENDATE,Z11.),1,8));
+         OPENMM=SUBSTR(ACCTOPNDT,1,2);
+         OPENDD=SUBSTR(ACCTOPNDT,3,2);
+         OPENYY=SUBSTR(ACCTOPNDT,5,4);
+         DATEOPEN=OPENYY||OPENMM||OPENDD;
+         LASTTRNDT = TRIM(SUBSTR(PUT(LASTTRANDATE,Z11.),1,8));
+         LTRNMM=SUBSTR(LASTTRNDT,1,2);
+         LTRNDD=SUBSTR(LASTTRNDT,3,2);
+         LTRNYY=SUBSTR(LASTTRNDT,5,4);
+         DATECLSE=LTRNYY||LTRNMM||LTRNDD;
+         LEDGERBAL=NOTECURBAL/100;
+         ACCTBRCH = COSTCTR1;
+         IF NPLINDC  = '3' OR ARREARDAY > 92
+                 THEN ACCTSTATUS = 'NPL';
+         IF 1 <ARREARDAY < 92 THEN ACCTSTATUS = 'ACCOUNT IN ARREARS';
+         IF NOTEPAID = 'P' THEN DO;
+            ACCTSTATUS = 'PAID-OFF';
+         END;
+    IF NOTECURBAL > 0 AND ACCTSTATUS = '' THEN ACCTSTATUS = 'ACTIVE';
+  RUN;
+ PROC SORT  DATA=LOANACCT;BY ACCTBRCH;RUN;
+
+ DATA MERGELNBRCH;
+     MERGE LOANACCT(IN=C) PBBBRCH(IN=D); BY ACCTBRCH;
+     IF C;
+ RUN;
+ PROC SORT  DATA=MERGELNBRCH;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGELNBRCH(OBS=10);TITLE 'LOANS BRCH';RUN;
+
+ DATA MERGELN;
+     MERGE MERGEALL(IN=C) MERGELNBRCH(IN=D); BY ACCTNOC;
+     IF C AND D;
+ RUN;
+ PROC SORT  DATA=MERGELN NODUPKEY;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGELN(OBS=10);TITLE 'LOANS MATCH REC';RUN;
+ /*----------------------------------------------------------------*/
+ /*    SAFE DEPOSIT BOX                                            */
+ /*----------------------------------------------------------------*/
+ DATA SAFEBOX;
+   INFILE SAFEBOX;
+   INPUT @8    CUSTNO         $11.
+         @26   ACCTNAME40     $40.
+         @192  BRANCH_ABBR    $5.
+         @218  ACCTNOC        $20.
+         @249  BANKINDC       $01.
+         @281  ACCTSTATUS     $25.;
+         LEDGERBAL  = 0;
+         CATEGORY = '3' ;
+         APPL_CODE = 'SDB  ';
+ RUN;
+ PROC SORT  DATA=SAFEBOX; BY ACCTNOC ;RUN;
+ PROC PRINT DATA=SAFEBOX(OBS=10);TITLE 'SAFEBOX';RUN;
+
+ DATA MERGESDB;
+     MERGE MERGEALL(IN=E) SAFEBOX(IN=F); BY ACCTNOC;
+     IF E AND F;
+ RUN;
+ PROC SORT  DATA=MERGESDB NODUPKEY;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGESDB(OBS=10);TITLE 'SDB MATCH REC';RUN;
+ /*----------------------------------------------------------------*/
+ /*    UNICARD FILE                                                */
+ /*----------------------------------------------------------------*/
+ DATA UNICD;
+    INFILE UNICARD;
+    INPUT @192  BRANCH_ABBR    $5.
+          @218  ACCTNOC        $20.
+          @281  ACCTSTATUS     $25.
+          @309  DATEOPEN       $8.
+          @322  DATECLSE       $8.;
+ RUN;
+ PROC SORT  DATA=UNICD ;BY ACCTNOC;RUN;
+
+ DATA MERGEUNI;
+     MERGE MERGEALL(IN=E) UNICD(IN=F); BY ACCTNOC;
+     IF E AND F;
+ RUN;
+ PROC SORT  DATA=MERGEUNI NODUPKEY;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGEUNI(OBS=10);TITLE 'UNICARD MATCH REC';RUN;
+ /*----------------------------------------------------------------*/
+ /*    COMCARD FILE                                                */
+ /*----------------------------------------------------------------*/
+ DATA COMCD;
+    INFILE COMCARD;
+    INPUT @192  BRANCH_ABBR    $5.
+          @218  ACCTNOC        $20.
+          @281  ACCTSTATUS     $25.
+          @309  DATEOPEN       $8.
+          @322  DATECLSE       $8.;
+ RUN;
+ PROC SORT  DATA=COMCD ;BY ACCTNOC;RUN;
+
+ DATA MERGECOM;
+     MERGE MERGEALL(IN=E) COMCD(IN=F); BY ACCTNOC;
+     IF E AND F;
+ RUN;
+ PROC SORT  DATA=MERGECOM NODUPKEY;BY ACCTNOC  ;RUN;
+ PROC PRINT DATA=MERGECOM(OBS=10);TITLE 'COMCARD MATCH REC';RUN;
+ /*----------------------------------------------------------------*/
+ /*    OUTPUT                                                      */
+ /*----------------------------------------------------------------*/
+ DATA OUTPUT;
+  SET MERGEDP MERGELN MERGESDB MERGEUNI MERGECOM;
+  /*IF ACCTNOC = ' ' THEN DELETE; */
+  FILE OUTPUT;
+    PUT @01   CUSTNO            $11.
+        @14   ACCTNOC           $20.
+        @36   OCCUP             $3.
+        @42   MASCO2008         $5.
+        @50   ALIASKEY          $5.
+        @56   ALIAS             $20.
+        @78   CUSTNAME          $40.
+        @120  DATEOPEN          $8.
+        @130  DATECLSE          $8.
+        @140  LEDGERBAL         13.2
+        @152  BANKINDC          $1.
+        @154  CITIZENSHIP       $2.
+        @158  APPL_CODE         $5.
+        @164  PRODTY            $3.
+        @169  DEMODESC          $60.
+        @231  MASCODESC         $27.
+        @260  JOINTACC          $1.
+        @262  MSICCODE          $5.
+        @267  ACCTBRCH          $3.
+        @275  BRANCH_ABBR       $5.
+        @280  ACCTSTATUS        $24.
+        @304  SICCODE           $5.;
+ RUN;
+  /*----------------------------------------------------------------*/
+  /*  GENERATE REPORT PBB                                           */
+  /*----------------------------------------------------------------*/
+  DATA REPORT;
+  FORMAT TEMP_CURBAL 14.2                                /*235004*/
+         TEMP_CURR_CYC_DR 9.    TEMP_CURR_CYC_CR 9.      /*235004*/
+         TEMP_PREV_CYC_DR 9.    TEMP_PREV_CYC_CR 9.      /*235004*/
+         TEMP_CURR_AMT_DR 16.2  TEMP_CURR_AMT_CR 16.2    /*235004*/
+         TEMP_PREV_AMT_DR 16.2  TEMP_PREV_AMT_CR 16.2    /*235004*/
+         TEMP_AMT_1       14.2  TEMP_AMT_2 14.2          /*242598*/
+         TEMP_AMT_3       14.2;                          /*242598*/
+
+   /*SET MERGEDP MERGELN MERGESDB MERGEUNI MERGECOM;     235004*/
+     SET MERGEDP3 MERGELN MERGESDB MERGEUNI MERGECOM;
+     FILE OUTFILE;
+     IF DEMODESC  = ' ' THEN DEMODESC  = 'NIL';
+     IF MASCODESC = ' ' THEN MASCODESC = 'NIL';
+     IF SICCODE   = ' ' THEN SICCODE   = 'NIL';
+     IF MSICDESC  = ' ' THEN MSICDESC  = 'NIL';
+
+     IF CURBAL < 0 OR CURBAL > 0 THEN DO      /*242598 - START*/
+        TEMP_CURBAL = CURBAL;
+     END;
+     ELSE DO;
+        TEMP_CURBAL = 0;
+     END;
+
+     IF APPL_CODE NOT IN ('FD','CA','SA') THEN TEMP_CURBAL = 0.00;
+
+     IF CURR_AMT_DR > 0 THEN DO;
+        TEMP_CURR_AMT_DR = CURR_AMT_DR;
+     END;
+     ELSE DO;
+        TEMP_CURR_AMT_DR = 0;
+     END;
+
+     IF CURR_AMT_CR > 0 THEN DO;
+        TEMP_CURR_AMT_CR = CURR_AMT_CR;
+     END;
+     ELSE DO;
+        TEMP_CURR_AMT_CR = 0;
+     END;
+
+     IF PREV_AMT_DR > 0 THEN DO;
+        TEMP_PREV_AMT_DR = PREV_AMT_DR;
+     END;
+     ELSE DO;
+        TEMP_PREV_AMT_DR = 0;
+     END;
+
+     IF PREV_AMT_CR > 0 THEN DO;
+        TEMP_PREV_AMT_CR = PREV_AMT_CR;
+     END;
+     ELSE DO;
+        TEMP_PREV_AMT_CR = 0;
+     END;
+
+     IF APPL_CODE NOT IN ('FD','CA','SA') THEN DO
+        TEMP_CURR_AMT_DR = 0.00;
+        TEMP_CURR_AMT_CR = 0.00;
+        TEMP_PREV_AMT_DR = 0.00;
+        TEMP_PREV_AMT_CR = 0.00;
+     END;
+
+
+     IF CURR_CYC_DR > 0 THEN DO;
+        TEMP_CURR_CYC_DR = CURR_CYC_DR;
+     END;
+     ELSE DO;
+        TEMP_CURR_CYC_DR = 0;
+     END;
+
+     IF CURR_CYC_CR > 0 THEN DO;
+        TEMP_CURR_CYC_CR = CURR_CYC_CR;
+     END;
+     ELSE DO;
+        TEMP_CURR_CYC_CR = 0;
+     END;
+
+     IF PREV_CYC_DR > 0 THEN DO;
+        TEMP_PREV_CYC_DR = PREV_CYC_DR;
+     END;
+     ELSE DO;
+        TEMP_PREV_CYC_DR = 0;
+     END;
+
+     IF PREV_CYC_CR > 0 THEN DO;
+        TEMP_PREV_CYC_CR = PREV_CYC_CR;
+     END;
+     ELSE DO;
+        TEMP_PREV_CYC_CR = 0;
+     END;
+
+     IF APPL_CODE NOT IN ('FD','CA','SA') THEN DO
+        TEMP_CURR_CYC_DR = 0;
+        TEMP_CURR_CYC_CR = 0;
+        TEMP_PREV_CYC_DR = 0;
+        TEMP_PREV_CYC_CR = 0;
+     END;
+
+     TEMP_AMT_1 = 0.00;
+     TEMP_AMT_2 = 0.00;
+     TEMP_AMT_3 = 0.00;
+
+
+     IF AMT_1 > 0 THEN DO
+        TEMP_AMT_1  = AMT_1;
+     END;
+     ELSE DO;
+        TEMP_AMT_1  = 0;
+     END;
+
+     IF AMT_2 > 0 THEN DO
+        TEMP_AMT_2  = AMT_2;
+     END;
+     ELSE DO;
+        TEMP_AMT_2  = 0;
+     END;
+
+     IF AMT_3 > 0 THEN DO
+        TEMP_AMT_3  = AMT_3;
+     END;
+     ELSE DO;
+        TEMP_AMT_3  = 0;
+     END;
+                                               /*242598 - END */
+
+     IF _N_ = 1 THEN DO;
+      PUT @01   'LIST OF CUSTOMERS INFORMATION';
+      PUT @01   'NO'                        @6    ';'
+          @07   'ID TYPE'                   @15   ';'
+          @16   'ID NUMBER'                 @37   ';'
+          @38   'CUST NAME'                 @79   ';'
+          @80   'CIS NUMBER'                @92   ';'
+          @93   'OCCUPATION'                @154  ';'
+          @155  'MASCO'                     @183  ';'
+          @184  'SIC CODE'                  @193  ';'
+          @194  'MSIC BIS TYPE'             @222  ';'
+          @223  'ACCT NUMBER'               @244  ';'
+          @245  'ACCT BRANCH'               @257  ';'
+          @258  'ACCT STATUS'               @283  ';'
+          @284  'DATE ACCT OPEN  '          @301  ';'
+          @302  'DATE ACCT CLOSED'          @320  ';'   /*235004*/
+          @321  'SDB(YES/NO)'               @333  ';'   /*235004*/
+          @334  'BR SDB MAINTAN'            @348  ';'   /*235004*/
+          @349  'CURRENT BALANCE'           @364  ';'   /*235004*/
+          @365  'CURR CYC DR'               @376  ';'   /*235004*/
+          @377  'CURR AMT DR'               @394  ';'   /*235004*/
+          @395  'CURR CYC CR'               @406  ';'   /*235004*/
+          @407  'CURR AMT CR'               @424  ';'   /*235004*/
+          @425  'PREV CYC DR'               @442  ';'   /*235004*/
+          @443  'PREV AMT DR'               @460  ';'   /*235004*/
+          @461  'PREV CYC CR'               @478  ';'   /*235004*/
+          @479  'PREV AMT CR'               @496  ';'   /*235004*/
+          @497  'POST INDICATOR'            @511  ';'   /*235004*/
+          @512  'POST INDICATOR REASON'     @533  ';'   /*235004*/
+          @534  'TOTAL OF HOLD'             @547  ';'   /*235004*/
+          @548  'SEQ OF HOLD(1)'            @562  ';'   /*235004*/
+          @563  'AMT OF HOLD(1)'            @579  ';'   /*235004*/
+          @580  'DESCRIP OF HOLD(1)'        @600  ';'   /*235004*/
+          @601  'SOURCE(1)'                 @621  ';'   /*235004*/
+          @622  'SEQ OF HOLD(2)'            @636  ';'   /*235004*/
+          @637  'AMT OF HOLD(2)'            @653  ';'   /*235004*/
+          @654  'DESCRIP OF HOLD(2)'        @674  ';'   /*235004*/
+          @675  'SOURCE(2)'                 @695  ';'   /*235004*/
+          @696  'SEQ OF HOLD(3)'            @700  ';'   /*235004*/
+          @701  'AMT OF HOLD(3)'            @717  ';'   /*235004*/
+          @718  'DESCRIP OF HOLD(3)'        @738  ';'   /*235004*/
+          @739  'SOURCE(3)'                 @759  ';'   /*235004*/
+           ;                                            /*235004*/
+     END;
+      PUT @01   _N_               5.        @6    ';'
+          @07   ALIASKEY          $5.       @15   ';'
+          @16   ALIAS             $20.      @37   ';'
+          @38   CUSTNAME          $40.      @79   ';'
+          @80   CUSTNO            $11.      @92   ';'
+          @93   DEMODESC          $60.      @154  ';'
+          @155  MASCODESC         $27.      @183  ';'
+          @184  SICCODE           $5.       @193  ';'
+          @194  MSICDESC          $27.      @222  ';'
+          @223  ACCTNOC           $20.      @244  ';'
+          @245  BRANCH_ABBR       $5.       @257  ';'
+          @258  ACCTSTATUS        $24.      @283  ';'
+          @284  DATEOPEN          $8.       @301  ';'
+          @302  DATECLSE          $8.       @320  ';'   /*235004*/
+          @321  SDBIND               $03.   @333  ';'   /*235004*/
+          @334  SDBBRH               $03.   @348  ';'   /*235004*/
+          @349  TEMP_CURBAL        14.2     @364  ';'   /*235004*/
+          @365  TEMP_CURR_CYC_DR     10.    @376  ';'   /*235004*/
+          @377  TEMP_CURR_AMT_DR     16.2   @394  ';'   /*235004*/
+          @395  TEMP_CURR_CYC_CR     10.    @406  ';'   /*235004*/
+          @407  TEMP_CURR_AMT_CR     16.2   @424  ';'   /*235004*/
+          @425  TEMP_PREV_CYC_DR     10.    @442  ';'   /*235004*/
+          @443  TEMP_PREV_AMT_DR     16.2   @460  ';'   /*235004*/
+          @461  TEMP_PREV_CYC_CR     10.    @478  ';'   /*235004*/
+          @479  TEMP_PREV_AMT_CR     16.2   @496  ';'   /*235004*/
+          @497  ACCT_PST_IND         $1.    @511  ';'   /*235004*/
+          @512  ACCT_PST_REASON      $20.   @533  ';'   /*235004*/
+          @534  TOT_HOLD             $02.   @547  ';'   /*235004*/
+          @548  SEQID_1              $02.   @562  ';'   /*235004*/
+          @563  TEMP_AMT_1           14.2   @579  ';'   /*235004*/
+          @580  DESC_1               $20.   @600  ';'   /*235004*/
+          @601  SOURCE_1             $20.   @621  ';'   /*235004*/
+          @622  SEQID_2              $02.   @636  ';'   /*235004*/
+          @637  TEMP_AMT_2           14.2   @653  ';'   /*235004*/
+          @654  DESC_2               $20.   @674  ';'   /*235004*/
+          @675  SOURCE_2             $20.   @695  ';'   /*235004*/
+          @696  SEQID_3              $02.   @700  ';'   /*235004*/
+          @701  TEMP_AMT_3           14.2   @717  ';'   /*235004*/
+          @718  DESC_3               $20.   @738  ';'   /*235004*/
+          @739  SOURCE_3             $20.   @759  ';'   /*235004*/
+           ;
+  RUN;
+
