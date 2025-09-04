@@ -1,15 +1,15 @@
-dptrbals = dptrbals.with_columns([
-    pl.when(pl.col("PRODTYPE").is_in(
-        ['371','350','351','352','353','354','355','356','357','358',
-         '359','360','361','362']
-    )).then("FCYFD")
-    .when(pl.col("PRODTYPE").is_in(
-        ['400','401','402','403','404','405','406','407','408','409',
-         '410','411','413','414','420','421','422','423','424','425',
-         '426','427','428','429','430','431','432','433','434','440',
-         '441','442','443','444','450','451','452','453','454','460',
-         '461','473','474','475','476']
-    )).then("FCYCA")
-    .otherwise(pl.col("APPL_CODE"))
-    .alias("APPL_CODE")
-])
+COSTCENTERX=PUT(COSTCENTER,Z7.);
+         COSTCTR=SUBSTR(COSTCENTERX,5,3) *1;
+         COSTCTR1=PUT(COSTCTR,Z3.);
+         ACCTOPNDT = TRIM(SUBSTR(PUT(ACCTOPENDATE,Z11.),1,8));
+         OPENMM=SUBSTR(ACCTOPNDT,1,2);
+         OPENDD=SUBSTR(ACCTOPNDT,3,2);
+         OPENYY=SUBSTR(ACCTOPNDT,5,4);
+         DATEOPEN=OPENYY||OPENMM||OPENDD;
+         LASTTRNDT = TRIM(SUBSTR(PUT(LASTTRANDATE,Z11.),1,8));
+         LTRNMM=SUBSTR(LASTTRNDT,1,2);
+         LTRNDD=SUBSTR(LASTTRNDT,3,2);
+         LTRNYY=SUBSTR(LASTTRNDT,5,4);
+         DATECLSE=LTRNYY||LTRNMM||LTRNDD;
+         LEDGERBAL=NOTECURBAL/100;
+         ACCTBRCH = COSTCTR1;
