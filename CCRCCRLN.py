@@ -232,11 +232,35 @@ alloutput = INPUT1.join(
     how="left",
     suffix="_r"
 )
-all_output = alloutput.select(["CUSTNO1","INDORG1","CODE1","DESC1","CUSTNO2","INDORG2","CODE2","DESC2","EXPDATE","CUSTNAME1","ALIAS1",
-            "CUSTNAME2","ALIAS2","OLDIC1","BASICGRPCODE1","OLDIC2","BASICGRPCODE2","EFFDATE"])
-print("Alloutput:")
-print(all_output.head(5))
+#################################################
+#new code 7sep2025
+all_output = alloutput.select([
+    "CUSTNO1","INDORG1","CODE1","DESC1","CUSTNO2","INDORG2","CODE2","DESC2","EXPDATE",
+    "CUSTNAME1","ALIAS1","CUSTNAME2","ALIAS2","OLDIC1","BASICGRPCODE1","OLDIC2","BASICGRPCODE2","EFFDATE"
+])
 
-#write to csv file and parquet file
-all_output.write_csv("cis_internal/output/RLNSHIP.csv")
-all_output.write_parquet("cis_internal/output/RLNSHIP.parquet")
+# Keep a copy before deduplication
+all_output_full = all_output.clone()
+
+# Deduplicate based on relationship keys
+all_output_unique = all_output.unique(subset=["CUSTNO1","CUSTNO2","CODE1","CODE2"])
+
+# Find duplicates by doing an anti-join
+duplicates = all_output_full.join(
+    all_output_unique,
+    on=["CUSTNO1","CUSTNO2","CODE1","CODE2"],
+    how="anti"
+)
+
+print("Alloutput (unique):")
+print(all_output_unique.head(5))
+
+print("Duplicate rows removed:")
+print(duplicates.head(5))
+
+# Save outputs
+all_output_unique.write_csv("cis_internal/output/RLNSHIP.csv")
+all_output_unique.write_parquet("cis_internal/output/RLNSHIP.parquet")
+
+duplicates.write_csv("cis_internal/output/RLNSHIP_DUPLICATES.csv")
+duplicates.write_parquet("cis_internal/output/RLNSHIP_DUPLICATES.parquet")
