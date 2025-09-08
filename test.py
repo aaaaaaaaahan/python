@@ -1,25 +1,60 @@
-def assign_state(zipcode: str) -> str | None:
-    if not zipcode or not zipcode.isdigit():
-        return None
-    z = int(zipcode)
-    if 79000 <= z <= 86999: return "JOH"
-    if 5000  <= z <= 9999: return "KED"
-    if 15000 <= z <= 18999: return "KEL"
-    if 75000 <= z <= 78999: return "MEL"
-    if 70000 <= z <= 73999: return "NEG"
-    if 25000 <= z <= 28999 or z == 69000: return "PAH"
-    if 10000 <= z <= 14999: return "PEN"
-    if 30000 <= z <= 36999 or 39000 <= z <= 39999: return "PRK"
-    if 1000  <= z <= 2999:  return "PER"
-    if 88000 <= z <= 91999: return "SAB"
-    if 93000 <= z <= 98999: return "SAR"
-    if (40000 <= z <= 49999) or (63000 <= z <= 64999) or (68000 <= z <= 68199): return "SEL"
-    if 20000 <= z <= 24999: return "TER"
-    if 50000 <= z <= 60999: return "W P"
-    if 87000 <= z <= 87999: return "LAB"
-    if 62000 <= z <= 62999: return "PUT"
-    return None
+DATA OUT;
+  SET ADDRAELE1;
+  FILE OUTFILE;
+  IF _N_ = 1 THEN DO;
+     PUT @01   'CIS #'
+         @12   '-'
+         @13   'ADDR REF'
+         @25   'ADDLINE1'
+         @66   'ADDLINE2'
+         @107  'ADDLINE3'
+         @148  'ADDLINE4'
+         @189  'ADDLINE5'
+         @230  ' '
+         @236  'ZIP'
+         @241  'CITY'
+         @267  'COUNTRY'
+         @279  ' '
+         @285  'ZIP'
+         @291  'CITY'
+         @317  'COUNTRY'     ;
+  END;
+    NEW_ZIP     = LEFT(NEW_ZIP)     ;
+    NEW_CITY    = LEFT(NEW_CITY)    ;
+    NEW_COUNTRY = LEFT(NEW_COUNTRY) ;
+    IF NEW_ZIP = ' ' THEN DELETE;
+     PUT @01   CUSTNO            $11.
+         @12   '-'
+         @13   ADDREF            Z11.
+         @25   LINE1ADR          $40.
+         @66   LINE2ADR          $40.
+         @107  LINE3ADR          $40.
+         @148  LINE4ADR          $40.
+         @189  LINE5ADR          $40.
+         @230  '*OLD*'
+         @236  ZIP               $05.
+         @241  CITY              $25.
+         @267  COUNTRY           $10.
+         @279  '*NEW*'
+         @285  NEW_ZIP           $05.
+         @291  NEW_CITY          $25.
+         @317  STATEX            $3.
+         @321  NEW_COUNTRY       $10. ;
+  RUN;
 
-addraele1 = addraele1.with_columns(
-    pl.col("NEW_ZIP").map_elements(assign_state, return_dtype=pl.String).alias("STATEX")
-)
+DATA UPD;          /*    UPDATE FILE */
+  SET ADDRAELE1;
+  FILE UPDFILE;
+    NEW_ZIP     = LEFT(NEW_ZIP)     ;
+    NEW_CITY    = LEFT(NEW_CITY)    ;
+    NEW_COUNTRY = LEFT(NEW_COUNTRY) ;
+    IF NEW_ZIP = ' ' THEN DELETE;
+    NEW_CITY=UPCASE(NEW_CITY);
+     PUT @01   CUSTNO            $11.
+         @12   ADDREF            Z11.
+         @23   NEW_CITY          $25.
+         @48   STATEX            $3.
+         @51   NEW_ZIP           $05.
+         @56   NEW_COUNTRY       $10. ;
+  RETURN;
+  RUN;
