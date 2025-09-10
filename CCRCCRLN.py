@@ -1,5 +1,6 @@
 import polars as pl
 from datetime import date
+from reader import load_input
 
 #-------------------------------------------------------------------#
 # Original Program: CCRCCRLN                                        #
@@ -17,11 +18,11 @@ from datetime import date
 #--------------------------------#
 
 #READ PARQUET FILE
-INFILE1 = pl.read_parquet("cis_internal/rawdata_converted/RLENCC.parquet")
-CCCODE = pl.read_parquet("cis_internal/rawdata_converted/CIS_RLENCC_MAP.parquet") 
-NAMEFILE = pl.read_parquet("cis_internal/rawdata_converted/PRIMNAME_OUT.parquet")
-ALIASFIL = pl.read_parquet("cis_internal/rawdata_converted/ALLALIAS_OUT.parquet")
-CUSTFILE = pl.read_parquet("cis_internal/rawdata_converted/ALLCUST.parquet")
+INFILE1 = load_input("RLENCC_FB")
+CCCODE = load_input("BANKCTRL_RLENCODE_CC") 
+NAMEFILE = load_input("PRIMNAME_OUT")
+ALIASFIL = load_input("ALLALIAS_OUT")
+CUSTFILE = load_input("ALLCUST_FB")
 
 #RBP2.B033.BANKCTRL.RLENCODE.CC
 cccode = CCCODE.select(["RLENTYPE", "RLENCODE","RLENDESC"]).rename({"RLENTYPE": "TYPE","RLENCODE": "CODE1", "RLENDESC": "DESC1"})
@@ -119,10 +120,10 @@ print(LEFTOUT.head(5))
 #--------------------------------#
 #READ PARQUET FILE
 INFILE2 = LEFTOUT
-CCCODE = pl.read_parquet("cis_internal/rawdata_converted/CIS_RLENCC_MAP.parquet") 
+CCCODE = pl.read_parquet("cis_internal/rawdata_converted/BANKCTRL_RLENCODE_CC.parquet") 
 NAMEFILE = pl.read_parquet("cis_internal/rawdata_converted/PRIMNAME_OUT.parquet")
 ALIASFIL = pl.read_parquet("cis_internal/rawdata_converted/ALLALIAS_OUT.parquet")
-CUSTFILE = pl.read_parquet("cis_internal/rawdata_converted/ALLCUST.parquet")
+CUSTFILE = pl.read_parquet("cis_internal/rawdata_converted/ALLCUST_FB.parquet")
 
 
 #RBP2.B033.BANKCTRL.RLENCODE.CC
@@ -232,8 +233,6 @@ alloutput = INPUT1.join(
     how="left",
     suffix="_r"
 )
-#################################################
-#new code 7sep2025
 all_output = alloutput.select([
     "CUSTNO1","INDORG1","CODE1","DESC1","CUSTNO2","INDORG2","CODE2","DESC2","EXPDATE",
     "CUSTNAME1","ALIAS1","CUSTNAME2","ALIAS2","OLDIC1","BASICGRPCODE1","OLDIC2","BASICGRPCODE2","EFFDATE"
@@ -243,7 +242,7 @@ all_output = alloutput.select([
 all_output_full = all_output.clone()
 
 # Deduplicate based on relationship keys
-all_output_unique = all_output.unique(subset=["CUSTNO1","CUSTNO2","CODE1","CODE2"])
+all_output_unique = all_output.unique(subset=["CUSTNO1","CUSTNO2","CODE1","CODE2"]).sort("CUSTNO1")
 
 # Find duplicates by doing an anti-join
 duplicates = all_output_full.join(
