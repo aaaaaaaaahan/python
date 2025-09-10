@@ -1,64 +1,86 @@
-//CCRNMX3B JOB 224T,CLASS=A,MSGCLASS=X,REGION=8M,NOTIFY=&SYSUID         00010104
-//STATS#01 EXEC SAS609
-//NAMEFILE DD DISP=SHR,DSN=CCRIS.CISNAME.TEMP
-//RMRKFILE DD DISP=SHR,DSN=CCRIS.CISRMRK.LONGNAME
-//OUTFILE  DD DSN=CCRIS.CISNAME.GDG,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=350,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-DATA NAME;
-  INFILE NAMEFILE;                          /* SOURCE CICRNMTL */
-  INPUT  @001  CUSTNO             $11.
-         @012  CUSTNAME           $40.
-         @052  ADREFNO            $11.
-         @063  PRIPHONE           $11.
-         @074  SECPHONE           $11.
-         @085  CUSTTYPE           $ 1.
-         @086  CUSTNAME           $40.
-         @126  MOBILEPHONE        $11. ;
-RUN;
-PROC SORT  DATA=NAME NODUPKEY; BY CUSTNO ;RUN;
-PROC PRINT DATA=NAME(OBS=5);TITLE 'NAME';RUN;
+import polars as pl
+from reader import load_input
 
-DATA RMRK;
-  INFILE RMRKFILE;                          /* SOURCE CCRMRK1B */
-  INPUT  @001  BANKNO             $03.
-         @004  APPLCODE           $05.
-         @009  CUSTNO             $11.
-         @029  EFFDATE            $15.
-         @044  RMKKEYWORD         $08.
-         @052  LONGNAME           $150.     /* RMKLINE1-3      */
-         @352  RMKOPERATOR        $08.
-         @360  EXPIREDATE         $10.
-         @370  LASTMNTDATE        $10. ;
+#--------------------------------#
+# READ PARQUET FILES (ALL AT TOP)#
+#--------------------------------#
+aown_raw   = load_input("ADDRAOWN_FB")
+dpaddr_raw = load_input("DP_CUST_DAILY_ADDRACC")
 
-RUN;
-PROC SORT  DATA=RMRK NODUPKEY; BY CUSTNO ;RUN;
-PROC PRINT DATA=RMRK(OBS=5);TITLE 'REMARKS';RUN;
+#--------------------------------#
+# Part 1 - PROCESS AOWNFILE      #
+#--------------------------------#
+aown_raw = aown_raw.with_columns(
+    pl.when(pl.col("ACCTNO").str.starts_with("0"))
+    .then(pl.col("ACCTNO").str.slice(1))
+    .otherwise(pl.col("ACCTNO"))
+    .alias("ACCTNO")
+)
 
-DATA MERGE;
-     MERGE NAME (IN=A) RMRK (IN=B); BY CUSTNO;
-     IF A;
-RUN;
-PROC SORT  DATA=MERGE; BY CUSTNO ;RUN;
-PROC PRINT DATA=MERGE(OBS=5);TITLE 'MERGE';RUN;
+aown = (
+    aown_raw
+    .with_columns(pl.col("ACCTNO").cast(pl.Utf8))
+    .filter(
+        (pl.col("O_APPL_CODE") == "DP") & 
+        (pl.col("ACCTNO") > "10000000000")
+    )
+    .unique(subset=["ACCTNO"])   # PROC SORT NODUPKEY
+)
 
-  /*----------------------------------------------------------------*/
-  /*   OUTPUT DETAIL REPORT                                         */
-  /*----------------------------------------------------------------*/
- DATA OUT;
-   SET MERGE;
-   FILE OUTFILE;
-   PUT    @001  CUSTNO             $11.
-          @012  CUSTNAME           $40.
-          @052  ADREFNO            $11.
-          @063  PRIPHONE           $11.
-          @074  SECPHONE           $11.
-          @085  CUSTTYPE           $ 1.
-          @086  CUSTNAME           $40.
-          @126  MOBILEPHONE        $11.
-          @137  LONGNAME           $150.  ;  /* ESMR 2016-2207*/
- RUN;
-
+print("AOWN")
+print(aown.head(5))
+
+#--------------------------------#
+# Part 2 - PROCESS DEPOSIT FILE  #
+#--------------------------------#
+dpaddr = (
+    dpaddr_raw
+    .with_columns(pl.col("ACCTNO").cast(pl.Utf8))
+    .filter(pl.col("ACCTNO") > "10000000000")
+    .unique(subset=["ACCTNO"])
+)
+
+print("DEPOSIT ADDRESS")
+print(dpaddr.head(5))
+
+#--------------------------------#
+# Part 3 - MERGE ON ACCTNO       #
+#--------------------------------#
+merge = (
+    dpaddr.join(aown, on="ACCTNO", how="inner")   # SAS MERGE with IN=A and IN=B
+    .sort("ACCTNO")
+)
+
+print("MERGED")
+print(merge.head(5))
+
+#--------------------------------#
+# Part 4 - CREATE OUTPUT FILE    #
+#--------------------------------#
+out = merge.select([
+    pl.col("O_APPL_CODE").alias("O_APPL_CODE"),
+    pl.col("ACCTNO").alias("ACCTNO"),
+    pl.col("NA_LINE_TYP1"),
+    pl.col("ADD_NAME_1"),
+    pl.col("NA_LINE_TYP2"),
+    pl.col("ADD_NAME_2"),
+    pl.col("NA_LINE_TYP3"),
+    pl.col("ADD_NAME_3"),
+    pl.col("NA_LINE_TYP4"),
+    pl.col("ADD_NAME_4"),
+    pl.col("NA_LINE_TYP5"),
+    pl.col("ADD_NAME_5"),
+    pl.col("NA_LINE_TYP6"),
+    pl.col("ADD_NAME_6"),
+    pl.col("NA_LINE_TYP7"),
+    pl.col("ADD_NAME_7"),
+    pl.col("NA_LINE_TYP8"),
+    pl.col("ADD_NAME_8"),
+])
+
+# Save to parquet (instead of fixed-length file)
+out.write_parquet("output/cis_internal/DAILY_ADDRACC.parquet")
+out.write_csv("output/cis_internal/DAILY_ADDRACC.csv")
+
+print("OUT FILE SAMPLE")
+print(out.head(5))
