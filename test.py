@@ -1,133 +1,220 @@
 import polars as pl
 from reader import load_input
 
-# -----------------------------
-# Part 0: Read Parquet files
-# -----------------------------
-oldic = load_input("CCRIS_OLDIC_GDG")    
-newic = load_input("CCRIS_ALIAS_GDG")      
-rhold = load_input("RHOLD_FULL_LIST")  
+#------------------------#
+# READ PARQUET DATASETS  #
+#------------------------#
+main_df = load_input("CIDICUST_FB")
+indv_df = load_input("CIDINDVT_FB")
+org_df  = load_input("CIDIORGT_FB")
+cart_df = load_input("CIDICART_FB")
 
-# -----------------------------
-# Part 1: OLDIC processing
-# -----------------------------
-oldic = oldic.select([
-    pl.col("CUSTNO").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    pl.col("CODE_OLD").cast(pl.Utf8),
-    pl.col("INDORG").cast(pl.Utf8),
-    pl.col("OLDIC").cast(pl.Utf8),
-    pl.col("CUSTBRCH").cast(pl.Int64).cast(pl.Utf8).str.zfill(5)
-])
-oldic = oldic.sort("CUSTNO")
-print("OLD IC:\n", oldic.head(5))
-
-# -----------------------------
-# Part 2: NEWIC processing
-# -----------------------------
-newic = newic.select([
-    pl.col("CUSTNO").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    pl.col("CODE_NEW").cast(pl.Utf8),
-    pl.col("NEWIC").cast(pl.Utf8),
-    pl.col("KEYFIELD1").cast(pl.Utf8),
-    pl.col("KEYFIELD2").cast(pl.Utf8)
-])
-newic = newic.with_columns(
-    pl.col("NEWIC").str.slice(3, 20).alias("NEWIC1")  # SUBSTR(NEWIC,4,20)
+#-----------------------------------------------#
+# Part 1 - Process Individual Part              # 
+#-----------------------------------------------#
+# PROCESS MAIN CUSTOMER FILE (INDIVIDUAL PART)  #
+#   - Drop GENDER = 'O'                         #
+#-----------------------------------------------#
+main_indv = (
+    main_df
+    .filter(pl.col("GENDER") != "O")
+    .select([
+        "CISNO", "BANKNO", "MAIN_ENTITY_TYPE", "BRANCH",
+        "CUSTNAME", "BIRTHDATE", "GENDER"
+    ])
+    .sort("CISNO")
 )
-newic = newic.sort("CUSTNO")
-print("NEW IC:\n", newic.head(5))
 
-# -----------------------------
-# Part 3: RHOLD processing
-# -----------------------------
-rhold_alias1 = rhold.select(pl.col("ID1").alias("ALIAS")).filter(pl.col("ALIAS") != "")
-rhold_alias2 = rhold.select(pl.col("ID2").alias("ALIAS")).filter(pl.col("ALIAS") != "")
-rhold_all = pl.concat([rhold_alias1, rhold_alias2]).unique(subset="ALIAS").sort("ALIAS")
-print("RHOLD:\n", rhold_all.head(5))
+print("MAIN (INDIVIDUAL)")
+print(main_indv.head(5))
 
-# -----------------------------
-# Part 4: TAXID merge OLDIC + NEWIC
-# -----------------------------
-taxid = oldic.join(newic, on="CUSTNO", how="left")
-taxid = taxid.with_columns(
-    pl.when(pl.col("INDORG") == "O")
-      .then(pl.col("NEWIC"))
-      .otherwise(None)
-      .alias("BUSREG")
+
+#----------------------------#
+# 0PROCESS INDIVIDUAL FILE   #
+#----------------------------#
+indv_df = (
+    indv_df
+    .select([
+        "CUSTNO","IDTYPE","ID","CUSTBRANCH","FIRST_CREATE_DATE",
+        "FIRST_CREATE_TIME","FIRST_CREATE_OPER","LAST_UPDATE_DATE",
+        "LAST_UPDATE_TIME","LAST_UPDATE_OPER","LONGNAME","ENTITYTYPE",
+        "BNM_ASSIGNED_ID","OLDIC","CITIZENSHIP","PRCOUNTRY",
+        "RESIDENCY_STATUS","CUSTOMER_CODE","ADDRLINE1","ADDRLINE2",
+        "ADDRLINE3","ADDRLINE4","ADDRLINE5","POSTCODE","TOWN_CITY",
+        "STATE_CODE","COUNTRY","ADDR_LAST_UPDATE","ADDR_LAST_UPTIME",
+        "PHONE_HOME","PHONE_BUSINESS","PHONE_FAX","PHONE_MOBILE",
+        "PHONE_PAC","EMPLOYER_NAME","MASCO2008","MASCO2012",
+        "EMPLOYMENT_TYPE","EMPLOYMENT_SECTOR","EMPLOYMENT_LAST_UPDATE",
+        "EMPLOYMENT_LAST_UPTIME","INCOME_AMT","ENABLE_TAB"
+    ])
+    .rename({"CUSTNO": "CISNO"})
 )
-taxid = taxid.sort("NEWIC1")
-print("TAXID FILE:\n", taxid.head(5))
 
-# -----------------------------
-# Part 5: TAXID_NEWIC merge with RHOLD (NEWIC1)
-# -----------------------------
-rhold_newic = rhold_all.rename({"ALIAS": "NEWIC1"})
-taxid_newic = taxid.join(rhold_newic, on="NEWIC1", how="left")
-taxid_newic = taxid_newic.with_columns(
-    pl.when(pl.col("NEWIC1").is_not_null())
-      .then(1)
-      .otherwise(0)
-      .alias("C")
+indv = (
+    indv_df
+    .select([
+        "CISNO","IDTYPE","ID","CUSTBRANCH","FIRST_CREATE_DATE",
+        "FIRST_CREATE_TIME","FIRST_CREATE_OPER","LAST_UPDATE_DATE",
+        "LAST_UPDATE_TIME","LAST_UPDATE_OPER","LONGNAME","ENTITYTYPE",
+        "BNM_ASSIGNED_ID","OLDIC","CITIZENSHIP","PRCOUNTRY",
+        "RESIDENCY_STATUS","CUSTOMER_CODE","ADDRLINE1","ADDRLINE2",
+        "ADDRLINE3","ADDRLINE4","ADDRLINE5","POSTCODE","TOWN_CITY",
+        "STATE_CODE","COUNTRY","ADDR_LAST_UPDATE","ADDR_LAST_UPTIME",
+        "PHONE_HOME","PHONE_BUSINESS","PHONE_FAX","PHONE_MOBILE",
+        "PHONE_PAC","EMPLOYER_NAME","MASCO2008","MASCO2012",
+        "EMPLOYMENT_TYPE","EMPLOYMENT_SECTOR","EMPLOYMENT_LAST_UPDATE",
+        "EMPLOYMENT_LAST_UPTIME","INCOME_AMT","ENABLE_TAB"
+    ])
+    .sort(["CISNO","IDTYPE","ID"])
 )
-taxid_newic = taxid_newic.sort("OLDIC")
 
-print("taxid_newic:")
-print(taxid_newic.head(5))
+print("INDIVIDUAL FILE")
+print(indv.head(5))
 
-# -----------------------------
-# Part 6: TAXID_OLDIC merge with RHOLD (OLDIC)
-# -----------------------------
-rhold_oldic = rhold_all.rename({"ALIAS": "OLDIC"})
-taxid_oldic = taxid_newic.join(rhold_oldic, on="OLDIC", how="left")
-taxid_oldic = taxid_oldic.with_columns(
-    pl.when(pl.col("OLDIC").is_not_null())
-      .then(1)
-      .otherwise(0)
-      .alias("F")
+
+#--------------------#
+# PROCESS CART FILE  #
+#--------------------#
+cart_df = (
+    cart_df
+    .select([
+        "APPL_CODE","APPL_NO","PRI_SEC","RELATIONSHIP",
+        "CUSTNO","IDTYPE","ID","AA_REF_NO","EFF_DATE",
+        "EFF_TIME","LAST_MNT_DATE","LAST_MNT_TIME"
+    ])
+    .rename({"CUSTNO": "CISNO"})
 )
-taxid_oldic = taxid_oldic.sort("CUSTNO")
 
-print("taxid_oldic:")
-print(taxid_oldic.head(5))
+cart = (
+    cart_df
+    .select([
+        "APPL_CODE","APPL_NO","PRI_SEC","RELATIONSHIP",
+        pl.col("CISNO").cast(pl.Utf8).str.zfill(11),"IDTYPE","ID","AA_REF_NO","EFF_DATE",
+        "EFF_TIME","LAST_MNT_DATE","LAST_MNT_TIME"
+    ])
+    .sort(["CISNO","IDTYPE","ID"])
+)
 
-# -----------------------------
-# Part 7: OUT dataset creation
-# -----------------------------
-def match_type(row):
-    if row["C"] == 1 and row["F"] == 1:
-        return "B", "Y"
-    elif row["C"] == 1 and row["F"] is None:
-        return "N", "Y"
-    elif row["C"] is None and row["F"] == 1:
-        return "O", "Y"
-    else:
-        return "X", "N"
+print("CART FILE")
+print(cart.head(5))
 
-taxid_oldic = taxid_oldic.with_columns([
-    pl.when((pl.col("C") == 1) & (pl.col("F") == 1))
-      .then(pl.lit("B"))
-      .when((pl.col("C") == 1) & (pl.col("F") == 0))
-      .then(pl.lit("N"))
-      .when((pl.col("C") == 0) & (pl.col("F") == 1))
-      .then(pl.lit("O"))
-      .otherwise(pl.lit("X"))
-      .alias("MATCHID"),
 
-    pl.when((pl.col("C") == 1) | (pl.col("F") == 1))
-      .then(pl.lit("Y"))
-      .otherwise(pl.lit("N"))
-      .alias("RHOLD_IND")
-])
+#--------------------------#
+# MERGE INDIVIDUAL + CART  #
+#--------------------------#
+custinfo_indv = (
+    indv.join(cart, on=["CISNO","IDTYPE","ID"], how="left")
+)
 
-# -----------------------------
-# Part 8: Write output
-# -----------------------------
-taxid_oldic.select([
-    "CUSTNO", "OLDIC", "NEWIC", "BUSREG", "CUSTBRCH", "RHOLD_IND", "MATCHID"
-]).write_parquet("cis_internal/output/CCRIS_TAXID_GDG.parquet")
-taxid_oldic.select([
-    "CUSTNO", "OLDIC", "NEWIC", "BUSREG", "CUSTBRCH", "RHOLD_IND", "MATCHID"
-]).write_csv("cis_internal/output/CCRIS_TAXID_GDG.csv")
+print("CUSTINFO (INDIVIDUAL)")
+print(custinfo_indv.head(5))
 
-print("Final Output:")
-print(taxid_oldic.head(5))
+
+#------------------------------------#
+# MERGE MAIN + CUSTINFO (INDIVIDUAL) #
+#------------------------------------#
+indvdly = (
+    main_indv.join(custinfo_indv, on="CISNO", how="inner")
+)
+
+# Create index equivalent (set unique keys)
+indvdly = indvdly.unique(subset=["CISNO","IDTYPE","ID"])
+indvdly = indvdly.sort("CISNO")
+
+print("FINAL INDIVIDUAL DATASET")
+print(indvdly.head(5))
+
+
+#-------------------------------------------------#
+# Part 2 - Process Organisation Part              # 
+#-------------------------------------------------#
+# PROCESS MAIN CUSTOMER FILE (ORGANISATION PART)  #
+#   - Keep only GENDER = 'O'                      #
+#-------------------------------------------------#
+main_org = (
+    main_df
+    .filter(pl.col("GENDER") == "O")
+    .select([
+        "CISNO", "BANKNO", "MAIN_ENTITY_TYPE", "BRANCH",
+        "CUSTNAME", "BIRTHDATE", "GENDER"
+    ])
+    .sort("CISNO")
+)
+
+print("MAIN (ORGANISATION)")
+print(main_org.head(5))
+
+
+#-------------------#
+# PROCESS ORG FILE  #
+#-------------------#
+org_df = (
+    org_df
+    .select([
+        "CUSTNO","IDTYPE","ID","BRANCH","FIRST_CREATE_DATE",
+        "FIRST_CREATE_TIME","FIRST_CREATE_OPER","LAST_UPDATE_DATE",
+        "LAST_UPDATE_TIME","LAST_UPDATE_OPER","LONG_NAME","ENTITY_TYPE",
+        "BNM_ASSIGNED_ID","REGISTRATION_DATE","MSIC2008","RESIDENCY_STATUS",
+        "CORPORATE_STATUS","CUSTOMER_CODE","CITIZENSHIP","ADDR_LINE_1",
+        "ADDR_LINE_2","ADDR_LINE_3","ADDR_LINE_4","ADDR_LINE_5","POSTCODE",
+        "TOWN_CITY","STATE_CODE","COUNTRY","ADDR_LAST_UPDATE","ADDR_LAST_UPTIME",
+        "PHONE_PRIMARY","PHONE_SECONDARY","PHONE_FAX","PHONE_MOBILE",
+        "PHONE_PAC","ENABLE_TAB"
+    ])
+    .rename({"CUSTNO": "CISNO"})
+)
+
+org = (
+    org_df
+    .select([
+        "CISNO","IDTYPE","ID","BRANCH","FIRST_CREATE_DATE",
+        "FIRST_CREATE_TIME","FIRST_CREATE_OPER","LAST_UPDATE_DATE",
+        "LAST_UPDATE_TIME","LAST_UPDATE_OPER","LONG_NAME","ENTITY_TYPE",
+        "BNM_ASSIGNED_ID","REGISTRATION_DATE","MSIC2008","RESIDENCY_STATUS",
+        "CORPORATE_STATUS","CUSTOMER_CODE","CITIZENSHIP","ADDR_LINE_1",
+        "ADDR_LINE_2","ADDR_LINE_3","ADDR_LINE_4","ADDR_LINE_5","POSTCODE",
+        "TOWN_CITY","STATE_CODE","COUNTRY","ADDR_LAST_UPDATE","ADDR_LAST_UPTIME",
+        "PHONE_PRIMARY","PHONE_SECONDARY","PHONE_FAX","PHONE_MOBILE",
+        "PHONE_PAC","ENABLE_TAB"
+    ])
+    .sort(["CISNO","IDTYPE","ID"])
+)
+
+print("ORGANISATION FILE")
+print(org.head(5))
+
+
+#-------------------#
+# MERGE ORG + CART  #
+#-------------------#
+custinfo_org = (
+    org.join(cart, on=["CISNO","IDTYPE","ID"], how="left")
+)
+
+print("CUSTINFO (ORG)")
+print(custinfo_org.head(5))
+
+
+#------------------------------------#
+# MERGE MAIN (ORG) + CUSTINFO (ORG)  #
+#------------------------------------#
+orgdly = (
+    main_org.join(custinfo_org, on="CISNO", how="inner")
+)
+
+orgdly = orgdly.unique(subset=["CISNO","IDTYPE","ID"])
+orgdly = orgdly.sort("CISNO")
+
+print("FINAL ORGANISATION DATASET")
+print(orgdly.head(5))
+
+
+#-------------------------------------------------#
+# Part 3 - Output                                 #
+#-------------------------------------------------#
+# SAVE RESULTS TO PARQUET                         #
+#-------------------------------------------------#
+indvdly.write_parquet("cis_internal/output/INDVDLY.parquet")
+orgdly.write_parquet("cis_internal/output/ORGDLY.parquet")
+indvdly.write_csv("cis_internal/output/INDVDLY.csv")
+orgdly.write_csv("cis_internal/output/ORGDLY.CSV")
