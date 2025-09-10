@@ -1,84 +1,64 @@
-import polars as pl
+//CCRNMX3B JOB 224T,CLASS=A,MSGCLASS=X,REGION=8M,NOTIFY=&SYSUID         00010104
+//STATS#01 EXEC SAS609
+//NAMEFILE DD DISP=SHR,DSN=CCRIS.CISNAME.TEMP
+//RMRKFILE DD DISP=SHR,DSN=CCRIS.CISRMRK.LONGNAME
+//OUTFILE  DD DSN=CCRIS.CISNAME.GDG,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=350,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+DATA NAME;
+  INFILE NAMEFILE;                          /* SOURCE CICRNMTL */
+  INPUT  @001  CUSTNO             $11.
+         @012  CUSTNAME           $40.
+         @052  ADREFNO            $11.
+         @063  PRIPHONE           $11.
+         @074  SECPHONE           $11.
+         @085  CUSTTYPE           $ 1.
+         @086  CUSTNAME           $40.
+         @126  MOBILEPHONE        $11. ;
+RUN;
+PROC SORT  DATA=NAME NODUPKEY; BY CUSTNO ;RUN;
+PROC PRINT DATA=NAME(OBS=5);TITLE 'NAME';RUN;
 
-# -----------------------------
-# READ SOURCE DATA (Equivalent to INFILE)
-# -----------------------------
-# Replace 'read_parquet' with your actual paths or CSV files if needed
-namefile = pl.read_parquet("CCRIS_CISNAME_TEMP.parquet")
-rmrkfile = pl.read_parquet("CCRIS_CISRMRK_LONGNAME.parquet")
+DATA RMRK;
+  INFILE RMRKFILE;                          /* SOURCE CCRMRK1B */
+  INPUT  @001  BANKNO             $03.
+         @004  APPLCODE           $05.
+         @009  CUSTNO             $11.
+         @029  EFFDATE            $15.
+         @044  RMKKEYWORD         $08.
+         @052  LONGNAME           $150.     /* RMKLINE1-3      */
+         @352  RMKOPERATOR        $08.
+         @360  EXPIREDATE         $10.
+         @370  LASTMNTDATE        $10. ;
 
-# -----------------------------
-# NAME DATASET PROCESSING
-# -----------------------------
-# Keep only relevant columns to mimic SAS INPUT statement
-namefile = namefile.select([
-    pl.col("CUSTNO").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    pl.col("CUSTNAME").cast(pl.Utf8),
-    pl.col("ADREFNO").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    pl.col("PRIPHONE").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    pl.col("SECPHONE").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    pl.col("CUSTTYPE").cast(pl.Utf8),
-    pl.col("CUSTNAME1").cast(pl.Utf8),
-    pl.col("MOBILEPHONE").cast(pl.Utf8)
-])
+RUN;
+PROC SORT  DATA=RMRK NODUPKEY; BY CUSTNO ;RUN;
+PROC PRINT DATA=RMRK(OBS=5);TITLE 'REMARKS';RUN;
 
-# Remove duplicates by CUSTNO
-namefile = namefile.unique(subset=["CUSTNO"])
+DATA MERGE;
+     MERGE NAME (IN=A) RMRK (IN=B); BY CUSTNO;
+     IF A;
+RUN;
+PROC SORT  DATA=MERGE; BY CUSTNO ;RUN;
+PROC PRINT DATA=MERGE(OBS=5);TITLE 'MERGE';RUN;
 
-# Print first 5 rows (like PROC PRINT OBS=5)
-print("NAME:")
-print(namefile.head(5))
-
-# -----------------------------
-# REMARKS DATASET PROCESSING
-# -----------------------------
-rmrkfile = rmrkfile.select([
-    pl.col("BANKNO").cast(pl.Utf8),
-    pl.col("APPLCODE").cast(pl.Utf8),
-    pl.col("CUSTNO").cast(pl.Utf8),
-    pl.col("EFFDATE").cast(pl.Utf8),
-    pl.col("RMKKEYWORD").cast(pl.Utf8),
-    pl.col("LONGNAME").cast(pl.Utf8),
-    pl.col("RMKOPERATOR").cast(pl.Utf8),
-    pl.col("EXPIREDATE").cast(pl.Utf8),
-    pl.col("LASTMNTDATE").cast(pl.Utf8)
-])
-
-# Remove duplicates by CUSTNO
-rmrkfile = rmrkfile.unique(subset=["CUSTNO"])
-
-# Print first 5 rows
-print("REMARKS:")
-print(rmrkfile.head(5))
-
-# -----------------------------
-# MERGE NAME AND REMARKS (Equivalent to DATA MERGE; MERGE NAME RMRK BY CUSTNO; IF A;)
-# -----------------------------
-merge = namefile.join(rmrkfile, on="CUSTNO", how="left")  # left join to mimic IF A;
-
-# Sort by CUSTNO
-merge = merge.sort("CUSTNO")
-
-# Print first 5 rows
-print("MERGE:")
-print(merge.head(5))
-
-# -----------------------------
-# OUTPUT DETAIL REPORT (Equivalent to DATA OUT; PUT ...)
-# -----------------------------
-# Keep columns in the same order as SAS PUT statement
-output = merge.select([
-    "CUSTNO",
-    "CUSTNAME",
-    "ADREFNO",
-    "PRIPHONE",
-    "SECPHONE",
-    "CUSTTYPE",
-    "CUSTNAME1",
-    "MOBILEPHONE",
-    "LONGNAME"
-])
-
-# Write to Parquet (or CSV if needed)
-output.write_parquet("cis_internal/output/CCRIS_CISNAME_OUT.parquet")
-output.write_csv("cis_internal/output/CCRIS_CISNAME_OUT.csv")
+  /*----------------------------------------------------------------*/
+  /*   OUTPUT DETAIL REPORT                                         */
+  /*----------------------------------------------------------------*/
+ DATA OUT;
+   SET MERGE;
+   FILE OUTFILE;
+   PUT    @001  CUSTNO             $11.
+          @012  CUSTNAME           $40.
+          @052  ADREFNO            $11.
+          @063  PRIPHONE           $11.
+          @074  SECPHONE           $11.
+          @085  CUSTTYPE           $ 1.
+          @086  CUSTNAME           $40.
+          @126  MOBILEPHONE        $11.
+          @137  LONGNAME           $150.  ;  /* ESMR 2016-2207*/
+ RUN;
+
