@@ -177,7 +177,8 @@ print(RIGHTOUT.to_pandas().head(5))
 # Part 3 - COMBINE + DEDUP              #
 #---------------------------------------#
 
-all_output = con.execute("""
+# Combine LEFT + RIGHT and drop expired (EXPDATE < batchdate)
+all_output = con.execute(f"""
     SELECT 
         l.CUSTNO1, l.INDORG1, l.CODE1, l.DESC1,
         l.CUSTNO2, r.INDORG2, r.CODE2, r.DESC2,
@@ -187,6 +188,7 @@ all_output = con.execute("""
         l.EFFDATE
     FROM LEFTOUT l
     LEFT JOIN RIGHTOUT r ON l.CUSTNO2 = r.CUSTNO2
+    WHERE (l.EXPDATE IS NULL OR l.EXPDATE >= DATE '{batchdate.strftime("%Y-%m-%d")}')
 """).arrow()
 
 # Dedup
@@ -196,9 +198,9 @@ all_output_unique = con.execute("""
            CUSTNAME1, ALIAS1, CUSTNAME2, ALIAS2,
            OLDIC1, BASICGRPCODE1, OLDIC2, BASICGRPCODE2,
            EFFDATE
-    FROM ({}) t
+    FROM all_output
     ORDER BY CUSTNO1
-""".format("SELECT * FROM all_output")).arrow()
+""").arrow()
 
 duplicates = con.execute("""
     SELECT * FROM all_output
