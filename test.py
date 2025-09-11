@@ -2,12 +2,6 @@ import polars as pl
 from datetime import datetime
 from reader import load_input
 
-#---------------------------------------------------------------------#
-# Original Program: CICISCOM                                          #
-#---------------------------------------------------------------------#
-# ESMR 2019-1394 CONTROL FILES FOR CUSTOMER CIS AND IDIC              #
-#---------------------------------------------------------------------#
-
 # --------------------------#
 # 1. Load parquet datasets  #
 # --------------------------#
