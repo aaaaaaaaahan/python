@@ -1,191 +1,176 @@
-import duckdb
-import pyarrow.parquet as pq
-import pyarrow.csv as pc
-from reader import parquet_path
-import datetime
-
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
+import polars as pl
+from datetime import datetime
+from reader import load_input
 
 #---------------------------------------------------------------------#
-# Original Program: CCRNIDIC                                          #
+# Original Program: CICISCOM                                          #
 #---------------------------------------------------------------------#
-#-TO MERGE ACCOUNT, NAME AND ALIAS INTO ONE DAILY FILE. INCL:UNICARD  #
-# ESMR 2019-1394 TO EXTRACT DATA FROM IDIC FOR REPORTING PURPOSES     #
-# ESMR 2018-512                                                       #
-# ESMR 2018-911                                                       #
-# ESMR 2018-1851                                                      #
-#---------------------------------------------------------------------#
-# Migration Timeline                                                  #
-# 8Sep2025  - Done convert to python                                  #
-# 10Sep2025 - Add DuckDB and PyArrow                                  #
+# ESMR 2019-1394 CONTROL FILES FOR CUSTOMER CIS AND IDIC              #
 #---------------------------------------------------------------------#
 
-#------------------------#
-# READ PARQUET DATASETS  #
-#------------------------#
-con = duckdb.connect()
+# --------------------------#
+# 1. Load parquet datasets  #
+# --------------------------#
+cisfile = load_input("CIS_CUST_DAILY")
+indfile = load_input("INDVDLY")
+demofile = load_input("BANKCTRL_DEMOCODE")
 
-#-----------------------------------------------#
-# Part 1 - Process Individual Part              #
-#-----------------------------------------------#
+# ----------------------#
+# 2. Get reporting date #
+# ----------------------#
+today = datetime.today()
+YEAR = f"{today.year:04d}"
+MONTH = f"{today.month:02d}"
+DAY = f"{today.day:02d}"
+TIMEX = today.strftime("%H%M%S")
 
-# MAIN (INDIVIDUAL)
-con.execute(f"""
-    CREATE VIEW main_indv AS
-    SELECT CISNO, MAIN_ENTITY_TYPE, BRANCH,
-           CUSTNAME, BIRTHDATE, GENDER
-    FROM '{parquet_path("CIDICUST_FB.parquet")}'
-    WHERE GENDER <> 'O'
-    ORDER BY CISNO
-""")
+# ------------------------#
+# 3. Process CIS dataset  #
+# ------------------------#
+cis = (
+    cisfile
+    .with_columns([
+        pl.col("CUSTNO").alias("CUSTNOX"),
+        pl.col("PRIPHONE").cast(pl.Int64).fill_null(0).cast(pl.Utf8).str.zfill(11).alias("PRIPHONEX"),
+        pl.col("SECPHONE").cast(pl.Int64).fill_null(0).cast(pl.Utf8).str.zfill(11).alias("SECPHONEX"),
+        pl.col("MOBILEPH").cast(pl.Int64).fill_null(0).cast(pl.Utf8).str.zfill(11).alias("MOBILEPHX"),
+        pl.col("FAX").cast(pl.Int64).fill_null(0).cast(pl.Utf8).str.zfill(11).alias("FAXX"),
+        pl.col("ADDREF").cast(pl.Int64).fill_null(0).cast(pl.Utf8).str.zfill(11).alias("ADDREFX"),
+    ])
+)
 
+# Derive OPEN DATE
+cis = cis.with_columns([
+    pl.col("CUSTOPENDATE").cast(pl.Utf8).alias("CUSTOPEN")
+])
+cis = cis.with_columns([
+    pl.when(pl.col("CUSTOPEN") == "00002000000")
+      .then("OPENDT" == "20000101")
+      .otherwise(
+          pl.col("CUSTOPEN").str.slice(4, 4) +  # year
+          pl.col("CUSTOPEN").str.slice(0, 2) +  # month
+          pl.col("CUSTOPEN").str.slice(2, 2)    # day
+      )
+      .alias("OPENDT")
+])
 
-# INDIVIDUAL FILE
-con.execute(f"""
-    CREATE VIEW indv AS               
-    SELECT CUSTNO AS CISNO, IDTYPE, ID, CUSTBRANCH,
-           FIRST_CREATE_DATE, FIRST_CREATE_TIME, FIRST_CREATE_OPER,
-           LAST_UPDATE_DATE, LAST_UPDATE_TIME, LAST_UPDATE_OPER,
-           LONGNAME, ENTITYTYPE, BNM_ASSIGNED_ID, OLDIC,
-           CITIZENSHIP, PRCOUNTRY, RESIDENCY_STATUS, CUSTOMER_CODE,
-           ADDRLINE1, ADDRLINE2, ADDRLINE3, ADDRLINE4, ADDRLINE5,
-           POSTCODE, TOWN_CITY, STATE_CODE, COUNTRY,
-           ADDR_LAST_UPDATE, ADDR_LAST_UPTIME,
-           PHONE_HOME, PHONE_BUSINESS, PHONE_FAX, PHONE_MOBILE, PHONE_PAC,
-           EMPLOYER_NAME, MASCO2008, MASCO2012,
-           EMPLOYMENT_TYPE, EMPLOYMENT_SECTOR,
-           EMPLOYMENT_LAST_UPDATE, EMPLOYMENT_LAST_UPTIME,
-           INCOME_AMT, ENABLE_TAB
-    FROM '{parquet_path("CIDINDVT_FB.parquet")}'
-    ORDER BY CISNO, IDTYPE, ID
-""")
+# HRCALL concat (HRC01..HRC20)
+hrc_cols = [f"HRC{i:02d}" for i in range(1, 21)]
+cis = cis.with_columns([
+    pl.concat_str([pl.col(c).cast(pl.Utf8).str.zfill(3) for c in hrc_cols]).alias("HRCALL")
+])
 
+# Drop duplicates by CUSTNOX
+cis = cis.unique(subset=["CUSTNOX"])
+print("CIS: ")
+print(cis.head(5))
 
-# CART FILE
-cart = con.execute(f"""
-    CREATE VIEW cart AS
-    SELECT APPL_CODE, APPL_NO, PRI_SEC, RELATIONSHIP,
-           LPAD(CAST(CUSTNO AS VARCHAR), 11, '0') AS CISNO,
-           IDTYPE, ID, AA_REF_NO, EFF_DATE,
-           EFF_TIME, LAST_MNT_DATE, LAST_MNT_TIME
-    FROM '{parquet_path("CIDICART_FB.parquet")}'
-    ORDER BY CISNO, IDTYPE, ID
-""")
+# ----------------------------------------#
+# 4. Process DEMOFILE (split by category) #
+# ----------------------------------------#
+demofile = demofile.rename({
+    "RLENDESC":"CODEDESC"
+})
 
+sales = (
+    demofile.filter(pl.col("DEMOCATEGORY") == "SALES")
+    .select([
+        pl.col("DEMOCODE").alias("SALES"),
+        pl.col("CODEDESC").alias("SALDESC")
+    ])
+    .unique(subset=["SALES"])
+)
 
-# MERGE INDIVIDUAL + CART
-con.execute("""
-    CREATE VIEW custinfo_indv AS
-    SELECT i.*, c.APPL_CODE, c.APPL_NO, c.PRI_SEC, c.RELATIONSHIP,
-           c.AA_REF_NO, c.EFF_DATE, c.EFF_TIME, c.LAST_MNT_DATE, c.LAST_MNT_TIME
-    FROM indv i
-    LEFT JOIN cart c
-    ON i.CISNO = c.CISNO AND i.IDTYPE = c.IDTYPE AND i.ID = c.ID
-""")
+print("Sales: ")
+print(sales.head(5))
 
+restr = (
+    demofile.filter(pl.col("DEMOCATEGORY") == "RESTR")
+    .select([
+        pl.col("DEMOCODE").alias("RESTR"),
+        pl.col("CODEDESC").alias("RESDESC")
+    ])
+    .unique(subset=["RESTR"])
+)
 
-# MERGE MAIN + CUSTINFO (INDIVIDUAL)
-indvdly = """
-    SELECT DISTINCT m.CISNO, m.MAIN_ENTITY_TYPE, m.BRANCH,
-           m.CUSTNAME, m.BIRTHDATE, m.GENDER,
-           ci.*
-           ,{year} AS year
-           ,{month} AS month
-           ,{day} AS day
-    FROM main_indv m
-    INNER JOIN custinfo_indv ci ON m.CISNO = ci.CISNO
-    ORDER BY m.CISNO
-""".format(year=year,month=month,day=day)
+print("Restr: ")
+print(restr.head(5))
 
-#final_indvdly = con.execute(indvdly).arrow()
+citzn = (
+    demofile.filter(pl.col("DEMOCATEGORY") == "CITZN")
+    .select([
+        pl.col("DEMOCODX").alias("CITZN"),
+        pl.col("CODEDESC").alias("CTZDESC")
+    ])
+    .unique(subset=["CITZN"])
+)
 
-#-------------------------------------------------#
-# Part 2 - Process Organisation Part              #
-#-------------------------------------------------#
+print("Citzn: ")
+print(citzn.head(5))
 
-# MAIN (ORGANISATION)
-con.execute(f"""
-    CREATE VIEW main_org AS
-    SELECT CISNO, MAIN_ENTITY_TYPE, BRANCH,
-           CUSTNAME, BIRTHDATE, GENDER
-    FROM '{parquet_path("CIDICUST_FB.parquet")}'
-    WHERE GENDER = 'O'
-    ORDER BY CISNO
-""")
+# -----------------------------#
+# 5. Process INDFILE (INDVDLY) #
+# -----------------------------#
+indv = (
+    indfile
+    .filter(pl.col("CISNO").is_not_null())
+    .with_columns([
+        pl.col("CISNO").alias("CUSTNOX")
+    ])
+)
 
+indv = indv.unique(subset=["CUSTNOX"], keep="last")  # keep last update
+indv = indv.rename({
+    "BANKNO":"BANKNO_INDV"
+})
 
-# ORGANISATION FILE
-con.execute(f"""
-    CREATE VIEW org AS
-    SELECT CUSTNO AS CISNO, IDTYPE, ID, BRANCH,
-           FIRST_CREATE_DATE, FIRST_CREATE_TIME, FIRST_CREATE_OPER,
-           LAST_UPDATE_DATE, LAST_UPDATE_TIME, LAST_UPDATE_OPER,
-           LONG_NAME, ENTITY_TYPE, BNM_ASSIGNED_ID,
-           REGISTRATION_DATE, MSIC2008, RESIDENCY_STATUS,
-           CORPORATE_STATUS, CUSTOMER_CODE, CITIZENSHIP,
-           ADDR_LINE_1, ADDR_LINE_2, ADDR_LINE_3, ADDR_LINE_4, ADDR_LINE_5,
-           POSTCODE, TOWN_CITY, STATE_CODE, COUNTRY,
-           ADDR_LAST_UPDATE, ADDR_LAST_UPTIME,
-           PHONE_PRIMARY, PHONE_SECONDARY, PHONE_FAX, PHONE_MOBILE, PHONE_PAC,
-           ENABLE_TAB
-    FROM '{parquet_path("CIDIORGT_FB.parquet")}'
-    ORDER BY CISNO, IDTYPE, ID
-""")
+# --------------------------------#
+# 6. Merge datasets step by step  #
+# --------------------------------#
+mrgcis = (
+    cis.join(indv, on="CUSTNOX", how="left")
+    .with_columns([
+        pl.lit(YEAR + MONTH + DAY + TIMEX).alias("RUNTIMESTAMP"),
+        pl.col("RESIDENCY").alias("RESTR"),
+        pl.col("CORPSTATUS").alias("SALES"),
+        pl.col("CITIZENSHIP").alias("CITZN"),
+    ])
+)
 
+print("MRGCIS: ")
+print(mrgcis.head(5))
 
-# MERGE ORG + CART
-con.execute("""
-    CREATE VIEW custinfo_org AS
-    SELECT o.*, c.APPL_CODE, c.APPL_NO, c.PRI_SEC, c.RELATIONSHIP,
-           c.AA_REF_NO, c.EFF_DATE, c.EFF_TIME, c.LAST_MNT_DATE, c.LAST_MNT_TIME
-    FROM org o
-    LEFT JOIN cart c
-    ON o.CISNO = c.CISNO AND o.IDTYPE = c.IDTYPE AND o.ID = c.ID
-""")
+mrgres = mrgcis.join(restr, on="RESTR", how="left")
+print("MRGRES: ")
+print(mrgres.head(5))
 
+mrgsal = mrgres.join(sales, on="SALES", how="left")
+print("MRGSAL: ")
+print(mrgsal.head(5))
 
-# MERGE MAIN (ORG) + CUSTINFO (ORG)
-orgdly = """
-    SELECT DISTINCT m.CISNO, m.MAIN_ENTITY_TYPE, m.BRANCH,
-           m.CUSTNAME, m.BIRTHDATE, m.GENDER,
-           co.*
-           ,{year} AS year
-           ,{month} AS month
-           ,{day} AS day
-    FROM main_org m
-    INNER JOIN custinfo_org co ON m.CISNO = co.CISNO
-    ORDER BY m.CISNO
-""".format(year=year,month=month,day=day)
+mrgctz = mrgsal.join(citzn, on="CITZN", how="left")
+print("MRGCTZ: ")
+print(mrgctz.head(5))
 
-#final_orgdly = con.execute(orgdly).arrow()
+# ------------------------#
+# 7. Final Output (OUT2)  #
+# ------------------------#
+out2 = mrgctz.select([
+    "RUNTIMESTAMP","CUSTNOX","ADDREFX","CUSTNAME","PRIPHONEX","SECPHONEX",
+    "MOBILEPHX","FAXX","ALIASKEY","ALIAS","PROCESSTIME","CUSTSTAT","TAXCODE",
+    "TAXID","CUSTBRCH","COSTCTR","CUSTMNTDATE","CUSTLASTOPER","PRIM_OFF",
+    "SEC_OFF","PRIM_LN_OFF","SEC_LN_OFF","RACE","RESIDENCY","CITIZENSHIP",
+    "OPENDT","HRCALL","EXPERIENCE","HOBBIES","RELIGION","LANGUAGE","INST_SEC",
+    "CUST_CODE","CUSTCONSENT","BASICGRPCODE","MSICCODE","MASCO2008","INCOME",
+    "EDUCATION","OCCUP","MARITALSTAT","OWNRENT","EMPNAME","DOBDOR","SICCODE",
+    "CORPSTATUS","NETWORTH","LAST_UPDATE_DATE","LAST_UPDATE_TIME",
+    "LAST_UPDATE_OPER","PRCOUNTRY","EMPLOYMENT_TYPE","EMPLOYMENT_SECTOR",
+    "EMPLOYMENT_LAST_UPDATE","BNMID","LONGNAME","INDORG","RESDESC",
+    "SALDESC","CTZDESC"
+])
+print("OUT2: ")
+print(out2.head(5))
 
-#-------------------------------------------------#
-# Part 3 - Output with PyArrow                    #
-#-------------------------------------------------#
-
-# Write INDVDLY
-#pq.write_table(final_indvdly, "/host/cis/parquet/INDVDLY.parquet")
-# Write Hive-Partition Parquet
-con.execute(f"""
-COPY ({indvdly})
-TO 'output/cis_internal/CIS_IDIC_DAILY_INDVDLY'
-(FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
-""")
-
-final_indvdly = con.execute(indvdly).arrow()
-
-pc.write_csv(final_indvdly, "Programmer/jkh/output/CIS_IDIC_DAILY_INDVDLY.csv")
-
-# Write ORGDLY
-#pq.write_table(final_orgdly, "/host/cis/parquet/ORGDLY.parquet")
-# Write Hive-Partition Parquet
-con.execute(f"""
-COPY ({orgdly})
-TO 'output/cis_internal/CIS_IDIC_DAILY_ORGDLY'
-(FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
-""")
-
-final_orgdly = con.execute(orgdly).arrow()
-
-pc.write_csv(final_orgdly, "Programmer/jkh/output/CIS_IDIC_DAILY_ORGDLY.csv")
+# Save final output
+out2.write_parquet("cis_internal/output/COMBINECUSTALL.parquet")
+out2.write_csv("cis_internal/output/COMBINECUSTALL.csv")
