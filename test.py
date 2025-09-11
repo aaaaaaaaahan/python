@@ -1,224 +1,191 @@
 import duckdb
-import pyarrow as pa
 import pyarrow.parquet as pq
-import pyarrow.csv as csv
-from datetime import date, timedelta
+import pyarrow.csv as pc
+from reader import parquet_path
+import datetime
 
-#-------------------------------------------------------------------#
-# Program: CCRCCRLN  (DuckDB + PyArrow Version)                     #
-#-------------------------------------------------------------------#
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-# Set batchdate (SAS batchdate = one day before)
-batchdate = date.today() - timedelta(days=1)
-print("Batchdate:", batchdate.strftime("%Y-%m-%d"))
+#---------------------------------------------------------------------#
+# Original Program: CCRNIDIC                                          #
+#---------------------------------------------------------------------#
+#-TO MERGE ACCOUNT, NAME AND ALIAS INTO ONE DAILY FILE. INCL:UNICARD  #
+# ESMR 2019-1394 TO EXTRACT DATA FROM IDIC FOR REPORTING PURPOSES     #
+# ESMR 2018-512                                                       #
+# ESMR 2018-911                                                       #
+# ESMR 2018-1851                                                      #
+#---------------------------------------------------------------------#
+# Migration Timeline                                                  #
+# 8Sep2025  - Done convert to python                                  #
+# 10Sep2025 - Add DuckDB and PyArrow                                  #
+#---------------------------------------------------------------------#
 
-# Connect DuckDB
+#------------------------#
+# READ PARQUET DATASETS  #
+#------------------------#
 con = duckdb.connect()
 
-#----------------------------#
-# Register input parquet files
-#----------------------------#
-base_path = "/abc/test/"
+#-----------------------------------------------#
+# Part 1 - Process Individual Part              #
+#-----------------------------------------------#
 
+# MAIN (INDIVIDUAL)
 con.execute(f"""
-    CREATE OR REPLACE VIEW RLENCC_FB AS 
-    SELECT * FROM read_parquet('{base_path}RLENCC_FB.parquet')
+    CREATE VIEW main_indv AS
+    SELECT CISNO, MAIN_ENTITY_TYPE, BRANCH,
+           CUSTNAME, BIRTHDATE, GENDER
+    FROM '{parquet_path("CIDICUST_FB.parquet")}'
+    WHERE GENDER <> 'O'
+    ORDER BY CISNO
 """)
 
+
+# INDIVIDUAL FILE
 con.execute(f"""
-    CREATE OR REPLACE VIEW BANKCTRL_RLENCODE_CC AS 
-    SELECT * FROM read_parquet('{base_path}BANKCTRL_RLENCODE_CC.parquet')
+    CREATE VIEW indv AS               
+    SELECT CUSTNO AS CISNO, IDTYPE, ID, CUSTBRANCH,
+           FIRST_CREATE_DATE, FIRST_CREATE_TIME, FIRST_CREATE_OPER,
+           LAST_UPDATE_DATE, LAST_UPDATE_TIME, LAST_UPDATE_OPER,
+           LONGNAME, ENTITYTYPE, BNM_ASSIGNED_ID, OLDIC,
+           CITIZENSHIP, PRCOUNTRY, RESIDENCY_STATUS, CUSTOMER_CODE,
+           ADDRLINE1, ADDRLINE2, ADDRLINE3, ADDRLINE4, ADDRLINE5,
+           POSTCODE, TOWN_CITY, STATE_CODE, COUNTRY,
+           ADDR_LAST_UPDATE, ADDR_LAST_UPTIME,
+           PHONE_HOME, PHONE_BUSINESS, PHONE_FAX, PHONE_MOBILE, PHONE_PAC,
+           EMPLOYER_NAME, MASCO2008, MASCO2012,
+           EMPLOYMENT_TYPE, EMPLOYMENT_SECTOR,
+           EMPLOYMENT_LAST_UPDATE, EMPLOYMENT_LAST_UPTIME,
+           INCOME_AMT, ENABLE_TAB
+    FROM '{parquet_path("CIDINDVT_FB.parquet")}'
+    ORDER BY CISNO, IDTYPE, ID
 """)
 
-con.execute(f"""
-    CREATE OR REPLACE VIEW PRIMNAME_OUT AS 
-    SELECT * FROM read_parquet('{base_path}PRIMNAME_OUT.parquet')
+
+# CART FILE
+cart = con.execute(f"""
+    CREATE VIEW cart AS
+    SELECT APPL_CODE, APPL_NO, PRI_SEC, RELATIONSHIP,
+           LPAD(CAST(CUSTNO AS VARCHAR), 11, '0') AS CISNO,
+           IDTYPE, ID, AA_REF_NO, EFF_DATE,
+           EFF_TIME, LAST_MNT_DATE, LAST_MNT_TIME
+    FROM '{parquet_path("CIDICART_FB.parquet")}'
+    ORDER BY CISNO, IDTYPE, ID
 """)
 
-con.execute(f"""
-    CREATE OR REPLACE VIEW ALLALIAS_OUT AS 
-    SELECT * FROM read_parquet('{base_path}ALLALIAS_OUT.parquet')
+
+# MERGE INDIVIDUAL + CART
+con.execute("""
+    CREATE VIEW custinfo_indv AS
+    SELECT i.*, c.APPL_CODE, c.APPL_NO, c.PRI_SEC, c.RELATIONSHIP,
+           c.AA_REF_NO, c.EFF_DATE, c.EFF_TIME, c.LAST_MNT_DATE, c.LAST_MNT_TIME
+    FROM indv i
+    LEFT JOIN cart c
+    ON i.CISNO = c.CISNO AND i.IDTYPE = c.IDTYPE AND i.ID = c.ID
 """)
 
+
+# MERGE MAIN + CUSTINFO (INDIVIDUAL)
+indvdly = """
+    SELECT DISTINCT m.CISNO, m.MAIN_ENTITY_TYPE, m.BRANCH,
+           m.CUSTNAME, m.BIRTHDATE, m.GENDER,
+           ci.*
+           ,{year} AS year
+           ,{month} AS month
+           ,{day} AS day
+    FROM main_indv m
+    INNER JOIN custinfo_indv ci ON m.CISNO = ci.CISNO
+    ORDER BY m.CISNO
+""".format(year=year,month=month,day=day)
+
+#final_indvdly = con.execute(indvdly).arrow()
+
+#-------------------------------------------------#
+# Part 2 - Process Organisation Part              #
+#-------------------------------------------------#
+
+# MAIN (ORGANISATION)
 con.execute(f"""
-    CREATE OR REPLACE VIEW ALLCUST_FB AS 
-    SELECT * FROM read_parquet('{base_path}ALLCUST_FB.parquet')
+    CREATE VIEW main_org AS
+    SELECT CISNO, MAIN_ENTITY_TYPE, BRANCH,
+           CUSTNAME, BIRTHDATE, GENDER
+    FROM '{parquet_path("CIDICUST_FB.parquet")}'
+    WHERE GENDER = 'O'
+    ORDER BY CISNO
 """)
 
-#--------------------------------#
-# Part 1 - PROCESSING LEFT SIDE  #
-#--------------------------------#
 
-# LEFTOUT
-LEFTOUT = con.execute("""
-    WITH cccode AS (
-        SELECT RLENTYPE AS TYPE, RLENCODE AS CODE1, RLENDESC AS DESC1
-        FROM BANKCTRL_RLENCODE_CC
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY RLENCODE ORDER BY RLENCODE) = 1
-    ),
-    ciscust AS (
-        SELECT CUSTNO AS CUSTNO1, TAXID AS OLDIC1, BASICGRPCODE AS BASICGRPCODE1
-        FROM ALLCUST_FB
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
-    ),
-    cisname AS (
-        SELECT CUSTNO AS CUSTNO1, INDORG AS INDORG1, CUSTNAME AS CUSTNAME1
-        FROM PRIMNAME_OUT
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
-    ),
-    cisalias AS (
-        SELECT CUSTNO AS CUSTNO1, NAME_LINE AS ALIAS1
-        FROM ALLALIAS_OUT
-    ),
-    ccrlen1 AS (
-        SELECT 
-            CUSTNO AS CUSTNO1,
-            TRY_CAST(EFFDATE AS BIGINT) AS EFFDATE,
-            CUSTNO2,
-            TRY_CAST(CODE1 AS BIGINT) AS CODE1,
-            TRY_CAST(CODE2 AS BIGINT) AS CODE2,
-            EXPIRE_DATE AS EXPDATE1
-        FROM RLENCC_FB
-    ),
-    ccrlen_clean AS (
-        SELECT *,
-               NULLIF(TRIM(EXPDATE1), '') AS EXPDATE1_CLEAN,
-               TRY_CAST(EXPDATE1 AS DATE) AS EXPDATE
-        FROM ccrlen1
-        WHERE COALESCE(TRIM(EXPDATE1), '') = ''
-    ),
-    idx_l01 AS (
-        SELECT l.*, c.DESC1
-        FROM ccrlen_clean l
-        LEFT JOIN cccode c ON l.CODE1 = c.CODE1
-    ),
-    idx_l02 AS (
-        SELECT l.*, n.INDORG1, n.CUSTNAME1
-        FROM idx_l01 l
-        LEFT JOIN cisname n ON l.CUSTNO1 = n.CUSTNO1
-    ),
-    idx_l03 AS (
-        SELECT l.*, a.ALIAS1
-        FROM idx_l02 l
-        LEFT JOIN cisalias a ON l.CUSTNO1 = a.CUSTNO1
-    ),
-    idx_l04 AS (
-        SELECT l.*, c.OLDIC1, c.BASICGRPCODE1
-        FROM idx_l03 l
-        LEFT JOIN ciscust c ON l.CUSTNO1 = c.CUSTNO1
-    )
-    SELECT CUSTNO1, INDORG1, CODE1, DESC1, CUSTNO2, CODE2, EXPDATE, 
-           CUSTNAME1, ALIAS1, OLDIC1, BASICGRPCODE1, EFFDATE
-    FROM idx_l04
-""").arrow()
+# ORGANISATION FILE
+con.execute(f"""
+    CREATE VIEW org AS
+    SELECT CUSTNO AS CISNO, IDTYPE, ID, BRANCH,
+           FIRST_CREATE_DATE, FIRST_CREATE_TIME, FIRST_CREATE_OPER,
+           LAST_UPDATE_DATE, LAST_UPDATE_TIME, LAST_UPDATE_OPER,
+           LONG_NAME, ENTITY_TYPE, BNM_ASSIGNED_ID,
+           REGISTRATION_DATE, MSIC2008, RESIDENCY_STATUS,
+           CORPORATE_STATUS, CUSTOMER_CODE, CITIZENSHIP,
+           ADDR_LINE_1, ADDR_LINE_2, ADDR_LINE_3, ADDR_LINE_4, ADDR_LINE_5,
+           POSTCODE, TOWN_CITY, STATE_CODE, COUNTRY,
+           ADDR_LAST_UPDATE, ADDR_LAST_UPTIME,
+           PHONE_PRIMARY, PHONE_SECONDARY, PHONE_FAX, PHONE_MOBILE, PHONE_PAC,
+           ENABLE_TAB
+    FROM '{parquet_path("CIDIORGT_FB.parquet")}'
+    ORDER BY CISNO, IDTYPE, ID
+""")
 
-print("LEFTOUT sample:")
-print(LEFTOUT.to_pandas().head(5))
 
-#--------------------------------#
-# Part 2 - PROCESSING RIGHT SIDE #
-#--------------------------------#
+# MERGE ORG + CART
+con.execute("""
+    CREATE VIEW custinfo_org AS
+    SELECT o.*, c.APPL_CODE, c.APPL_NO, c.PRI_SEC, c.RELATIONSHIP,
+           c.AA_REF_NO, c.EFF_DATE, c.EFF_TIME, c.LAST_MNT_DATE, c.LAST_MNT_TIME
+    FROM org o
+    LEFT JOIN cart c
+    ON o.CISNO = c.CISNO AND o.IDTYPE = c.IDTYPE AND o.ID = c.ID
+""")
 
-RIGHTOUT = con.execute("""
-    WITH cccode AS (
-        SELECT RLENTYPE AS TYPE, RLENCODE AS CODE2, RLENDESC AS DESC2
-        FROM BANKCTRL_RLENCODE_CC
-    ),
-    ciscust AS (
-        SELECT CUSTNO AS CUSTNO2, TAXID AS OLDIC2, BASICGRPCODE AS BASICGRPCODE2
-        FROM ALLCUST_FB
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
-    ),
-    cisname AS (
-        SELECT CUSTNO AS CUSTNO2, INDORG AS INDORG2, CUSTNAME AS CUSTNAME2
-        FROM PRIMNAME_OUT
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
-    ),
-    cisalias AS (
-        SELECT CUSTNO AS CUSTNO2, NAME_LINE AS ALIAS2
-        FROM ALLALIAS_OUT
-    ),
-    ccrlen2 AS (
-        SELECT l.*, 
-               EXTRACT(YEAR FROM EXPDATE) AS EXPYY,
-               EXTRACT(MONTH FROM EXPDATE) AS EXPMM,
-               EXTRACT(DAY FROM EXPDATE) AS EXPDD
-        FROM ({LEFT}) l
-    ),
-    idx_r01 AS (
-        SELECT l.*, c.DESC2
-        FROM ccrlen2 l
-        LEFT JOIN cccode c ON l.CODE2 = c.CODE2
-    ),
-    idx_r02 AS (
-        SELECT l.*, n.INDORG2, n.CUSTNAME2
-        FROM idx_r01 l
-        LEFT JOIN cisname n ON l.CUSTNO2 = n.CUSTNO2
-    ),
-    idx_r03 AS (
-        SELECT l.*, a.ALIAS2
-        FROM idx_r02 l
-        LEFT JOIN cisalias a ON l.CUSTNO2 = a.CUSTNO2
-    ),
-    idx_r04 AS (
-        SELECT l.*, c.OLDIC2, c.BASICGRPCODE2
-        FROM idx_r03 l
-        LEFT JOIN ciscust c ON l.CUSTNO2 = c.CUSTNO2
-    )
-    SELECT CUSTNO2, INDORG2, CODE2, DESC2, CUSTNO1, CODE1, EXPDATE,
-           CUSTNAME2, ALIAS2, OLDIC2, BASICGRPCODE2, EFFDATE
-    FROM idx_r04
-""".format(LEFT="SELECT * FROM LEFTOUT")).arrow()
 
-print("RIGHTOUT sample:")
-print(RIGHTOUT.to_pandas().head(5))
+# MERGE MAIN (ORG) + CUSTINFO (ORG)
+orgdly = """
+    SELECT DISTINCT m.CISNO, m.MAIN_ENTITY_TYPE, m.BRANCH,
+           m.CUSTNAME, m.BIRTHDATE, m.GENDER,
+           co.*
+           ,{year} AS year
+           ,{month} AS month
+           ,{day} AS day
+    FROM main_org m
+    INNER JOIN custinfo_org co ON m.CISNO = co.CISNO
+    ORDER BY m.CISNO
+""".format(year=year,month=month,day=day)
 
-#---------------------------------------#
-# Part 3 - COMBINE + DEDUP              #
-#---------------------------------------#
+#final_orgdly = con.execute(orgdly).arrow()
 
-# Combine LEFT + RIGHT and drop expired (EXPDATE < batchdate)
-all_output = con.execute(f"""
-    SELECT 
-        l.CUSTNO1, l.INDORG1, l.CODE1, l.DESC1,
-        l.CUSTNO2, r.INDORG2, r.CODE2, r.DESC2,
-        l.EXPDATE,
-        l.CUSTNAME1, l.ALIAS1, r.CUSTNAME2, r.ALIAS2,
-        l.OLDIC1, l.BASICGRPCODE1, r.OLDIC2, r.BASICGRPCODE2,
-        l.EFFDATE
-    FROM LEFTOUT l
-    LEFT JOIN RIGHTOUT r ON l.CUSTNO2 = r.CUSTNO2
-    WHERE (l.EXPDATE IS NULL OR l.EXPDATE >= DATE '{batchdate.strftime("%Y-%m-%d")}')
-""").arrow()
+#-------------------------------------------------#
+# Part 3 - Output with PyArrow                    #
+#-------------------------------------------------#
 
-# Dedup
-all_output_unique = con.execute("""
-    SELECT DISTINCT CUSTNO1, CUSTNO2, CODE1, CODE2,
-           INDORG1, DESC1, INDORG2, DESC2, EXPDATE,
-           CUSTNAME1, ALIAS1, CUSTNAME2, ALIAS2,
-           OLDIC1, BASICGRPCODE1, OLDIC2, BASICGRPCODE2,
-           EFFDATE
-    FROM all_output
-    ORDER BY CUSTNO1
-""").arrow()
+# Write INDVDLY
+#pq.write_table(final_indvdly, "/host/cis/parquet/INDVDLY.parquet")
+# Write Hive-Partition Parquet
+con.execute(f"""
+COPY ({indvdly})
+TO 'output/cis_internal/CIS_IDIC_DAILY_INDVDLY'
+(FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+""")
 
-duplicates = con.execute("""
-    SELECT * FROM all_output
-    EXCEPT SELECT * FROM all_output_unique
-""").arrow()
+final_indvdly = con.execute(indvdly).arrow()
 
-print("Unique sample:")
-print(all_output_unique.to_pandas().head(5))
-print("Duplicates sample:")
-print(duplicates.to_pandas().head(5))
+pc.write_csv(final_indvdly, "Programmer/jkh/output/CIS_IDIC_DAILY_INDVDLY.csv")
 
-#---------------------------------------#
-# SAVE OUTPUT                           #
-#---------------------------------------#
+# Write ORGDLY
+#pq.write_table(final_orgdly, "/host/cis/parquet/ORGDLY.parquet")
+# Write Hive-Partition Parquet
+con.execute(f"""
+COPY ({orgdly})
+TO 'output/cis_internal/CIS_IDIC_DAILY_ORGDLY'
+(FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+""")
 
-pq.write_table(all_output_unique, "cis_internal/output/RLNSHIP.parquet")
-csv.write_csv(all_output_unique, "cis_internal/output/RLNSHIP.csv")
+final_orgdly = con.execute(orgdly).arrow()
 
-pq.write_table(duplicates, "cis_internal/output/RLNSHIP_DUPLICATES.parquet")
-csv.write_csv(duplicates, "cis_internal/output/RLNSHIP_DUPLICATES.csv")
-
+pc.write_csv(final_orgdly, "Programmer/jkh/output/CIS_IDIC_DAILY_ORGDLY.csv")
