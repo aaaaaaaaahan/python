@@ -2,181 +2,104 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.csv as pc
-from datetime import datetime
 
-# ----------------------#
-# 1. Get reporting date #
-# ----------------------#
-today = datetime.today()
-YEAR = f"{today.year:04d}"
-MONTH = f"{today.month:02d}"
-DAY = f"{today.day:02d}"
-TIMEX = today.strftime("%H%M%S")
-RUNTIME = YEAR + MONTH + DAY + TIMEX
-
-# --------------------------#
-# 2. Connect DuckDB engine  #
-# --------------------------#
+# ======================================================
+# DuckDB connection
+# ======================================================
 con = duckdb.connect()
 
-# --------------------------#
-# 3. Load parquet datasets  #
-# --------------------------#
+# ======================================================
+# Read Input Parquet Files (all upfront)
+# ======================================================
 con.execute("""
-    CREATE VIEW cisfile AS SELECT * FROM 'CIS_CUST_DAILY.parquet';
-    CREATE VIEW indfile AS SELECT * FROM 'INDVDLY.parquet';
-    CREATE VIEW demofile AS SELECT * FROM 'BANKCTRL_DEMOCODE.parquet';
+    CREATE VIEW ccrfile1 AS SELECT * FROM 'CCRIS_CISDEMO_DP_GDG.parquet';
+    CREATE VIEW ccrfile2 AS SELECT * FROM 'CCRIS_CISDEMO_SAFD.parquet';
+    CREATE VIEW ccrfile3 AS SELECT * FROM 'CCRIS_CISDEMO_LN_GDG.parquet';
+    CREATE VIEW rlencc_in AS SELECT * FROM 'CCRIS_CISRLCC_GDG.parquet';
 """)
 
-# -----------------------------------#
-# 4. Process CIS dataset              #
-# -----------------------------------#
-con.execute(f"""
+# ======================================================
+# Part 1 - GET CA RELATIONSHIP
+# ======================================================
+con.execute("""
+    CREATE VIEW ccrfile AS
+    SELECT * FROM ccrfile1
+    UNION ALL
+    SELECT * FROM ccrfile2
+    UNION ALL
+    SELECT * FROM ccrfile3;
+""")
+
+con.execute("""
     CREATE VIEW cis AS
     SELECT
-        CUSTNO AS CUSTNOX,
-        LPAD(CAST(COALESCE(CAST(PRIPHONE AS BIGINT),0) AS VARCHAR),11,'0') AS PRIPHONEX,
-        LPAD(CAST(COALESCE(CAST(SECPHONE AS BIGINT),0) AS VARCHAR),11,'0') AS SECPHONEX,
-        LPAD(CAST(COALESCE(CAST(MOBILEPH AS BIGINT),0) AS VARCHAR),11,'0') AS MOBILEPHX,
-        LPAD(CAST(COALESCE(CAST(FAX AS BIGINT),0) AS VARCHAR),11,'0') AS FAXX,
-        LPAD(CAST(COALESCE(CAST(ADDREF AS BIGINT),0) AS VARCHAR),11,'0') AS ADDREFX,
-        CAST(CUSTOPENDATE AS VARCHAR) AS CUSTOPEN,
-        CASE 
-            WHEN CUSTOPENDATE = '00002000000' THEN '20000101'
-            ELSE SUBSTRING(CUSTOPENDATE,5,4) || SUBSTRING(CUSTOPENDATE,1,2) || SUBSTRING(CUSTOPENDATE,3,2)
-        END AS OPENDT,
-        {" || ".join([f"LPAD(CAST(COALESCE(CAST(HRC{i:02d} AS INTEGER),0) AS VARCHAR),3,'0')" for i in range(1,21)])} AS HRCALL,
-        *
-    FROM cisfile
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
+        *,
+        CASE
+            WHEN ACCTNOR IN ('01','03','04','05','06','07') THEN 'DP'
+            WHEN ACCTNOR IN ('02','08') THEN 'LN'
+            ELSE NULL
+        END AS ACCTCODE
+    FROM ccrfile
+    WHERE PRISEC = '901'
+    ORDER BY ACCTNOC;
 """)
 
-# -----------------------------------#
-# 5. Process DEMOFILE (categories)   #
-# -----------------------------------#
+print("=== Part 1 Output (first 5 rows) ===")
+print(con.execute("SELECT * FROM cis LIMIT 5").fetchdf())
+
+# ======================================================
+# Part 2 - FLIP CC RELATIONSHIP
+# ======================================================
 con.execute("""
-    CREATE VIEW sales AS
-    SELECT DEMOCODE AS SALES, RLENDESC AS SALDESC
-    FROM demofile
-    WHERE DEMOCATEGORY = 'SALES'
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY DEMOCODE ORDER BY DEMOCODE)=1;
-
-    CREATE VIEW restr AS
-    SELECT DEMOCODE AS RESTR, RLENDESC AS RESDESC
-    FROM demofile
-    WHERE DEMOCATEGORY = 'RESTR'
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY DEMOCODE ORDER BY DEMOCODE)=1;
-
-    CREATE VIEW citzn AS
-    SELECT DEMOCODX AS CITZN, RLENDESC AS CTZDESC
-    FROM demofile
-    WHERE DEMOCATEGORY = 'CITZN'
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY DEMOCODX ORDER BY DEMOCODX)=1;
-""")
-
-# -----------------------------------#
-# 6. Process INDFILE                 #
-# -----------------------------------#
-con.execute("""
-    CREATE VIEW indv AS
-    SELECT CISNO AS CUSTNOX, BANKNO AS BANKNO_INDV, *
-    FROM indfile
-    WHERE CISNO IS NOT NULL
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CISNO ORDER BY CISNO DESC)=1;
-""")
-
-# -----------------------------------#
-# 7. Merge datasets step by step     #
-# -----------------------------------#
-con.execute(f"""
-    CREATE VIEW mrgcis AS
+    CREATE VIEW flipped AS
     SELECT
-        cis.CUSTNOX,
-        cis.ADDREFX,
-        cis.CUSTNAME,
-        cis.PRIPHONEX,
-        cis.SECPHONEX,
-        cis.MOBILEPHX,
-        cis.FAXX,
-        cis.ALIASKEY,
-        cis.ALIAS,
-        cis.PROCESSTIME,
-        cis.CUSTSTAT,
-        cis.TAXCODE,
-        cis.TAXID,
-        cis.CUSTBRCH,
-        cis.COSTCTR,
-        cis.CUSTMNTDATE,
-        cis.CUSTLASTOPER,
-        cis.PRIM_OFF,
-        cis.SEC_OFF,
-        cis.PRIM_LN_OFF,
-        cis.SEC_LN_OFF,
-        cis.RACE,
-        cis.RESIDENCY,
-        cis.CITIZENSHIP,
-        cis.OPENDT,
-        cis.HRCALL,
-        cis.EXPERIENCE,
-        cis.HOBBIES,
-        cis.RELIGION,
-        cis.LANGUAGE,
-        cis.INST_SEC,
-        cis.CUST_CODE,
-        cis.CUSTCONSENT,
-        cis.BASICGRPCODE,
-        cis.MSICCODE,
-        cis.MASCO2008,
-        cis.INCOME,
-        cis.EDUCATION,
-        cis.OCCUP,
-        cis.MARITALSTAT,
-        cis.OWNRENT,
-        cis.EMPNAME,
-        cis.DOBDOR,
-        cis.SICCODE,
-        cis.CORPSTATUS,
-        cis.NETWORTH,
-        cis.LAST_UPDATE_DATE,
-        cis.LAST_UPDATE_TIME,
-        cis.LAST_UPDATE_OPER,
-        cis.PRCOUNTRY,
-        cis.EMPLOYMENT_TYPE,
-        cis.EMPLOYMENT_SECTOR,
-        cis.EMPLOYMENT_LAST_UPDATE,
-        cis.BNMID,
-        cis.LONGNAME,
-        cis.INDORG,
-        indv.BANKNO_INDV,
-        '{RUNTIME}' AS RUNTIMESTAMP,
-        cis.RESIDENCY AS RESTR,
-        cis.CORPSTATUS AS SALES,
-        cis.CITIZENSHIP AS CITZN
-    FROM cis
-    LEFT JOIN indv ON cis.CUSTNOX = indv.CUSTNOX;
+        CUST2 AS CUST1,
+        CODE2 AS CODE1,
+        CUST1 AS CUST2,
+        CODE1 AS CODE2
+    FROM rlencc_in;
 """)
 
-# Join with restr, sales, citzn
+print("=== Part 2 Output (first 5 rows) ===")
+print(con.execute("SELECT * FROM flipped LIMIT 5").fetchdf())
+
+# ======================================================
+# Part 3 - MATCH RECORD WITH CC RELATIONSHIP
+# ======================================================
 con.execute("""
-    CREATE VIEW mrgres AS
-    SELECT mrgcis.*, restr.RESDESC
-    FROM mrgcis LEFT JOIN restr ON mrgcis.RESTR = restr.RESTR;
-
-    CREATE VIEW mrgsal AS
-    SELECT mrgres.*, sales.SALDESC
-    FROM mrgres LEFT JOIN sales ON mrgres.SALES = sales.SALES;
-
-    CREATE VIEW mrgctz AS
-    SELECT mrgsal.*, citzn.CTZDESC
-    FROM mrgsal LEFT JOIN citzn ON mrgsal.CITZN = citzn.CITZN;
+    CREATE VIEW merge1 AS
+    SELECT
+        cis.ACCTCODE,
+        cis.ACCTNOC,
+        cis.CUSTNO,
+        cis.RLENCODE,
+        flipped.CODE1,
+        flipped.CUST2,
+        flipped.CODE2
+    FROM cis
+    INNER JOIN flipped
+        ON cis.CUSTNO = flipped.CUST1
+    ORDER BY cis.ACCTNOC, cis.CUSTNO, flipped.CUST2;
 """)
 
-# -----------------------------------#
-# 8. Final Output (OUT2)             #
-# -----------------------------------#
-out2 = con.execute("SELECT * FROM mrgctz").arrow()
+print("=== Part 3 Output (first 5 rows) ===")
+print(con.execute("SELECT * FROM merge1 LIMIT 5").fetchdf())
 
-# Save outputs
-pq.write_table(out2, "cis_internal/output/COMBINECUSTALL.parquet")
-pc.write_csv(out2, "cis_internal/output/COMBINECUSTALL.csv")
+# ======================================================
+# Part 4 - REMOVE DUPLICATES
+# ======================================================
+con.execute("""
+    CREATE VIEW final AS
+    SELECT DISTINCT * FROM merge1;
+""")
 
+print("=== Part 4 Output (first 5 rows) ===")
+print(con.execute("SELECT * FROM final LIMIT 5").fetchdf())
+
+# ======================================================
+# Export with PyArrow
+# ======================================================
+final_arrow: pa.Table = con.execute("SELECT * FROM final").arrow()
+
+pq.write_table(final_arrow, "cis_internal/output/CISOWNER.parquet")
+pc.write_csv(final_arrow, "cis_internal/output/CISOWNER.csv")
