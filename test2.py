@@ -9,14 +9,30 @@ import pyarrow.csv as pc
 con = duckdb.connect()
 
 # ======================================================
-# Read Input Parquet Files (all upfront)
+# Read Input Parquet Files (with field renaming upfront)
 # ======================================================
 con.execute("""
-    CREATE VIEW ccrfile1 AS SELECT * FROM 'CCRIS_CISDEMO_DP_GDG.parquet';
-    CREATE VIEW ccrfile2 AS SELECT * FROM 'CCRIS_CISDEMO_SAFD.parquet';
-    CREATE VIEW ccrfile3 AS SELECT * FROM 'CCRIS_CISDEMO_LN_GDG.parquet';
-    CREATE VIEW rlencc_in AS SELECT * FROM 'CCRIS_CISRLCC_GDG.parquet';
+    CREATE VIEW ccrfile1 AS 
+    SELECT demo_acctno AS ACCTNOR, demo_acctnoc AS ACCTNOC, demo_custno AS CUSTNO,
+           demo_prisec AS PRISEC, demo_rlencode AS RLENCODE
+    FROM 'CCRIS_CISDEMO_DP_GDG.parquet';
+    
+    CREATE VIEW ccrfile2 AS 
+    SELECT demo_acctno AS ACCTNOR, demo_acctnoc AS ACCTNOC, demo_custno AS CUSTNO,
+           demo_prisec AS PRISEC, demo_rlencode AS RLENCODE
+    FROM 'CCRIS_CISDEMO_SAFD.parquet';
+    
+    CREATE VIEW ccrfile3 AS 
+    SELECT demo_acctno AS ACCTNOR, demo_acctnoc AS ACCTNOC, demo_custno AS CUSTNO,
+           demo_prisec AS PRISEC, demo_rlencode AS RLENCODE
+    FROM 'CCRIS_CISDEMO_LN_GDG.parquet';
+    
+    CREATE VIEW rlencc_in AS 
+    SELECT demo_cust1 AS CUST1, demo_code1 AS CODE1,
+           demo_cust2 AS CUST2, demo_code2 AS CODE2
+    FROM 'CCRIS_CISRLCC_GDG.parquet';
 """)
+
 
 # ======================================================
 # Part 1 - GET CA RELATIONSHIP
