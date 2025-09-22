@@ -5,10 +5,6 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-import pyarrow as pa
-import pyarrow.csv as csv
-import pyarrow.parquet as pq
-
 # ------------------------
 # Step 1: Read Parquet files via DuckDB
 # ------------------------
@@ -154,7 +150,7 @@ def assign_state(zipcode: str):
     if 62000 <= z <= 62999: return "PUT"
     return None
 
-duckdb.create_function("assign_state", assign_state, ["VARCHAR"], "VARCHAR")
+con.create_function("assign_state", assign_state, ["VARCHAR"], "VARCHAR")
 
 con.execute("""
     CREATE OR REPLACE VIEW addraele2 AS
