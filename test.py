@@ -1,16 +1,6 @@
 import polars as pl
 from reader_polars import load_input
 
-#---------------------------------------------------------------------#
-# Original Program: CCRSADR4                                          #
-#---------------------------------------------------------------------#
-# ADDRESS WITH EMPTY TOWN/CITY                                        #
-# PICKUP ZIPCODE, CITY FROM ADDRESS LINES AND HARD CODE COUNTRY       #
-# A2016-00026045                                                      #
-# APPLICABLE TO ALL ADDRESSES (INCL NOT THE LATEST ADDRESS)           #
-# A2016-00026431 INCLUDE EMPTY ZIPCODE                                #
-#---------------------------------------------------------------------#
-
 # ------------------------
 # Step 1: Read Parquet files
 # ------------------------
