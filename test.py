@@ -1,17 +1,6 @@
 import polars as pl
 from reader import load_input
 
-#---------------------------------------------------------------------#
-# Original Program: CCROWNER                                          #
-#---------------------------------------------------------------------#
-# STEP 1 - GET CA RELATIONSHIP                                        #
-# STEP 2 - FLIP CC RELATIONSHIP                                       #
-# STEP 3 - MATCH RECORD WITH CC RELATIONSHIP                          #
-# STEP 4 - REMOVING DUPLICATE RECORDS                                 #
-#---------------------------------------------------------------------#
-# ESMR2019-4587 NEW SA ACCT RANGE WITH 5 SERIES                       #
-#---------------------------------------------------------------------#
-
 # ======================================================
 # Read Input Parquet Files (all upfront)
 # ======================================================
