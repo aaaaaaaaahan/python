@@ -1,80 +1,66 @@
-import polars as pl
-from reader_polars import load_input
+import duckdb
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
+import datetime
+
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
 
 # ------------------------
-# Step 1: Read Parquet files
+# Step 1: Read Parquet files via DuckDB
 # ------------------------
-addr = load_input("ADDRLINE_FB")
-aele = load_input("ADDRAELE_FB_PROD")
+con = duckdb.connect()
 
-# ------------------------
-# Step 2: Prepare ADDR
-# ------------------------
-addr = (
-    addr.with_columns(
-        pl.col("ADDREF1").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    )
-)
+con.execute(f"""
+    CREATE OR REPLACE VIEW addr AS 
+    SELECT
+        LPAD(CAST(CAST(ADDREF1 AS BIGINT) AS VARCHAR), 11, '0') AS ADDREF,
+        LINE1IND, LINE1ADR, 
+        LINE2IND, LINE2ADR,
+        LINE3IND, LINE3ADR,
+        LINE4IND, LINE4ADR,
+        LINE5IND, LINE5ADR
+    FROM '{host_parquet_path("ADDRLINE_FB.parquet")}'
+""")
 
-addr = (
-    addr.select([
-        "ADDREF1", "LINE1IND", "LINE1ADR", 
-        "LINE2IND", "LINE2ADR",
-        "LINE3IND", "LINE3ADR",
-        "LINE4IND", "LINE4ADR",
-        "LINE5IND", "LINE5ADR"
-        ])
-)
+con.execute(f"""
+    CREATE OR REPLACE VIEW aele AS 
+    SELECT 
+        LPAD(CAST(CAST(ADDREF1 AS BIGINT) AS VARCHAR), 11, '0') AS ADDREF,
+        STREET, CITY, ZIP, ZIP2, COUNTRY
+    FROM '{host_parquet_path("ADDRAELE_FB.parquet")}'
+""")
 
-addr = (
-    addr
-    .rename({"ADDREF1": "ADDREF"})
-   # .sort("ADDREF")
-)
 print("ADDR sample:")
-print(addr.head(5))
+print(con.execute("SELECT * FROM addr LIMIT 5").df())
 
-# ------------------------
-# Step 3: Prepare AELE
-# ------------------------
-aele = (
-    aele.with_columns(
-        pl.col("ADDREF1").cast(pl.Int64).cast(pl.Utf8).str.zfill(11),
-    )
-)
-
-aele = (
-    aele.select([
-        "ADDREF1", "STREET", "CITY", "ZIP", "ZIP2", "COUNTRY"
-        ])
-)
-
-aele = (
-    aele
-    .rename({"ADDREF1": "ADDREF"})
-  #  .sort("ADDREF")
-)
 print("AELE sample:")
-print(aele.head(100))
+print(con.execute("SELECT * FROM aele LIMIT 5").df())
 
 # ------------------------
-# Step 4: Merge ADDR + AELE
+# Step 2: Merge ADDR + AELE
 # ------------------------
-addr_aele = addr.join(aele, on="ADDREF", how="inner")
+con.execute("""
+    CREATE OR REPLACE VIEW addr_aele AS
+    SELECT 
+        a.ADDREF, 
+        LINE1ADR, LINE2ADR, LINE3ADR, LINE4ADR, LINE5ADR,
+        CITY, ZIP, COUNTRY,
+        (COALESCE(LINE1ADR,'') || COALESCE(LINE2ADR,'') ||
+         COALESCE(LINE3ADR,'') || COALESCE(LINE4ADR,'') ||
+         COALESCE(LINE5ADR,'')) AS ADDRLINE
+    FROM addr a
+    INNER JOIN aele e
+    ON a.ADDREF = e.ADDREF
+    WHERE CITY <> '' AND ZIP <> ''
+""")
 
-# concat address lines
-addr_aele = addr_aele.with_columns(
-    (pl.col("LINE1ADR") + pl.col("LINE2ADR") +
-     pl.col("LINE3ADR") + pl.col("LINE4ADR") +
-     pl.col("LINE5ADR")).alias("ADDRLINE")
-)
-
-# drop rows where CITY or ZIP is missing
-addr_aele = addr_aele.filter(
-    (pl.col("CITY") == "") | (pl.col("ZIP") == "")
-)
-
-# remove invalid countries
+# ------------------------
+# Step 3: Remove invalid countries
+# ------------------------
 bad_countries = [
     "SINGAPORE ","CANADA    ","SINGAPORE`","LONDON    ","AUS       ",
     "AUSTRIA   ","BAHRAIN   ","BANGLADESH","BRUNEI DAR","CAMBODIA  ",
@@ -92,55 +78,39 @@ bad_countries = [
     "UK        ","UNITED KIN","UNITED STA","VIRGIN ISL","USA       ",
     "PAPUA NEW ","AUSTRALIA "
 ]
-addr_aele = addr_aele.filter(~pl.col("COUNTRY").is_in(bad_countries))
+con.execute(f"""
+    CREATE OR REPLACE VIEW addr_aele_clean AS
+    SELECT * FROM addr_aele
+    WHERE COUNTRY NOT IN ({",".join(["'"+x+"'" for x in bad_countries])})
+""")
 
 # ------------------------
-# Step 5: Line checks (zip extraction from LINE2ADR..LINE5ADR)
+# Step 4: Extract NEW_ZIP / NEW_CITY from address lines
 # ------------------------
-def extract_zip_city(df: pl.DataFrame, line: str):
-    return df.with_columns([
-        pl.when(
-            (pl.col(line).str.slice(0,5) > "00001") & 
-            (pl.col(line).str.slice(0,5) < "99998") &
-            (pl.col(line).str.slice(5,1) == " ")
-        )
-        .then(pl.col(line).str.slice(0,5))
-        .otherwise(pl.col("NEW_ZIP"))
-        .alias("NEW_ZIP"),
-        
-        pl.when(
-            (pl.col(line).str.slice(0,5) > "00001") & 
-            (pl.col(line).str.slice(0,5) < "99998") &
-            (pl.col(line).str.slice(5,1) == " ")
-        )
-        .then(pl.col(line).str.slice(6,25))
-        .otherwise(pl.col("NEW_CITY"))
-        .alias("NEW_CITY"),
+def extract_zip_city(line):
+    return f"""
+        WHEN substr({line},1,5) BETWEEN '00001' AND '99998'
+             AND substr({line},6,1)=' '
+        THEN substr({line},1,5)
+    """
 
-        pl.when(
-            (pl.col(line).str.slice(0,5) > "00001") & 
-            (pl.col(line).str.slice(0,5) < "99998") &
-            (pl.col(line).str.slice(5,1) == " ")
-        )
-        .then(pl.lit("MALAYSIA"))
-        .otherwise(pl.col("NEW_COUNTRY"))
-        .alias("NEW_COUNTRY"),
-    ])
+zip_case = "CASE " + " ".join([extract_zip_city(l) for l in ["LINE1ADR","LINE2ADR","LINE3ADR","LINE4ADR","LINE5ADR"]]) + " ELSE '' END"
+city_case = "CASE " + " ".join([
+    f"""WHEN substr({l},1,5) BETWEEN '00001' AND '99998' AND substr({l},6,1)=' ' 
+        THEN substr({l},7,25)""" for l in ["LINE1ADR","LINE2ADR","LINE3ADR","LINE4ADR","LINE5ADR"]
+]) + " ELSE '' END"
 
-addr_aele = addr_aele.with_columns([
-    pl.lit("").alias("NEW_ZIP"),
-    pl.lit("").alias("NEW_CITY"),
-    pl.lit("").alias("NEW_COUNTRY")
-])
-
-for line in ["LINE1ADR","LINE2ADR","LINE3ADR","LINE4ADR","LINE5ADR"]:
-    addr_aele = extract_zip_city(addr_aele, line)
-
-print("ADDR_AELE sample:")
-print(addr_aele.head(5))
+con.execute(f"""
+    CREATE OR REPLACE VIEW addr_aele_zip AS
+    SELECT *,
+        {zip_case} AS NEW_ZIP,
+        {city_case} AS NEW_CITY,
+        CASE WHEN {zip_case} <> '' THEN 'MALAYSIA' ELSE '' END AS NEW_COUNTRY
+    FROM addr_aele_clean
+""")
 
 # ------------------------
-# Step 6: Exclusion filters + assign STATEX
+# Step 5: Exclude bad substrings
 # ------------------------
 exclude_strings = [
     "SINGAPORE","HONG HONG","QATAR","TAMIL NADU","STAFFORDSHIRE",
@@ -148,14 +118,23 @@ exclude_strings = [
     "DOHA QATAR","THAILAND","HONG KONG","SEOUL","#","NSW","NETHERLANDS",
     "AUSTRALIA","S'PORE"
 ]
+def sql_escape(s):
+    return s.replace("'","''")
 
-addraele1 = addr_aele.filter(
-    ~pl.any_horizontal([pl.col("ADDRLINE").str.contains(x) for x in exclude_strings])
-)
+where_clause = " AND ".join([f"ADDRLINE NOT LIKE '%{sql_escape(x)}%'" for x in exclude_strings])
 
-# Assign STATEX by postal code
-def assign_state(zipcode: str) -> str:
-    if not zipcode.isdigit(): return None
+con.execute(f"""
+    CREATE OR REPLACE VIEW addraele1 AS
+    SELECT * FROM addr_aele_zip
+    WHERE {where_clause}
+""")
+
+# ------------------------
+# Step 6: Assign STATEX
+# ------------------------
+def assign_state(zipcode: str):
+    if zipcode is None or not zipcode.isdigit():
+        return None
     z = int(zipcode)
     if 79000 <= z <= 86999: return "JOH"
     if 5000 <= z <= 9999: return "KED"
@@ -175,70 +154,80 @@ def assign_state(zipcode: str) -> str:
     if 62000 <= z <= 62999: return "PUT"
     return None
 
-addraele1 = addraele1.with_columns(
-    pl.col("NEW_ZIP").map_elements(assign_state, return_dtype=pl.String).alias("STATEX")
-)
+duckdb.create_function("assign_state", assign_state, ["VARCHAR"], "VARCHAR")
 
-print("ADDRAELE1 sample:")
-print(addraele1.head(5))
+con.execute("""
+    CREATE OR REPLACE VIEW addraele2 AS
+    SELECT *, assign_state(NEW_ZIP) AS STATEX
+    FROM addraele1
+    WHERE NEW_ZIP <> ''
+""")
 
 # ------------------------
-# Step 7: Write outputs
+# Step 7: Output with PyArrow
 # ------------------------
-# Equivalent of OUTFILE
-# Clean like SAS LEFT()
-addraele1 = addraele1.with_columns([
-    pl.col("NEW_ZIP").str.strip_chars().alias("NEW_ZIP"),
-    pl.col("NEW_CITY").str.strip_chars().alias("NEW_CITY"),
-    pl.col("NEW_COUNTRY").str.strip_chars().alias("NEW_COUNTRY"),
-])
+outfile_df = """
+    SELECT 
+        '' AS "CIS #",
+        '-' AS "-",
+        ADDREF AS "ADDR REF",
+        LINE1ADR AS "ADDLINE1",
+        LINE2ADR AS "ADDLINE2",
+        LINE3ADR AS "ADDLINE3",
+        LINE4ADR AS "ADDLINE4",
+        LINE5ADR AS "ADDLINE5",
+        '*OLD*' AS "OLD_FLAG",
+        ZIP AS "ZIP_OLD",
+        CITY AS "CITY_OLD",
+        COUNTRY AS "COUNTRY_OLD",
+        '*NEW*' AS "NEW_FLAG",
+        TRIM(NEW_ZIP) AS NEW_ZIP,
+        TRIM(NEW_CITY) AS NEW_CITY,
+        STATEX,
+        TRIM(NEW_COUNTRY) AS NEW_COUNTRY,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM addraele2
+""".format(year=year,month=month,day=day)
 
-# Drop blank NEW_ZIP
-addraele1 = addraele1.filter(pl.col("NEW_ZIP") != "")
+updfile_df = """
+    SELECT
+        '' AS "CIS #",
+        ADDREF AS "ADDR REF",
+        UPPER(TRIM(NEW_CITY)) AS NEW_CITY,
+        STATEX,
+        TRIM(NEW_ZIP) AS NEW_ZIP,
+        TRIM(NEW_COUNTRY) AS NEW_COUNTRY,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM addraele2
+""".format(year=year,month=month,day=day)
 
-if "CUSTNO" not in addraele1.columns:
-    addraele1 = addraele1.with_columns(
-        pl.lit("").alias("CUSTNO")
-    )
+#csv.write_csv(outfile_df, "/host/cis/output/duckdb/CCRSADR4_VERIFY.csv")
+#pq.write_table(outfile_df, "/host/cis/output/duckdb/CCRSADR4_VERIFY.parquet")
 
-# ---- OUTFILE equivalent ----
-outfile_df = addraele1.select([
-    pl.col("CUSTNO").alias("CIS #"),
-    pl.lit("-").alias("-"),
-    pl.col("ADDREF").alias("ADDR REF"),
-    pl.col("LINE1ADR").alias("ADDLINE1"),
-    pl.col("LINE2ADR").alias("ADDLINE2"),
-    pl.col("LINE3ADR").alias("ADDLINE3"),
-    pl.col("LINE4ADR").alias("ADDLINE4"),
-    pl.col("LINE5ADR").alias("ADDLINE5"),
-    pl.lit("*OLD*").alias("OLD_FLAG"),
-    pl.col("ZIP").alias("ZIP_OLD"),
-    pl.col("CITY").alias("CITY_OLD"),
-    pl.col("COUNTRY").alias("COUNTRY_OLD"),
-    pl.lit("*NEW*").alias("NEW_FLAG"),
-    pl.col("NEW_ZIP"),
-    pl.col("NEW_CITY"),
-    pl.col("STATEX"),
-    pl.col("NEW_COUNTRY"),
-])
+#csv.write_csv(updfile_df, "/host/cis/output/duckdb/CCRSADR4_UPDATE.csv")
+#pq.write_table(updfile_df, "/host/cis/output/duckdb/CCRSADR4_UPDATE.parquet")
 
-#outfile_df.write_csv("cis_internal/output/CCRSADR4_VERIFY.csv")
-#outfile_df.write_parquet("cis_internal/output/CCRSADR4_VERIFY.parquet")
-outfile_df.write_csv("/host/cis/output/polars/CCRSADR4_VERIFY.csv")
-outfile_df.write_parquet("/host/cis/output/polars/CCRSADR4_VERIFY.parquet")
+queries = {
+    "CCRSADR4_VERIFY"            : outfile_df,
+    "CCRSADR4_UPDATE"            : updfile_df,
+}
 
-# Equivalent of UPDFILE
-# ---- UPDFILE equivalent ----
-updfile_df = addraele1.select([
-    pl.col("CUSTNO").alias("CIS #"),
-    pl.col("ADDREF").alias("ADDR REF"),
-    pl.col("NEW_CITY").str.to_uppercase().alias("NEW_CITY"),
-    pl.col("STATEX"),
-    pl.col("NEW_ZIP"),
-    pl.col("NEW_COUNTRY"),
-])
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-#updfile_df.write_csv("cis_internal/output/CCRSADR4_UPDATE.csv")
-#updfile_df.write_parquet("cis_internal/output/CCRSADR4_UPDATE.parquet")
-updfile_df.write_csv("/host/cis/output/polars/CCRSADR4_UPDATE.csv")
-updfile_df.write_parquet("/host/cis/output/polars/CCRSADR4_UPDATE.parquet")
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true); 
+    """) 
