@@ -18,6 +18,7 @@ from reader import load_input
 # Load parquet datasets  #
 #------------------------#
 primary = load_input("RLENCA_NONJOINT")   # PRIMREC
+#CAN ADD LOGIC IN "CCRCCRLN" TO OUTPUT THIS 2 FILE
 ccrlen1 = load_input("RLNSHIP_RLNIND")   # Individual
 ccrlen  = load_input("RLNSHIP_RLNORG")   # Organisation
 
