@@ -8,40 +8,51 @@ year, month, day = batch_date.year, batch_date.month, batch_date.day
 #--------------------------------#
 # Open DuckDB in-memory database #
 #--------------------------------#
-con = duckdb.connect(database=":memory:")
+#con = duckdb.connect(database=":memory:")
+con = duckdb.connect()
 
 #-----------------------------------#
 # Load parquet datasets into DuckDB #
 #-----------------------------------#
 con.execute(f"""
-    CREATE VIEW primary AS 
+    CREATE VIEW primary1 AS 
     SELECT 
         CAST(ACCTNO AS VARCHAR) AS ACCTNO,
         CAST(ACCTCODE AS VARCHAR) AS ACCTCODE,
         CAST(CUSTNO AS VARCHAR) AS CUSTNO
-    FROM '{host_parquet_path("RLENCA_NONJOINT.parquet")}'
-""")
+    FROM '{host_parquet_path("RLENCA_NONJOINT.parquet")}';
 
-# Single source file (RLNSHIP), then split into IND / ORG
-con.execute(f"""
     CREATE VIEW ccr_all AS
     SELECT 
         CUSTNO1, INDORG1 AS CUSTTYPE1, CODE1 AS RLENCODE1, DESC1,
         CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS DESC,
         CUSTNAME1, ALIAS1, CUSTNAME2 AS CUSTNAME, ALIAS2 AS ALIAS
-    FROM '{host_parquet_path("RLNSHIP_SRCH.parquet")}'
+    FROM read_parquet('/host/cis/parquet/RLNSHIP_SRCH/year=2025/month=9/day=22/data_0.parquet');
 """)
+
+# Single source file (RLNSHIP), then split into IND / ORG
+#con.execute(f"""
+#    CREATE VIEW ccr_all AS
+#    SELECT 
+#        CUSTNO1, INDORG1 AS CUSTTYPE1, CODE1 AS RLENCODE1, DESC1,
+#        CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS DESC,
+#        CUSTNAME1, ALIAS1, CUSTNAME2 AS CUSTNAME, ALIAS2 AS ALIAS
+#    FROM '{host_parquet_path("RLNSHIP_SRCH.parquet")}'
+#""")
 
 # Split into ORG (O) and IND (I)
 con.execute("""
     CREATE VIEW ccrlen AS
-    SELECT * FROM ccr_all WHERE CUSTTYPE = 'O'
+    SELECT * FROM ccr_all WHERE CUSTTYPE = 'O';
+
+    CREATE VIEW ccrlen1 AS
+    SELECT * FROM ccr_all WHERE CUSTTYPE = 'I';
 """)
 
-con.execute("""
-    CREATE VIEW ccrlen1 AS
-    SELECT * FROM ccr_all WHERE CUSTTYPE = 'I'
-""")
+#con.execute("""
+#    CREATE VIEW ccrlen1 AS
+#    SELECT * FROM ccr_all WHERE CUSTTYPE = 'I'
+#""")
 
 #------------------------------------------------------#
 # Merge organisation CCRLEN with PRIMARY accounts      #
@@ -54,7 +65,7 @@ con.execute("""
         c.CUSTNAME1, c.ALIAS1, c.CUSTNAME, c.ALIAS,
         p.ACCTNO, p.ACCTCODE
     FROM ccrlen c
-    INNER JOIN primary p
+    INNER JOIN primary1 p
         ON c.CUSTNO = p.CUSTNO
 """)
 
@@ -66,7 +77,7 @@ con.execute("""
     SELECT
         CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
         CUSTNO, CUSTTYPE, RLENCODE, DESC,
-        ACCTNO, ACCTCODE, CUSTNAME1, ALIAS1,
+        ACCTCODE, ACCTNO, CUSTNAME1, ALIAS1,
         CUSTNAME, ALIAS
     FROM cc_primary
 
@@ -75,7 +86,7 @@ con.execute("""
     SELECT
         CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
         CUSTNO, CUSTTYPE, RLENCODE, DESC,
-        NULL AS ACCTNO, NULL AS ACCTCODE,
+        NULL AS ACCTCODE, NULL AS ACCTNO,
         CUSTNAME1, ALIAS1, CUSTNAME, ALIAS
     FROM ccrlen1
 """)
