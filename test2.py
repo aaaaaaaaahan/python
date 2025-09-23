@@ -13,5 +13,8 @@ SELECT
     '"' || CUSTNAME1 || '"' AS CUSTNAME1,
     '"' || ALIAS1    || '"' AS ALIAS1,
     '"' || CUSTNAME  || '"' AS CUSTNAME,
-    '"' || ALIAS     || '"' AS ALIAS
+    '"' || ALIAS     || '"' AS ALIAS,
+    '"' || {day}     || '"' AS day,
+    '"' || {month}   || '"' AS month,
+    '"' || {year}    || '"' AS year
 FROM out1;
