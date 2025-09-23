@@ -1,19 +1,6 @@
 import polars as pl
 from reader import load_input
 
-#-------------------------------------------------------------------#
-# Original Program: CCRCCRL1                                        #
-#-------------------------------------------------------------------#
-#-ESMR 2011-2834                                                    #
-# DISPLAY OF CUST-TO-CUST RELATIONSHIP IN CAS-IMIS                  #
-# APPEND DP/LN ACCOUNT    TO CC(INDV-ORG) AND CC(ORG-ORG) ONLY      #
-# TO SHOW PERSONAL ACCOUNT ONLY. JOINT ACCOUNT DROP                 #
-# APPEND ORIGINAL RECORD  TO CC(ORG-INDV) AND CC(INDV-INDV)         #
-#-------------------------------------------------------------------#
-#-ESMR 2014-764                                                     #
-# CHANGE FILE FORMAT FROM FIXED LENGTH TO DELIMITED                 #
-#-------------------------------------------------------------------#
-
 #------------------------#
 # Load parquet datasets  #
 #------------------------#
