@@ -25,7 +25,7 @@ con.execute(f"""
     CREATE VIEW ccr_all AS
     SELECT 
         CUSTNO1, INDORG1 AS CUSTTYPE1, CODE1 AS RLENCODE1, DESC1,
-        CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS DESC,
+        CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS "DESC",
         CUSTNAME1, ALIAS1, CUSTNAME2 AS CUSTNAME, ALIAS2 AS ALIAS
     FROM read_parquet('/host/cis/parquet/RLNSHIP_SRCH/year=2025/month=9/day=22/data_0.parquet');
 """)
@@ -61,7 +61,7 @@ con.execute("""
     CREATE VIEW cc_primary AS
     SELECT
         c.CUSTNO1, c.CUSTTYPE1, c.RLENCODE1, c.DESC1,
-        c.CUSTNO,  c.CUSTTYPE,  c.RLENCODE,  c.DESC,
+        c.CUSTNO,  c.CUSTTYPE,  c.RLENCODE,  c."DESC",
         c.CUSTNAME1, c.ALIAS1, c.CUSTNAME, c.ALIAS,
         p.ACCTNO, p.ACCTCODE
     FROM ccrlen c
@@ -76,7 +76,7 @@ con.execute("""
     CREATE VIEW out1 AS
     SELECT
         CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
-        CUSTNO, CUSTTYPE, RLENCODE, DESC,
+        CUSTNO, CUSTTYPE, RLENCODE, "DESC",
         ACCTCODE, ACCTNO, CUSTNAME1, ALIAS1,
         CUSTNAME, ALIAS
     FROM cc_primary
@@ -85,10 +85,11 @@ con.execute("""
 
     SELECT
         CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
-        CUSTNO, CUSTTYPE, RLENCODE, DESC,
+        CUSTNO, CUSTTYPE, RLENCODE, "DESC",
         NULL AS ACCTCODE, NULL AS ACCTNO,
         CUSTNAME1, ALIAS1, CUSTNAME, ALIAS
     FROM ccrlen1
+    ORDER BY CUSTNO1
 """)
 
 #-----------------------------------#
@@ -121,4 +122,24 @@ for name, query in queries.items():
     COPY ({query})
     TO '{csv_path}'
     (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
+    
+queries = {
+    "CCRIS_CC_RLNSHIP_PARTIES_IMIS"            : out_table,
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, QUOTE '"', DELIMITER ',', OVERWRITE_OR_IGNORE true);  
      """)
