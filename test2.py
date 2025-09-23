@@ -9,17 +9,6 @@ import pyarrow.csv as pv_csv
 import pyarrow.parquet as pq
 from datetime import date
 
-#-------------------------------------------------------------------#
-# Original Program: CCRCCRLN                                        #
-#-------------------------------------------------------------------#
-#-EJS A2014-00021883  (CRMS PROJECT)                                #
-# INCLUDE ADDITIONAL COLUMNS TO BE PLACED INTO CIS INTERFACE FILES  #
-# 2016-4519 INCLUDE EFFECTIVE DATE INTO FILE                        #
-#-------------------------------------------------------------------#
-# ESMR 2021-00002352                                                #
-# TO EXCLUDE RECORD WITH EXPIRED DATE IN RLEN CC FILE               #
-#-------------------------------------------------------------------#
-
 #--------------------------------#
 # Part 1 - PROCESSING LEFT  SIDE #
 #--------------------------------#
