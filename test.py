@@ -104,8 +104,31 @@ out_table = """
     FROM out1
 """.format(year=year,month=month,day=day)
 
+out1_imis = """
+    SELECT
+      '"' || CUSTNO1   || '"' AS CUSTNO1,
+      '"' || CUSTTYPE1 || '"' AS CUSTTYPE1,
+      '"' || RLENCODE1 || '"' AS RLENCODE1,
+      '"' || DESC1     || '"' AS DESC1,
+      '"' || CUSTNO    || '"' AS CUSTNO,
+      '"' || CUSTTYPE  || '"' AS CUSTTYPE,
+      '"' || RLENCODE  || '"' AS RLENCODE,
+      '"' || "DESC"    || '"' AS "DESC",
+      '"' || COALESCE(ACCTCODE, '') || '"' AS ACCTCODE,
+      '"' || COALESCE(ACCTNO, '')   || '"' AS ACCTNO,
+      '"' || CUSTNAME1 || '"' AS CUSTNAME1,
+      '"' || ALIAS1    || '"' AS ALIAS1,
+      '"' || CUSTNAME  || '"' AS CUSTNAME,
+      '"' || ALIAS     || '"' AS ALIAS
+      '"' || {day}     || '"' AS day,
+      '"' || {month}   || '"' AS month,
+      '"' || {year}    || '"' AS year
+    FROM out1;
+"""
+
 queries = {
     "CCRIS_CC_RLNSHIP_PARTIES"            : out_table,
+    "CCRIS_CC_RLNSHIP_PARTIES_IMIS"       : out1_imis,
 }
 
 for name, query in queries.items():
@@ -122,24 +145,4 @@ for name, query in queries.items():
     COPY ({query})
     TO '{csv_path}'
     (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
-    
-queries = {
-    "CCRIS_CC_RLNSHIP_PARTIES_IMIS"            : out_table,
-}
-
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
-
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, QUOTE '"', DELIMITER ',', OVERWRITE_OR_IGNORE true);  
      """)
