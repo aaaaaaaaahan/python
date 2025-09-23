@@ -25,7 +25,7 @@ con.execute(f"""
     CREATE VIEW ccr_all AS
     SELECT 
         CUSTNO1, INDORG1 AS CUSTTYPE1, CODE1 AS RLENCODE1, DESC1,
-        CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS "DESC",
+        CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS RLENDESC,
         CUSTNAME1, ALIAS1, CUSTNAME2 AS CUSTNAME, ALIAS2 AS ALIAS
     FROM read_parquet('/host/cis/parquet/RLNSHIP_SRCH/year=2025/month=9/day=22/data_0.parquet');
 """)
@@ -61,7 +61,7 @@ con.execute("""
     CREATE VIEW cc_primary AS
     SELECT
         c.CUSTNO1, c.CUSTTYPE1, c.RLENCODE1, c.DESC1,
-        c.CUSTNO,  c.CUSTTYPE,  c.RLENCODE,  c."DESC",
+        c.CUSTNO,  c.CUSTTYPE,  c.RLENCODE,  c.RLENDESC,
         c.CUSTNAME1, c.ALIAS1, c.CUSTNAME, c.ALIAS,
         p.ACCTNO, p.ACCTCODE
     FROM ccrlen c
@@ -76,7 +76,7 @@ con.execute("""
     CREATE VIEW out1 AS
     SELECT
         CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
-        CUSTNO, CUSTTYPE, RLENCODE, "DESC",
+        CUSTNO, CUSTTYPE, RLENCODE, RLENDESC,
         ACCTCODE, ACCTNO, CUSTNAME1, ALIAS1,
         CUSTNAME, ALIAS
     FROM cc_primary
@@ -85,7 +85,7 @@ con.execute("""
 
     SELECT
         CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
-        CUSTNO, CUSTTYPE, RLENCODE, "DESC",
+        CUSTNO, CUSTTYPE, RLENCODE, RLENDESC,
         NULL AS ACCTCODE, NULL AS ACCTNO,
         CUSTNAME1, ALIAS1, CUSTNAME, ALIAS
     FROM ccrlen1
@@ -113,13 +113,13 @@ out1_imis = """
       '"' || CUSTNO    || '"' AS CUSTNO,
       '"' || CUSTTYPE  || '"' AS CUSTTYPE,
       '"' || RLENCODE  || '"' AS RLENCODE,
-      '"' || "DESC"    || '"' AS "DESC",
+      '"' || RLENDESC    || '"' AS RLENDESC,
       '"' || COALESCE(ACCTCODE, '') || '"' AS ACCTCODE,
       '"' || COALESCE(ACCTNO, '')   || '"' AS ACCTNO,
       '"' || CUSTNAME1 || '"' AS CUSTNAME1,
       '"' || ALIAS1    || '"' AS ALIAS1,
       '"' || CUSTNAME  || '"' AS CUSTNAME,
-      '"' || ALIAS     || '"' AS ALIAS
+      '"' || ALIAS     || '"' AS ALIAS,
       '"' || {day}     || '"' AS day,
       '"' || {month}   || '"' AS month,
       '"' || {year}    || '"' AS year
