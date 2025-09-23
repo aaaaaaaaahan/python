@@ -6,222 +6,94 @@ batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 #--------------------------------#
-# Part 1 - PROCESSING LEFT  SIDE #
+# Open DuckDB in-memory database #
 #--------------------------------#
+con = duckdb.connect(database=":memory:")
 
-#================================#
-#   CONNECT TO DUCKDB            #
-#================================#
-con = duckdb.connect()
-
-#================================#
-#   PART 1 - PROCESSING LEFT     #
-#================================#
+#-----------------------------------#
+# Load parquet datasets into DuckDB #
+#-----------------------------------#
 con.execute(f"""
-            CREATE VIEW INFILE1   AS SELECT * FROM '{host_parquet_path("RLENCC_FB.parquet")}';
-            CREATE VIEW CCCODE    AS SELECT * FROM '{host_parquet_path("BANKCTRL_RLENCODE_CC.parquet")}';
-            CREATE VIEW NAMEFILE  AS SELECT * FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}';
-            CREATE VIEW ALIASFIL  AS SELECT * FROM '{host_parquet_path("ALLALIAS_OUT.parquet")}';
-            CREATE VIEW CUSTFILE  AS SELECT * FROM '{host_parquet_path("ALLCUST_FB.parquet")}';
+    CREATE VIEW primary AS 
+    SELECT 
+        CAST(ACCTNO AS VARCHAR) AS ACCTNO,
+        CAST(ACCTCODE AS VARCHAR) AS ACCTCODE,
+        CAST(CUSTNO AS VARCHAR) AS CUSTNO
+    FROM '{host_parquet_path("RLENCA_NONJOINT.parquet")}'
 """)
 
-# RELATION FILE
+# Single source file (RLNSHIP), then split into IND / ORG
+con.execute(f"""
+    CREATE VIEW ccr_all AS
+    SELECT 
+        CUSTNO1, INDORG1 AS CUSTTYPE1, CODE1 AS RLENCODE1, DESC1,
+        CUSTNO2 AS CUSTNO, INDORG2 AS CUSTTYPE, CODE2 AS RLENCODE, DESC2 AS DESC,
+        CUSTNAME1, ALIAS1, CUSTNAME2 AS CUSTNAME, ALIAS2 AS ALIAS
+    FROM '{host_parquet_path("RLNSHIP_SRCH.parquet")}'
+""")
+
+# Split into ORG (O) and IND (I)
 con.execute("""
-    CREATE VIEW cccode_l AS
-    SELECT DISTINCT RLENTYPE AS TYPE,
-                    LPAD(CAST(CAST(RLENCODE AS BIGINT) AS VARCHAR), 3, '0') AS CODE1,
-                    RLENDESC AS DESC1
-    FROM CCCODE
+    CREATE VIEW ccrlen AS
+    SELECT * FROM ccr_all WHERE CUSTTYPE = 'O'
 """)
 
-# CUSTOMER FILE
-con.execute("""
-    CREATE VIEW ciscust AS
-    SELECT DISTINCT CUSTNO   AS CUSTNO1,
-                    TAXID    AS OLDIC1,
-                    BASICGRPCODE AS BASICGRPCODE1
-    FROM CUSTFILE
-""")
-
-# NAME FILE
-con.execute("""
-    CREATE VIEW cisname AS
-    SELECT DISTINCT CUSTNO   AS CUSTNO1,
-                    INDORG   AS INDORG1,
-                    CUSTNAME AS CUSTNAME1
-    FROM NAMEFILE
-""")
-
-# ALIAS FILE
-con.execute("""
-    CREATE VIEW cisalias AS
-    SELECT CUSTNO AS CUSTNO1,
-           NAME_LINE AS ALIAS1
-    FROM ALIASFIL
-    ORDER BY CUSTNO1
-""")
-
-# RLENCC FILE (Left)
 con.execute("""
     CREATE VIEW ccrlen1 AS
-    SELECT *,
-           CASE WHEN TRIM(EXPDATE1) = '' THEN NULL
-                ELSE CAST(EXPDATE1 AS DATE)
-           END AS EXPDATE
-    FROM (
-        SELECT CUSTNO     AS CUSTNO1,
-               CAST(EFFDATE AS BIGINT) AS EFFDATE,
-               CUSTNO2,
-               LPAD(CAST(CAST(CODE1 AS BIGINT) AS VARCHAR), 3, '0') AS CODE1,
-               LPAD(CAST(CAST(CODE2 AS BIGINT) AS VARCHAR), 3, '0') AS CODE2,
-               TRIM(EXPIRE_DATE)       AS EXPDATE1
-        FROM INFILE1
-    )
-    WHERE EXPDATE1 = ''
-    ORDER BY CODE1
+    SELECT * FROM ccr_all WHERE CUSTTYPE = 'I'
 """)
 
-# Merge (LEFTOUT)
+#------------------------------------------------------#
+# Merge organisation CCRLEN with PRIMARY accounts      #
+#------------------------------------------------------#
 con.execute("""
-    CREATE VIEW LEFTOUT AS
-    SELECT l.CUSTNO1, n.INDORG1, l.CODE1, c.DESC1, l.CUSTNO2, l.CODE2, l.EXPDATE,
-           n.CUSTNAME1, a.ALIAS1, cu.OLDIC1, cu.BASICGRPCODE1, l.EFFDATE
-    FROM ccrlen1 l
-    LEFT JOIN cccode_l  c ON l.CODE1 = c.CODE1
-    LEFT JOIN cisname n ON l.CUSTNO1 = n.CUSTNO1
-    LEFT JOIN cisalias a ON l.CUSTNO1 = a.CUSTNO1
-    LEFT JOIN ciscust cu ON l.CUSTNO1 = cu.CUSTNO1
+    CREATE VIEW cc_primary AS
+    SELECT
+        c.CUSTNO1, c.CUSTTYPE1, c.RLENCODE1, c.DESC1,
+        c.CUSTNO,  c.CUSTTYPE,  c.RLENCODE,  c.DESC,
+        c.CUSTNAME1, c.ALIAS1, c.CUSTNAME, c.ALIAS,
+        p.ACCTNO, p.ACCTCODE
+    FROM ccrlen c
+    INNER JOIN primary p
+        ON c.CUSTNO = p.CUSTNO
 """)
 
-#================================#
-#   PART 2 - PROCESSING RIGHT    #
-#================================#
-#con.register("LEFTOUT", LEFTOUT)
-
-con.execute(f"""
-            CREATE VIEW CCCODE_R   AS SELECT * FROM '{host_parquet_path("BANKCTRL_RLENCODE_CC.parquet")}';
-            CREATE VIEW NAMEFILE_R AS SELECT * FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}';
-            CREATE VIEW ALIASFIL_R AS SELECT * FROM '{host_parquet_path("ALLALIAS_OUT.parquet")}';
-            CREATE VIEW CUSTFILE_R AS SELECT * FROM '{host_parquet_path("ALLCUST_FB.parquet")}';
-""")
-
+#------------------------------------------------------#
+# Union ORG+PRIMARY with IND relationship (ccrlen1)    #
+#------------------------------------------------------#
 con.execute("""
-    CREATE VIEW cccode_r1 AS
-    SELECT RLENTYPE AS TYPE,
-           LPAD(CAST(CAST(RLENCODE AS BIGINT) AS VARCHAR), 3, '0') AS CODE2,
-           RLENDESC AS DESC2
-    FROM CCCODE_R
-    ORDER BY CODE2
+    CREATE VIEW out1 AS
+    SELECT
+        CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
+        CUSTNO, CUSTTYPE, RLENCODE, DESC,
+        ACCTNO, ACCTCODE, CUSTNAME1, ALIAS1,
+        CUSTNAME, ALIAS
+    FROM cc_primary
+
+    UNION ALL
+
+    SELECT
+        CUSTNO1, CUSTTYPE1, RLENCODE1, DESC1,
+        CUSTNO, CUSTTYPE, RLENCODE, DESC,
+        NULL AS ACCTNO, NULL AS ACCTCODE,
+        CUSTNAME1, ALIAS1, CUSTNAME, ALIAS
+    FROM ccrlen1
 """)
 
-con.execute("""
-    CREATE VIEW ciscust_r AS
-    SELECT DISTINCT CUSTNO   AS CUSTNO2,
-                    TAXID    AS OLDIC2,
-                    BASICGRPCODE AS BASICGRPCODE2
-    FROM CUSTFILE_R
-""")
-
-con.execute("""
-    CREATE VIEW cisname_r AS
-    SELECT DISTINCT CUSTNO   AS CUSTNO2,
-                    INDORG   AS INDORG2,
-                    CUSTNAME AS CUSTNAME2
-    FROM NAMEFILE_R
-""")
-
-con.execute("""
-    CREATE VIEW cisalias_r AS
-    SELECT CUSTNO   AS CUSTNO2,
-           NAME_LINE AS ALIAS2
-    FROM ALIASFIL_R
-    ORDER BY CUSTNO2
-""")
-
-con.execute("""
-    CREATE VIEW ccrlen2 AS
-    SELECT CUSTNO1, INDORG1, CODE1, DESC1,
-           CUSTNO2, CODE2, EXPDATE,
-           CUSTNAME1, ALIAS1, OLDIC1, BASICGRPCODE1,
-           EFFDATE,
-           EXTRACT(YEAR FROM EXPDATE)  AS EXPYY,
-           EXTRACT(MONTH FROM EXPDATE) AS EXPMM,
-           EXTRACT(DAY FROM EXPDATE)   AS EXPDD
-    FROM LEFTOUT
-    ORDER BY CODE2
-""")
-
-con.execute("""
-    CREATE VIEW RIGHTOUT AS
-    SELECT r.CUSTNO2, n.INDORG2, r.CODE2, c.DESC2,
-           r.CUSTNO1, r.CODE1, r.EXPDATE,
-           n.CUSTNAME2, a.ALIAS2, cu.OLDIC2, cu.BASICGRPCODE2, r.EFFDATE
-    FROM ccrlen2 r
-    LEFT JOIN cccode_r1  c ON r.CODE2 = c.CODE2
-    LEFT JOIN cisname_r n ON r.CUSTNO2 = n.CUSTNO2
-    LEFT JOIN cisalias_r a ON r.CUSTNO2 = a.CUSTNO2
-    LEFT JOIN ciscust_r cu ON r.CUSTNO2 = cu.CUSTNO2
-""")
-
-#============================================#
-#   PART 3 - FILE TO SEARCH ONE SIDE ONLY    #
-#============================================#
-#con.register("INPUT1", LEFTOUT)
-#con.register("INPUT2", RIGHTOUT)
-con.execute(f"""
-            CREATE VIEW INPUT1   AS SELECT * FROM LEFTOUT;
-            CREATE VIEW INPUT2   AS SELECT * FROM RIGHTOUT;
-""")
-
-con.execute("""
-    CREATE VIEW alloutput AS
-    SELECT l.CUSTNO1, l.INDORG1, l.CODE1, l.DESC1,
-           l.CUSTNO2, r.INDORG2, r.CODE2, r.DESC2,
-           l.EXPDATE,
-           l.CUSTNAME1, l.ALIAS1,
-           r.CUSTNAME2, r.ALIAS2,
-           l.OLDIC1, l.BASICGRPCODE1,
-           r.OLDIC2, r.BASICGRPCODE2,
-           l.EFFDATE
-    FROM INPUT1 l
-    LEFT JOIN INPUT2 r
-      ON l.CUSTNO2 = r.CUSTNO2
-    WHERE (l.EXPDATE IS NULL OR l.EXPDATE = ' ' OR l.EXPDATE >= '{batch_date}')
-""")
-
-# Deduplicate
-all_output_unique = con.execute(f"""
-    CREATE VIEW all_output_unique AS
-    SELECT DISTINCT 
-        *,
+#-----------------------------------#
+# Export using PyArrow              #
+#-----------------------------------#
+# Convert to Arrow Table
+out_table = """
+    SELECT * ,
         {year} AS year,
         {month} AS month,
         {day} AS day
-    FROM alloutput
-    ORDER BY CUSTNO1, CODE1
-""")
+    FROM out1
+""".format(year=year,month=month,day=day)
 
-# Find duplicates
-duplicates = con.execute(f"""
-    CREATE VIEW duplicates AS
-    SELECT 
-        f.*,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM alloutput f
-    EXCEPT
-    SELECT u.*
-    FROM all_output_unique u
-    ORDER BY CUSTNO1
-""")
-
-# =====================#
-# Export with PyArrow  #
-# =====================#
 queries = {
-    "RLNSHIP"               : "SELECT * FROM all_output_unique",
-    "RLNSHIP_DUPLICATES"    : "SELECT * FROM duplicates",
+    "CCRIS_CC_RLNSHIP_PARTIES"            : out_table,
 }
 
 for name, query in queries.items():
