@@ -1,229 +1,196 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
-import datetime
+import pyarrow.csv as pv_csv
+import pyarrow.parquet as pq
+from datetime import date
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-
-# ------------------------
-# Step 1: Read Parquet files via DuckDB
-# ------------------------
+#================================#
+#   CONNECT TO DUCKDB            #
+#================================#
 con = duckdb.connect()
 
-con.execute(f"""
-    CREATE OR REPLACE VIEW addr AS 
-    SELECT
-        LPAD(CAST(CAST(ADDREF1 AS BIGINT) AS VARCHAR), 11, '0') AS ADDREF,
-        LINE1IND, LINE1ADR, 
-        LINE2IND, LINE2ADR,
-        LINE3IND, LINE3ADR,
-        LINE4IND, LINE4ADR,
-        LINE5IND, LINE5ADR
-    FROM '{host_parquet_path("ADDRLINE_FB.parquet")}'
-""")
+#================================#
+#   PART 1 - PROCESSING LEFT     #
+#================================#
+con.execute("CREATE VIEW INFILE1   AS SELECT * FROM 'cis_internal/rawdata_converted/RLENCC_FB.parquet'")
+con.execute("CREATE VIEW CCCODE    AS SELECT * FROM 'cis_internal/rawdata_converted/BANKCTRL_RLENCODE_CC.parquet'")
+con.execute("CREATE VIEW NAMEFILE  AS SELECT * FROM 'cis_internal/rawdata_converted/PRIMNAME_OUT.parquet'")
+con.execute("CREATE VIEW ALIASFIL  AS SELECT * FROM 'cis_internal/rawdata_converted/ALLALIAS_OUT.parquet'")
+con.execute("CREATE VIEW CUSTFILE  AS SELECT * FROM 'cis_internal/rawdata_converted/ALLCUST_FB.parquet'")
 
-con.execute(f"""
-    CREATE OR REPLACE VIEW aele AS 
-    SELECT 
-        LPAD(CAST(CAST(ADDREF1 AS BIGINT) AS VARCHAR), 11, '0') AS ADDREF,
-        STREET, CITY, ZIP, ZIP2, COUNTRY
-    FROM '{host_parquet_path("ADDRAELE_FB.parquet")}'
-""")
+# RELATION FILE
+cccode = con.execute("""
+    SELECT DISTINCT RLENTYPE AS TYPE,
+                    RLENCODE AS CODE1,
+                    RLENDESC AS DESC1
+    FROM CCCODE
+""").arrow()
+print("RELATION FILE (LEFT):")
+print(cccode.to_pandas().head(5))
 
-print("ADDR sample:")
-print(con.execute("SELECT * FROM addr LIMIT 5").df())
+# CUSTOMER FILE
+ciscust = con.execute("""
+    SELECT DISTINCT CUSTNO   AS CUSTNO1,
+                    TAXID    AS OLDIC1,
+                    BASICGRPCODE AS BASICGRPCODE1
+    FROM CUSTFILE
+""").arrow()
 
-print("AELE sample:")
-print(con.execute("SELECT * FROM aele LIMIT 5").df())
+# NAME FILE
+cisname = con.execute("""
+    SELECT DISTINCT CUSTNO   AS CUSTNO1,
+                    INDORG   AS INDORG1,
+                    CUSTNAME AS CUSTNAME1
+    FROM NAMEFILE
+""").arrow()
 
-# ------------------------
-# Step 2: Merge ADDR + AELE
-# ------------------------
-con.execute("""
-    CREATE OR REPLACE VIEW addr_aele AS
-    SELECT 
-        a.ADDREF, 
-        LINE1ADR, LINE2ADR, LINE3ADR, LINE4ADR, LINE5ADR,
-        CITY, ZIP, COUNTRY,
-        (COALESCE(LINE1ADR,'') || COALESCE(LINE2ADR,'') ||
-         COALESCE(LINE3ADR,'') || COALESCE(LINE4ADR,'') ||
-         COALESCE(LINE5ADR,'')) AS ADDRLINE
-    FROM addr a
-    INNER JOIN aele e
-    ON a.ADDREF = e.ADDREF
-    WHERE CITY <> '' AND ZIP <> ''
-""")
+# ALIAS FILE
+cisalias = con.execute("""
+    SELECT CUSTNO AS CUSTNO1,
+           NAME_LINE AS ALIAS1
+    FROM ALIASFIL
+    ORDER BY CUSTNO1
+""").arrow()
 
-# ------------------------
-# Step 3: Remove invalid countries
-# ------------------------
-bad_countries = [
-    "SINGAPORE ","CANADA    ","SINGAPORE`","LONDON    ","AUS       ",
-    "AUSTRIA   ","BAHRAIN   ","BANGLADESH","BRUNEI DAR","CAMBODIA  ",
-    "CAN       ","CAYMAN ISL","CHINA     ","BRUNEI    ","INDONESIA ",
-    "DARUSSALAM","DENMARK   ","EMIRATES  ","ENGLAND   ","EUROPEAN  ",
-    "FRANCE    ","GERMANY   ","HONG KONG ","INDIA     ","IRAN (ISLA",
-    "IRELAND   ","JAPAN     ","KOREA REPU","MACAU     ","MAURITIUS ",
-    "MEXICO    ","MYANMAR   ","NEPAL     ","NETHERLAND","NEW ZEALAN",
-    "NEWZEALAND","NIGERIA   ","NORWAY    ","OMAN      ","PAKISTAN  ",
-    "PANAMA    ","PHILIPPINE","ROC       ","S ARABIA  ","SAMOA     ",
-    "SAUDI ARAB","SIGAPORE  ","SIMGAPORE ","SINGAPOREW","SINGPAORE ",
-    "SINGPORE  ","SINAGPORE ","SNGAPORE  ","SINGOPORE ","SPAIN     ",
-    "SRI LANKA ","SWAZILAND ","SWEDEN    ","SWITZERLAN","TAIWAN    ",
-    "TAIWAN,PRO","THAILAND  ","U KINGDOM ","U.K.      ","UNITED ARA",
-    "UK        ","UNITED KIN","UNITED STA","VIRGIN ISL","USA       ",
-    "PAPUA NEW ","AUSTRALIA "
-]
-con.execute(f"""
-    CREATE OR REPLACE VIEW addr_aele_clean AS
-    SELECT * FROM addr_aele
-    WHERE COUNTRY NOT IN ({",".join(["'"+x+"'" for x in bad_countries])})
-""")
-
-# ------------------------
-# Step 4: Extract NEW_ZIP / NEW_CITY from address lines
-# ------------------------
-def extract_zip_city(line):
-    return f"""
-        WHEN substr({line},1,5) BETWEEN '00001' AND '99998'
-             AND substr({line},6,1)=' '
-        THEN substr({line},1,5)
-    """
-
-zip_case = "CASE " + " ".join([extract_zip_city(l) for l in ["LINE1ADR","LINE2ADR","LINE3ADR","LINE4ADR","LINE5ADR"]]) + " ELSE '' END"
-city_case = "CASE " + " ".join([
-    f"""WHEN substr({l},1,5) BETWEEN '00001' AND '99998' AND substr({l},6,1)=' ' 
-        THEN substr({l},7,25)""" for l in ["LINE1ADR","LINE2ADR","LINE3ADR","LINE4ADR","LINE5ADR"]
-]) + " ELSE '' END"
-
-con.execute(f"""
-    CREATE OR REPLACE VIEW addr_aele_zip AS
+# RLENCC FILE (Left)
+ccrlen1 = con.execute("""
     SELECT *,
-        {zip_case} AS NEW_ZIP,
-        {city_case} AS NEW_CITY,
-        CASE WHEN {zip_case} <> '' THEN 'MALAYSIA' ELSE '' END AS NEW_COUNTRY
-    FROM addr_aele_clean
-""")
+           CASE WHEN TRIM(EXPIRE_DATE) = '' THEN NULL
+                ELSE CAST(EXPIRE_DATE AS DATE)
+           END AS EXPDATE
+    FROM (
+        SELECT CUSTNO     AS CUSTNO1,
+               CAST(EFFDATE AS BIGINT) AS EFFDATE,
+               CUSTNO2,
+               CAST(CODE1 AS BIGINT)   AS CODE1,
+               CAST(CODE2 AS BIGINT)   AS CODE2,
+               TRIM(EXPIRE_DATE)       AS EXPDATE1
+        FROM INFILE1
+    )
+    WHERE EXPDATE1 = ''
+    ORDER BY CODE1
+""").arrow()
 
-# ------------------------
-# Step 5: Exclude bad substrings
-# ------------------------
-exclude_strings = [
-    "SINGAPORE","HONG HONG","QATAR","TAMIL NADU","STAFFORDSHIRE",
-    "HANOI","VIETNAM","NEW ZEALAND","ENGLAND","AUCKLAND","SHANGHAI",
-    "DOHA QATAR","THAILAND","HONG KONG","SEOUL","#","NSW","NETHERLANDS",
-    "AUSTRALIA","S'PORE"
-]
-def sql_escape(s):
-    return s.replace("'","''")
+# Merge (LEFTOUT)
+LEFTOUT = con.execute("""
+    SELECT l.CUSTNO1, n.INDORG1, l.CODE1, c.DESC1, l.CUSTNO2, l.CODE2, l.EXPDATE,
+           n.CUSTNAME1, a.ALIAS1, cu.OLDIC1, cu.BASICGRPCODE1, l.EFFDATE
+    FROM ccrlen1 l
+    LEFT JOIN cccode  c ON l.CODE1 = c.CODE1
+    LEFT JOIN cisname n ON l.CUSTNO1 = n.CUSTNO1
+    LEFT JOIN cisalias a ON l.CUSTNO1 = a.CUSTNO1
+    LEFT JOIN ciscust cu ON l.CUSTNO1 = cu.CUSTNO1
+""").arrow()
+print("LEFTOUT:")
+print(LEFTOUT.to_pandas().head(5))
 
-where_clause = " AND ".join([f"ADDRLINE NOT LIKE '%{sql_escape(x)}%'" for x in exclude_strings])
+#================================#
+#   PART 2 - PROCESSING RIGHT    #
+#================================#
+con.register("LEFTOUT", LEFTOUT)
 
-con.execute(f"""
-    CREATE OR REPLACE VIEW addraele1 AS
-    SELECT * FROM addr_aele_zip
-    WHERE {where_clause}
-""")
+con.execute("CREATE VIEW CCCODE_R   AS SELECT * FROM 'cis_internal/rawdata_converted/BANKCTRL_RLENCODE_CC.parquet'")
+con.execute("CREATE VIEW NAMEFILE_R AS SELECT * FROM 'cis_internal/rawdata_converted/PRIMNAME_OUT.parquet'")
+con.execute("CREATE VIEW ALIASFIL_R AS SELECT * FROM 'cis_internal/rawdata_converted/ALLALIAS_OUT.parquet'")
+con.execute("CREATE VIEW CUSTFILE_R AS SELECT * FROM 'cis_internal/rawdata_converted/ALLCUST_FB.parquet'")
 
-# ------------------------
-# Step 6: Assign STATEX
-# ------------------------
-def assign_state(zipcode: str):
-    if zipcode is None or not zipcode.isdigit():
-        return None
-    z = int(zipcode)
-    if 79000 <= z <= 86999: return "JOH"
-    if 5000 <= z <= 9999: return "KED"
-    if 15000 <= z <= 18999: return "KEL"
-    if 75000 <= z <= 78999: return "MEL"
-    if 70000 <= z <= 73999: return "NEG"
-    if 25000 <= z <= 28999 or z == 69000: return "PAH"
-    if 10000 <= z <= 14999: return "PEN"
-    if 30000 <= z <= 36999 or 39000 <= z <= 39999: return "PRK"
-    if 1000 <= z <= 2999: return "PER"
-    if 88000 <= z <= 91999: return "SAB"
-    if 93000 <= z <= 98999: return "SAR"
-    if 40000 <= z <= 49999 or 63000 <= z <= 64999 or 68000 <= z <= 68199: return "SEL"
-    if 20000 <= z <= 24999: return "TER"
-    if 50000 <= z <= 60999: return "W P"
-    if 87000 <= z <= 87999: return "LAB"
-    if 62000 <= z <= 62999: return "PUT"
-    return None
+cccode_r = con.execute("""
+    SELECT RLENTYPE AS TYPE,
+           RLENCODE AS CODE2,
+           RLENDESC AS DESC2
+    FROM CCCODE_R
+    ORDER BY CODE2
+""").arrow()
 
-con.create_function("assign_state", assign_state, ["VARCHAR"], "VARCHAR")
+ciscust_r = con.execute("""
+    SELECT DISTINCT CUSTNO   AS CUSTNO2,
+                    TAXID    AS OLDIC2,
+                    BASICGRPCODE AS BASICGRPCODE2
+    FROM CUSTFILE_R
+""").arrow()
 
-con.execute("""
-    CREATE OR REPLACE VIEW addraele2 AS
-    SELECT *, assign_state(NEW_ZIP) AS STATEX
-    FROM addraele1
-    WHERE NEW_ZIP <> ''
-""")
+cisname_r = con.execute("""
+    SELECT DISTINCT CUSTNO   AS CUSTNO2,
+                    INDORG   AS INDORG2,
+                    CUSTNAME AS CUSTNAME2
+    FROM NAMEFILE_R
+""").arrow()
 
-# ------------------------
-# Step 7: Output with PyArrow
-# ------------------------
-outfile_df = """
-    SELECT 
-        '' AS "CIS #",
-        '-' AS "-",
-        ADDREF AS "ADDR REF",
-        LINE1ADR AS "ADDLINE1",
-        LINE2ADR AS "ADDLINE2",
-        LINE3ADR AS "ADDLINE3",
-        LINE4ADR AS "ADDLINE4",
-        LINE5ADR AS "ADDLINE5",
-        '*OLD*' AS "OLD_FLAG",
-        ZIP AS "ZIP_OLD",
-        CITY AS "CITY_OLD",
-        COUNTRY AS "COUNTRY_OLD",
-        '*NEW*' AS "NEW_FLAG",
-        TRIM(NEW_ZIP) AS NEW_ZIP,
-        TRIM(NEW_CITY) AS NEW_CITY,
-        STATEX,
-        TRIM(NEW_COUNTRY) AS NEW_COUNTRY,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM addraele2
-""".format(year=year,month=month,day=day)
+cisalias_r = con.execute("""
+    SELECT CUSTNO   AS CUSTNO2,
+           NAME_LINE AS ALIAS2
+    FROM ALIASFIL_R
+    ORDER BY CUSTNO2
+""").arrow()
 
-updfile_df = """
-    SELECT
-        '' AS "CIS #",
-        ADDREF AS "ADDR REF",
-        UPPER(TRIM(NEW_CITY)) AS NEW_CITY,
-        STATEX,
-        TRIM(NEW_ZIP) AS NEW_ZIP,
-        TRIM(NEW_COUNTRY) AS NEW_COUNTRY,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM addraele2
-""".format(year=year,month=month,day=day)
+ccrlen2 = con.execute("""
+    SELECT CUSTNO1, INDORG1, CODE1, DESC1,
+           CUSTNO2, CODE2, EXPDATE,
+           CUSTNAME1, ALIAS1, OLDIC1, BASICGRPCODE1,
+           EFFDATE,
+           EXTRACT(YEAR FROM EXPDATE)  AS EXPYY,
+           EXTRACT(MONTH FROM EXPDATE) AS EXPMM,
+           EXTRACT(DAY FROM EXPDATE)   AS EXPDD
+    FROM LEFTOUT
+    ORDER BY CODE2
+""").arrow()
 
-#csv.write_csv(outfile_df, "/host/cis/output/duckdb/CCRSADR4_VERIFY.csv")
-#pq.write_table(outfile_df, "/host/cis/output/duckdb/CCRSADR4_VERIFY.parquet")
+RIGHTOUT = con.execute("""
+    SELECT r.CUSTNO2, n.INDORG2, r.CODE2, c.DESC2,
+           r.CUSTNO1, r.CODE1, r.EXPDATE,
+           n.CUSTNAME2, a.ALIAS2, cu.OLDIC2, cu.BASICGRPCODE2, r.EFFDATE
+    FROM ccrlen2 r
+    LEFT JOIN cccode_r  c ON r.CODE2 = c.CODE2
+    LEFT JOIN cisname_r n ON r.CUSTNO2 = n.CUSTNO2
+    LEFT JOIN cisalias_r a ON r.CUSTNO2 = a.CUSTNO2
+    LEFT JOIN ciscust_r cu ON r.CUSTNO2 = cu.CUSTNO2
+""").arrow()
+print("RIGHTOUT:")
+print(RIGHTOUT.to_pandas().head(5))
 
-#csv.write_csv(updfile_df, "/host/cis/output/duckdb/CCRSADR4_UPDATE.csv")
-#pq.write_table(updfile_df, "/host/cis/output/duckdb/CCRSADR4_UPDATE.parquet")
+#================================#
+#   PART 3 - COMBINE & OUTPUT    #
+#================================#
+con.register("INPUT1", LEFTOUT)
+con.register("INPUT2", RIGHTOUT)
 
-queries = {
-    "CCRSADR4_VERIFY"            : outfile_df,
-    "CCRSADR4_UPDATE"            : updfile_df,
-}
+alloutput = con.execute("""
+    SELECT l.CUSTNO1, l.INDORG1, l.CODE1, l.DESC1,
+           l.CUSTNO2, r.INDORG2, r.CODE2, r.DESC2,
+           l.EXPDATE,
+           l.CUSTNAME1, l.ALIAS1,
+           r.CUSTNAME2, r.ALIAS2,
+           l.OLDIC1, l.BASICGRPCODE1,
+           r.OLDIC2, r.BASICGRPCODE2,
+           l.EFFDATE
+    FROM INPUT1 l
+    LEFT JOIN INPUT2 r
+      ON l.CUSTNO2 = r.CUSTNO2
+""").arrow()
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
+# Deduplicate
+all_output_unique = con.execute("""
+    SELECT DISTINCT *
+    FROM alloutput
+""").arrow()
 
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true); 
-    """) 
+# Find duplicates
+duplicates = con.execute("""
+    SELECT f.*
+    FROM alloutput f
+    EXCEPT
+    SELECT u.*
+    FROM all_output_unique u
+""").arrow()
+
+print("Alloutput (unique):")
+print(all_output_unique.to_pandas().head(5))
+
+print("Duplicate rows removed:")
+print(duplicates.to_pandas().head(5))
+
+# Save outputs
+pq.write_table(all_output_unique, "cis_internal/output/RLNSHIP.parquet")
+pv_csv.write_csv(all_output_unique, "cis_internal/output/RLNSHIP.csv")
+
+pq.write_table(duplicates, "cis_internal/output/RLNSHIP_DUPLICATES.parquet")
+pv_csv.write_csv(duplicates, "cis_internal/output/RLNSHIP_DUPLICATES.csv")
