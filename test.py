@@ -5,6 +5,17 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
+#-------------------------------------------------------------------#
+# Original Program: CCRCCRLN                                        #
+#-------------------------------------------------------------------#
+#-EJS A2014-00021883  (CRMS PROJECT)                                #
+# INCLUDE ADDITIONAL COLUMNS TO BE PLACED INTO CIS INTERFACE FILES  #
+# 2016-4519 INCLUDE EFFECTIVE DATE INTO FILE                        #
+#-------------------------------------------------------------------#
+# ESMR 2021-00002352                                                #
+# TO EXCLUDE RECORD WITH EXPIRED DATE IN RLEN CC FILE               #
+#-------------------------------------------------------------------#
+
 #--------------------------------#
 # Part 1 - PROCESSING LEFT  SIDE #
 #--------------------------------#
@@ -29,7 +40,7 @@ con.execute(f"""
 con.execute("""
     CREATE VIEW cccode_l AS
     SELECT DISTINCT RLENTYPE AS TYPE,
-                    RLENCODE AS CODE1,
+                    LPAD(CAST(CAST(RLENCODE AS BIGINT) AS VARCHAR), 3, '0') AS CODE1,
                     RLENDESC AS DESC1
     FROM CCCODE
 """)
@@ -72,8 +83,8 @@ con.execute("""
         SELECT CUSTNO     AS CUSTNO1,
                CAST(EFFDATE AS BIGINT) AS EFFDATE,
                CUSTNO2,
-               CAST(CODE1 AS BIGINT)   AS CODE1,
-               CAST(CODE2 AS BIGINT)   AS CODE2,
+               LPAD(CAST(CAST(CODE1 AS BIGINT) AS VARCHAR), 3, '0') AS CODE1,
+               LPAD(CAST(CAST(CODE2 AS BIGINT) AS VARCHAR), 3, '0') AS CODE2,
                TRIM(EXPIRE_DATE)       AS EXPDATE1
         FROM INFILE1
     )
@@ -108,7 +119,7 @@ con.execute(f"""
 con.execute("""
     CREATE VIEW cccode_r1 AS
     SELECT RLENTYPE AS TYPE,
-           RLENCODE AS CODE2,
+           LPAD(CAST(CAST(RLENCODE AS BIGINT) AS VARCHAR), 3, '0') AS CODE2,
            RLENDESC AS DESC2
     FROM CCCODE_R
     ORDER BY CODE2
@@ -169,8 +180,8 @@ con.execute("""
 #con.register("INPUT1", LEFTOUT)
 #con.register("INPUT2", RIGHTOUT)
 con.execute(f"""
-            CREATE VIEW INPUT1   AS SELECT * FROM 'LEFTOUT';
-            CREATE VIEW INPUT2   AS SELECT * FROM 'RIGHTOUT';
+            CREATE VIEW INPUT1   AS SELECT * FROM LEFTOUT;
+            CREATE VIEW INPUT2   AS SELECT * FROM RIGHTOUT;
 """)
 
 con.execute("""
@@ -190,17 +201,20 @@ con.execute("""
 """)
 
 # Deduplicate
-all_output_unique = """
+all_output_unique = con.execute(f"""
+    CREATE VIEW all_output_unique AS
     SELECT DISTINCT 
         *,
         {year} AS year,
         {month} AS month,
         {day} AS day
     FROM alloutput
-""".format(year=year,month=month,day=day)
+    ORDER BY CUSTNO1, CODE1
+""")
 
 # Find duplicates
-duplicates = """
+duplicates = con.execute(f"""
+    CREATE VIEW duplicates AS
     SELECT 
         f.*,
         {year} AS year,
@@ -210,14 +224,15 @@ duplicates = """
     EXCEPT
     SELECT u.*
     FROM all_output_unique u
-""".format(year=year,month=month,day=day)
+    ORDER BY CUSTNO1
+""")
 
 # =====================#
 # Export with PyArrow  #
 # =====================#
 queries = {
-    "RLNSHIP"               : all_output_unique,
-    "RLNSHIP_DUPLICATES"    : duplicates,
+    "RLNSHIP"               : "SELECT * FROM all_output_unique",
+    "RLNSHIP_DUPLICATES"    : "SELECT * FROM duplicates",
 }
 
 for name, query in queries.items():
