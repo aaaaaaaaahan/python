@@ -89,7 +89,6 @@ con.execute("""
         NULL AS ACCTCODE, NULL AS ACCTNO,
         CUSTNAME1, ALIAS1, CUSTNAME, ALIAS
     FROM ccrlen1
-    ORDER BY CUSTNO1
 """)
 
 #-----------------------------------#
@@ -102,6 +101,7 @@ out_table = """
         {month} AS month,
         {day} AS day
     FROM out1
+    ORDER BY CUSTNO1
 """.format(year=year,month=month,day=day)
 
 out1_imis = """
@@ -123,8 +123,9 @@ out1_imis = """
       '"' || {day}     || '"' AS day,
       '"' || {month}   || '"' AS month,
       '"' || {year}    || '"' AS year
-    FROM out1;
-"""
+    FROM out1
+    ORDER BY CUSTNO1
+""".format(year=year,month=month,day=day)
 
 queries = {
     "CCRIS_CC_RLNSHIP_PARTIES"            : out_table,
