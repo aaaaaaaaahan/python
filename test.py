@@ -1,7 +1,24 @@
 import duckdb
-import pyarrow.csv as pv_csv
-import pyarrow.parquet as pq
-from datetime import date
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
+import datetime
+
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+#-------------------------------------------------------------------#
+# Original Program: CCRCCRLN                                        #
+#-------------------------------------------------------------------#
+#-EJS A2014-00021883  (CRMS PROJECT)                                #
+# INCLUDE ADDITIONAL COLUMNS TO BE PLACED INTO CIS INTERFACE FILES  #
+# 2016-4519 INCLUDE EFFECTIVE DATE INTO FILE                        #
+#-------------------------------------------------------------------#
+# ESMR 2021-00002352                                                #
+# TO EXCLUDE RECORD WITH EXPIRED DATE IN RLEN CC FILE               #
+#-------------------------------------------------------------------#
+
+#--------------------------------#
+# Part 1 - PROCESSING LEFT  SIDE #
+#--------------------------------#
 
 #================================#
 #   CONNECT TO DUCKDB            #
@@ -11,51 +28,56 @@ con = duckdb.connect()
 #================================#
 #   PART 1 - PROCESSING LEFT     #
 #================================#
-con.execute("CREATE VIEW INFILE1   AS SELECT * FROM 'cis_internal/rawdata_converted/RLENCC_FB.parquet'")
-con.execute("CREATE VIEW CCCODE    AS SELECT * FROM 'cis_internal/rawdata_converted/BANKCTRL_RLENCODE_CC.parquet'")
-con.execute("CREATE VIEW NAMEFILE  AS SELECT * FROM 'cis_internal/rawdata_converted/PRIMNAME_OUT.parquet'")
-con.execute("CREATE VIEW ALIASFIL  AS SELECT * FROM 'cis_internal/rawdata_converted/ALLALIAS_OUT.parquet'")
-con.execute("CREATE VIEW CUSTFILE  AS SELECT * FROM 'cis_internal/rawdata_converted/ALLCUST_FB.parquet'")
+con.execute(f"""
+            CREATE VIEW INFILE1   AS SELECT * FROM '{host_parquet_path("RLENCC_FB.parquet")}';
+            CREATE VIEW CCCODE    AS SELECT * FROM '{host_parquet_path("BANKCTRL_RLENCODE_CC.parquet")}';
+            CREATE VIEW NAMEFILE  AS SELECT * FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}';
+            CREATE VIEW ALIASFIL  AS SELECT * FROM '{host_parquet_path("ALLALIAS_OUT.parquet")}';
+            CREATE VIEW CUSTFILE  AS SELECT * FROM '{host_parquet_path("ALLCUST_FB.parquet")}';
+""")
 
 # RELATION FILE
-cccode = con.execute("""
+con.execute("""
+    CREATE VIEW cccode_l AS
     SELECT DISTINCT RLENTYPE AS TYPE,
                     RLENCODE AS CODE1,
                     RLENDESC AS DESC1
     FROM CCCODE
-""").arrow()
-print("RELATION FILE (LEFT):")
-print(cccode.to_pandas().head(5))
+""")
 
 # CUSTOMER FILE
-ciscust = con.execute("""
+con.execute("""
+    CREATE VIEW ciscust AS
     SELECT DISTINCT CUSTNO   AS CUSTNO1,
                     TAXID    AS OLDIC1,
                     BASICGRPCODE AS BASICGRPCODE1
     FROM CUSTFILE
-""").arrow()
+""")
 
 # NAME FILE
-cisname = con.execute("""
+con.execute("""
+    CREATE VIEW cisname AS
     SELECT DISTINCT CUSTNO   AS CUSTNO1,
                     INDORG   AS INDORG1,
                     CUSTNAME AS CUSTNAME1
     FROM NAMEFILE
-""").arrow()
+""")
 
 # ALIAS FILE
-cisalias = con.execute("""
+con.execute("""
+    CREATE VIEW cisalias AS
     SELECT CUSTNO AS CUSTNO1,
            NAME_LINE AS ALIAS1
     FROM ALIASFIL
     ORDER BY CUSTNO1
-""").arrow()
+""")
 
 # RLENCC FILE (Left)
-ccrlen1 = con.execute("""
+con.execute("""
+    CREATE VIEW ccrlen1 AS
     SELECT *,
-           CASE WHEN TRIM(EXPIRE_DATE) = '' THEN NULL
-                ELSE CAST(EXPIRE_DATE AS DATE)
+           CASE WHEN TRIM(EXPDATE1) = '' THEN NULL
+                ELSE CAST(EXPDATE1 AS DATE)
            END AS EXPDATE
     FROM (
         SELECT CUSTNO     AS CUSTNO1,
@@ -68,61 +90,67 @@ ccrlen1 = con.execute("""
     )
     WHERE EXPDATE1 = ''
     ORDER BY CODE1
-""").arrow()
+""")
 
 # Merge (LEFTOUT)
-LEFTOUT = con.execute("""
+con.execute("""
+    CREATE VIEW LEFTOUT AS
     SELECT l.CUSTNO1, n.INDORG1, l.CODE1, c.DESC1, l.CUSTNO2, l.CODE2, l.EXPDATE,
            n.CUSTNAME1, a.ALIAS1, cu.OLDIC1, cu.BASICGRPCODE1, l.EFFDATE
     FROM ccrlen1 l
-    LEFT JOIN cccode  c ON l.CODE1 = c.CODE1
+    LEFT JOIN cccode_l  c ON l.CODE1 = c.CODE1
     LEFT JOIN cisname n ON l.CUSTNO1 = n.CUSTNO1
     LEFT JOIN cisalias a ON l.CUSTNO1 = a.CUSTNO1
     LEFT JOIN ciscust cu ON l.CUSTNO1 = cu.CUSTNO1
-""").arrow()
-print("LEFTOUT:")
-print(LEFTOUT.to_pandas().head(5))
+""")
 
 #================================#
 #   PART 2 - PROCESSING RIGHT    #
 #================================#
-con.register("LEFTOUT", LEFTOUT)
+#con.register("LEFTOUT", LEFTOUT)
 
-con.execute("CREATE VIEW CCCODE_R   AS SELECT * FROM 'cis_internal/rawdata_converted/BANKCTRL_RLENCODE_CC.parquet'")
-con.execute("CREATE VIEW NAMEFILE_R AS SELECT * FROM 'cis_internal/rawdata_converted/PRIMNAME_OUT.parquet'")
-con.execute("CREATE VIEW ALIASFIL_R AS SELECT * FROM 'cis_internal/rawdata_converted/ALLALIAS_OUT.parquet'")
-con.execute("CREATE VIEW CUSTFILE_R AS SELECT * FROM 'cis_internal/rawdata_converted/ALLCUST_FB.parquet'")
+con.execute(f"""
+            CREATE VIEW CCCODE_R   AS SELECT * FROM '{host_parquet_path("BANKCTRL_RLENCODE_CC.parquet")}';
+            CREATE VIEW NAMEFILE_R AS SELECT * FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}';
+            CREATE VIEW ALIASFIL_R AS SELECT * FROM '{host_parquet_path("ALLALIAS_OUT.parquet")}';
+            CREATE VIEW CUSTFILE_R AS SELECT * FROM '{host_parquet_path("ALLCUST_FB.parquet")}';
+""")
 
-cccode_r = con.execute("""
+con.execute("""
+    CREATE VIEW cccode_r1 AS
     SELECT RLENTYPE AS TYPE,
            RLENCODE AS CODE2,
            RLENDESC AS DESC2
     FROM CCCODE_R
     ORDER BY CODE2
-""").arrow()
+""")
 
-ciscust_r = con.execute("""
+con.execute("""
+    CREATE VIEW ciscust_r AS
     SELECT DISTINCT CUSTNO   AS CUSTNO2,
                     TAXID    AS OLDIC2,
                     BASICGRPCODE AS BASICGRPCODE2
     FROM CUSTFILE_R
-""").arrow()
+""")
 
-cisname_r = con.execute("""
+con.execute("""
+    CREATE VIEW cisname_r AS
     SELECT DISTINCT CUSTNO   AS CUSTNO2,
                     INDORG   AS INDORG2,
                     CUSTNAME AS CUSTNAME2
     FROM NAMEFILE_R
-""").arrow()
+""")
 
-cisalias_r = con.execute("""
+con.execute("""
+    CREATE VIEW cisalias_r AS
     SELECT CUSTNO   AS CUSTNO2,
            NAME_LINE AS ALIAS2
     FROM ALIASFIL_R
     ORDER BY CUSTNO2
-""").arrow()
+""")
 
-ccrlen2 = con.execute("""
+con.execute("""
+    CREATE VIEW ccrlen2 AS
     SELECT CUSTNO1, INDORG1, CODE1, DESC1,
            CUSTNO2, CODE2, EXPDATE,
            CUSTNAME1, ALIAS1, OLDIC1, BASICGRPCODE1,
@@ -132,28 +160,32 @@ ccrlen2 = con.execute("""
            EXTRACT(DAY FROM EXPDATE)   AS EXPDD
     FROM LEFTOUT
     ORDER BY CODE2
-""").arrow()
+""")
 
-RIGHTOUT = con.execute("""
+con.execute("""
+    CREATE VIEW RIGHTOUT AS
     SELECT r.CUSTNO2, n.INDORG2, r.CODE2, c.DESC2,
            r.CUSTNO1, r.CODE1, r.EXPDATE,
            n.CUSTNAME2, a.ALIAS2, cu.OLDIC2, cu.BASICGRPCODE2, r.EFFDATE
     FROM ccrlen2 r
-    LEFT JOIN cccode_r  c ON r.CODE2 = c.CODE2
+    LEFT JOIN cccode_r1  c ON r.CODE2 = c.CODE2
     LEFT JOIN cisname_r n ON r.CUSTNO2 = n.CUSTNO2
     LEFT JOIN cisalias_r a ON r.CUSTNO2 = a.CUSTNO2
     LEFT JOIN ciscust_r cu ON r.CUSTNO2 = cu.CUSTNO2
-""").arrow()
-print("RIGHTOUT:")
-print(RIGHTOUT.to_pandas().head(5))
+""")
 
-#================================#
-#   PART 3 - COMBINE & OUTPUT    #
-#================================#
-con.register("INPUT1", LEFTOUT)
-con.register("INPUT2", RIGHTOUT)
+#============================================#
+#   PART 3 - FILE TO SEARCH ONE SIDE ONLY    #
+#============================================#
+#con.register("INPUT1", LEFTOUT)
+#con.register("INPUT2", RIGHTOUT)
+con.execute(f"""
+            CREATE VIEW INPUT1   AS SELECT * FROM 'LEFTOUT';
+            CREATE VIEW INPUT2   AS SELECT * FROM 'RIGHTOUT';
+""")
 
-alloutput = con.execute("""
+con.execute("""
+    CREATE VIEW alloutput AS
     SELECT l.CUSTNO1, l.INDORG1, l.CODE1, l.DESC1,
            l.CUSTNO2, r.INDORG2, r.CODE2, r.DESC2,
            l.EXPDATE,
@@ -165,32 +197,52 @@ alloutput = con.execute("""
     FROM INPUT1 l
     LEFT JOIN INPUT2 r
       ON l.CUSTNO2 = r.CUSTNO2
-""").arrow()
+    WHERE (l.EXPDATE IS NULL OR l.EXPDATE = ' ' OR l.EXPDATE >= '{batch_date}')
+""")
 
 # Deduplicate
-all_output_unique = con.execute("""
-    SELECT DISTINCT *
+all_output_unique = """
+    SELECT DISTINCT 
+        *,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
     FROM alloutput
-""").arrow()
+""".format(year=year,month=month,day=day)
 
 # Find duplicates
-duplicates = con.execute("""
-    SELECT f.*
+duplicates = """
+    SELECT 
+        f.*,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
     FROM alloutput f
     EXCEPT
     SELECT u.*
     FROM all_output_unique u
-""").arrow()
+""".format(year=year,month=month,day=day)
 
-print("Alloutput (unique):")
-print(all_output_unique.to_pandas().head(5))
+# =====================#
+# Export with PyArrow  #
+# =====================#
+queries = {
+    "RLNSHIP"               : all_output_unique,
+    "RLNSHIP_DUPLICATES"    : duplicates,
+}
 
-print("Duplicate rows removed:")
-print(duplicates.to_pandas().head(5))
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-# Save outputs
-pq.write_table(all_output_unique, "cis_internal/output/RLNSHIP.parquet")
-pv_csv.write_csv(all_output_unique, "cis_internal/output/RLNSHIP.csv")
-
-pq.write_table(duplicates, "cis_internal/output/RLNSHIP_DUPLICATES.parquet")
-pv_csv.write_csv(duplicates, "cis_internal/output/RLNSHIP_DUPLICATES.csv")
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
