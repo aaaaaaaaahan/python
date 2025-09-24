@@ -1,87 +1,89 @@
 import duckdb
-import pyarrow as pa
-from datetime import datetime
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
+import datetime
 
-con = duckdb.connect(database=":memory:")
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+#--------------------------------#
+# Open DuckDB in-memory database #
+#--------------------------------#
+con = duckdb.connect()
 
 # ================================================================
 # Part 1: DATE PROCESSING
 # ================================================================
-today = datetime.now()
-LOADDATE = today.strftime("%Y-%m-%d")  # equivalent to SAS YYMMDD10.
-print(f"Load date: {LOADDATE}")
+#today = datetime.now()
+#LOADDATE = today.strftime("%Y-%m-%d")  # equivalent to SAS YYMMDD10.
+#print(f"Load date: {LOADDATE}")
 
 # ================================================================
 # Part 2: ALIAS FILE INPUT
 # ================================================================
-alias_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW alias AS
     SELECT 
         CAST(ALIASKEY AS VARCHAR) AS ALIASKEY,
         CAST(ALIAS AS VARCHAR)    AS ALIAS
-    FROM 'ALIAS.parquet'
+    FROM '{host_parquet_path("CMD_ALIAS.parquet")}'
     ORDER BY ALIASKEY, ALIAS
-""").arrow()
-print("\n=== Part 2: ALIASFL ===")
-print(alias_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 3: BRANCH FILE PBBRANCH
 # ================================================================
-pbbrch_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW pbbrch AS
     SELECT DISTINCT ON (ACCTBRCH)
         CAST(ACCTBRCH AS VARCHAR)     AS ACCTBRCH,
         CAST(BRANCH_ABBR AS VARCHAR)  AS BRANCH_ABBR
-    FROM 'BRANCH.parquet'
+    FROM '{host_parquet_path("PBBBRCH.parquet")}'
     ORDER BY ACCTBRCH
-""").arrow()
-print("\n=== Part 3: BRANCH ===")
-print(pbbrch_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 4: OCCUP FILE
 # ================================================================
-occupfl_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW occupfl AS
     SELECT 
         CAST(TYPE AS VARCHAR)      AS TYPE,
         CAST(DEMOCODE AS VARCHAR)  AS DEMOCODE,
         CAST(DEMODESC AS VARCHAR)  AS DEMODESC
-    FROM 'BANKCTRL_DEMOCODE.parquet'
+    FROM '{host_parquet_path("BANKCTRL_DEMOCODE.parquet")}'
     WHERE TYPE = 'OCCUP'
     ORDER BY DEMOCODE
-""").arrow()
-print("\n=== Part 4: OCCUPAT ===")
-print(occupfl_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 5: MASCO FILE
 # ================================================================
-mascofl_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW mascofl AS
     SELECT 
         CAST(MASCO2008 AS VARCHAR) AS MASCO2008,
         CAST(MASCODESC AS VARCHAR) AS MASCODESC
-    FROM 'MASCOFL.parquet'
+    FROM '{host_parquet_path("BANKCTRL_MISC10.parquet")}'
     ORDER BY MASCO2008
-""").arrow()
-print("\n=== Part 5: MASCO ===")
-print(mascofl_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 6: MSIC FILE
 # ================================================================
-msicfl_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW msicfl AS
     SELECT 
         CAST(MSICCODE AS VARCHAR) AS MSICCODE,
         CAST(MSICDESC AS VARCHAR) AS MSICDESC
-    FROM 'MSICFL.parquet'
+    FROM '{host_parquet_path("BANKCTRL_MISC9.parquet")}'
     ORDER BY MSICCODE
-""").arrow()
-print("\n=== Part 6: MSIC ===")
-print(msicfl_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 7: STATEMENT CYCLE FILE
 # ================================================================
-cyclefl_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW cyclefl AS
     SELECT 
         LPAD(CAST(ACCTNO AS VARCHAR), 11, '0') AS ACCTNOC,
         CAST(ACCTNAME AS VARCHAR)              AS ACCTNAME,
@@ -93,30 +95,28 @@ cyclefl_arrow = con.execute("""
         TRY_CAST(PREV_AMT_DR AS DOUBLE)        AS PREV_AMT_DR,
         TRY_CAST(PREV_CYC_CR AS BIGINT)        AS PREV_CYC_CR,
         TRY_CAST(PREV_AMT_CR AS DOUBLE)        AS PREV_AMT_CR
-    FROM 'CYCLEFL.parquet'
+    FROM '{host_parquet_path("STMT_INQ_FILE.parquet")}'
     ORDER BY ACCTNOC
-""").arrow()
-print("\n=== Part 7: STATEMENT CYCLE FILE ===")
-print(cyclefl_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 8: POST INDICATOR FILE
 # ================================================================
-postfl_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW postfl AS
     SELECT 
         CAST(ACCTNOC AS VARCHAR)         AS ACCTNOC,
         CAST(ACCT_PST_IND AS VARCHAR)    AS ACCT_PST_IND,
         CAST(ACCT_PST_REASON AS VARCHAR) AS ACCT_PST_REASON
-    FROM 'POSTFL.parquet'
+    FROM '{host_parquet_path("POST_IND_EXT.parquet")}'
     ORDER BY ACCTNOC
-""").arrow()
-print("\n=== Part 8: POST INDICATOR FILE ===")
-print(postfl_arrow.to_pandas().head(5))
+""")
 
 # ================================================================
 # Part 9: DEPOFL
 # ================================================================
-depofl_arrow = con.execute("""
+con.execute(f"""
+    CREATE VIEW depofl AS
     SELECT 
         LPAD(CAST(ACCTNO AS VARCHAR), 11, '0') AS ACCTNOC,
         CAST(SEQID_1 AS VARCHAR)  AS SEQID_1,
@@ -132,8 +132,6 @@ depofl_arrow = con.execute("""
         CAST(SOURCE_2 AS VARCHAR) AS SOURCE_2,
         CAST(SOURCE_3 AS VARCHAR) AS SOURCE_3,
         CAST(TOT_HOLD AS VARCHAR) AS TOT_HOLD
-    FROM 'DEPOFL.parquet'
+    FROM '{host_parquet_path("CNTMAX3_TRANSPO.parquet")}'
     ORDER BY ACCTNOC
-""").arrow()
-print("\n=== Part 9: ADDITIONAL DP INPUT ===")
-print(depofl_arrow.to_pandas().head(5))
+""")
