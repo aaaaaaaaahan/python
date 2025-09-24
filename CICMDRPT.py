@@ -2,23 +2,6 @@ import polars as pl
 from datetime import datetime
 from reader import load_input
 
-#---------------------------------------------------------------------#
-# Original Program: CICMDRPT                                          #
-#---------------------------------------------------------------------#
-# ESMR 2022-2450 EXTRACTION OF CUSTOMERS INFORMATION BY MAPPING ID    #
-#                TYPE (FROM CMD USER)                                 #
-#---------------------------------------------------------------------#
-# ESMR 2023-5004 ADDITIONAL DEPOSIT INFO TO BE EXTRACTED INTO REPORT  #
-# INCLUDE 3 NEW FILES AS BELOW:                                       #
-# -CYCLEFL                                                            #
-# -POSTFL                                                             #
-# -DEPOFL                                                             #
-#---------------------------------------------------------------------#
-# ESMR2024-2598                                                       #
-# - TO INITIALIZE AMOUNT FIELDS TO ELIMINATE SPECIAL CHARACTER        #
-#   DISPLAYED IN THE REPORT                                           #
-#---------------------------------------------------------------------#
-
 # ================================================================
 # Read parquet datasets (no description, just loading)
 # ================================================================
