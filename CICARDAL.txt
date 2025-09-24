@@ -1,0 +1,112 @@
+//CICARDAL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB58767
+//*---------------------------------------------------------------------
+//* ESMR 2009-1701 - OFAC / UNITED NATIONS LIST
+//* EXTRACT ALL NEW UNICARD(CC/DB) ACCOUNTS (RUN EVERY 3RD OF THE MONTH)
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DLT1     DD DSN=RBP2.B033.CIS.CARDALL,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* EXTRACTING ALL NEW ACCOUNTS (MONTHLY BASIS)
+//*---------------------------------------------------------------------
+//ALLCARD  EXEC SAS609,REGION=4M,WORK='50000,50000'
+//IEFRDER   DD DUMMY
+//ACCTFILE  DD DISP=SHR,DSN=SAP.PBCS.ACCT33(0)
+//          DD DISP=SHR,DSN=SAP.PBCS.ACCT55(0)
+//CARDFILE  DD DISP=SHR,DSN=SAP.PBCS.CARD33(0)
+//          DD DISP=SHR,DSN=SAP.PBCS.CARD55(0)
+//OUTFILE   DD DSN=RBP2.B033.CIS.CARDALL,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=150,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*    UNICARD ACCT FILE DECLARATION                               */
+ /*----------------------------------------------------------------*/
+   DATA ACCT;
+     DROP CHECKNUM SCOREA;
+     INFILE ACCTFILE;
+         INPUT @01  ACCTNO       11.
+               @12  OPENDATE     6.
+               @455 UNINAME1     $40.
+               @495 UNINAME2     $40.
+               @972 CUSTNBR      $12.
+               @984 CUSTREF      $12.
+               @996 CARDTYPE     $5.;
+     NEWODATE = INPUT(PUT(OPENDATE,Z6.),DDMMYY6.);
+     NEWDATE = PUT(NEWODATE,YYMMDD10.);
+   IF CUSTNBR NE '            ' THEN DO;
+      IF SUBSTR(CUSTNBR,12,1) = ' ' THEN
+          OLDIC = CUSTNBR;
+      ELSE DO;
+          /* IF VTYPE(CUSTNBR) = 'N' THEN  */
+          /*    NEWIC = CUSTNBR;           */
+          CHECKNUM='1234567890' ;
+          SCOREA=VERIFY(TRIM(CUSTNBR),CHECKNUM);
+          IF SCOREA = 0 THEN NEWIC = CUSTNBR;
+      END;
+   END;
+   IF CUSTREF NE '            ' THEN DO;
+      IF SUBSTR(CUSTREF,12,1) NE ' ' THEN NEWIC = CUSTREF;
+   ELSE OLDIC = CUSTREF;
+   END;
+   IF NEWIC NE '            ' THEN DO;
+      ALIAS = 'IC ';
+   END;
+   RUN;
+ PROC SORT DATA=ACCT; BY ACCTNO; RUN;
+ PROC PRINT DATA=ACCT(OBS=10); TITLE 'ACCOUNT FILE'; RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    UNICARD CARD FILE DECLARATION                               */
+ /*----------------------------------------------------------------*/
+   DATA CARD;
+     INFILE CARDFILE;
+         INPUT @13  ACCTNO       11.
+               @42  ISSUEDATE    6.
+               @48  CARDNO       16.
+               @68  CLOSEDATE    6.;
+   RUN;
+ PROC SORT DATA=CARD; BY ACCTNO; RUN;
+ PROC PRINT DATA=CARD(OBS=10); TITLE 'CARD FILE '; RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   MERGING UNICARD ACCT AND CARD FILES                          */
+ /*----------------------------------------------------------------*/
+   DATA MRGCARD;
+     MERGE ACCT(IN=A) CARD(IN=B); BY ACCTNO;
+     IF A THEN DO;
+        OUTPUT;
+     END;
+   RUN;
+
+ PROC SORT DATA=MRGCARD NODUPKEY; BY ACCTNO ; RUN;
+ PROC PRINT DATA=MRGCARD(OBS=10);TITLE 'MERGED UNICARD FILES'; RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAILS                                               */
+ /*----------------------------------------------------------------*/
+  DATA TEMPOUT;
+  SET MRGCARD;
+  FILE OUTFILE;
+     PUT @01   '033'
+         @04   NEWDATE             $10.
+         @14   '00001'
+         @19   CARDTYPE            $5.
+         @24   CARDNO              $16.
+         @40   'I'
+         @41   UNINAME1            $40.
+         @81   UNINAME2            $40.
+         @121  ALIAS               $3.
+         @124  NEWIC               $12.
+         @136  OLDIC               $12.;
+  RUN;
+
