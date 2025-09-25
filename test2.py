@@ -1,19 +1,24 @@
-queries = {
-    "CISOWNER"            : final,
-}
+import os
+import datetime
+import glob
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
+# Base name like GDG
+base_name = "detail_report"
 
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+# Add timestamp (yyyymmdd)
+today = datetime.date.today().strftime("%Y%m%d")
+detail_txt = f"{base_name}_{today}.txt"
+
+# Write your report
+with open(detail_txt, "w") as f:
+    f.write("This is today's report\n")
+
+print("Report written:", detail_txt)
+
+# Keep only last 3 generations (like GDG LIMIT)
+max_versions = 3
+files = sorted(glob.glob(f"{base_name}_*.txt"))
+if len(files) > max_versions:
+    for old_file in files[:-max_versions]:
+        os.remove(old_file)
+        print("Deleted old generation:", old_file)
