@@ -52,7 +52,7 @@ print(ufile_sorted.to_pandas().head(20))
 # ================================================================
 tempo_out = con.execute("""
     SELECT
-        '033' AS COMPANY,
+        '033' AS BANKNO,
         DATEOPEN,
         BRANCH,
         ACCTCODE,
