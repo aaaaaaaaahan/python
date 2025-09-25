@@ -1,19 +1,17 @@
+Error in sitecustomize; set PYTHONVERBOSE for traceback:
+TypeError: expected str, bytes or os.PathLike object, not NoneType
+
 import duckdb
 from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
 import datetime
 from textwrap import dedent
 
-# ================================================================
-# Input Parquet datasets (already converted)
-# ================================================================
-#error_parquet = "BNMCTR_ERROR.parquet"
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date
 
-# ================================================================
-# Step 1: Get Reporting Date (from CTRLDATE parquet)
-# ================================================================
+# ======================================================
+# Step 1: DuckDB connection
+# ======================================================
 con = duckdb.connect()
 
 # ================================================================
@@ -65,6 +63,11 @@ grand_totals = con.execute("""
 # ================================================================
 # Step 4: Write Detail Report (like SAS RPTFILE)
 # ================================================================
+report_date = batch_date
+# Output text reports
+detail_txt = f"/host/cis/output/BNMCTR_ERROR_RPT_{batch_date}.txt"
+summary_txt = f"/host/cis/output/BNMCTR_ERROR_SUM_{batch_date}.txt"
+
 with open(detail_txt, "w") as f:
     if detail_df.empty:
         f.write(dedent(f"""
@@ -134,6 +137,3 @@ with open(summary_txt, "w") as f:
         f.write("\n")
         f.write(f"{'TOTAL RECORDS  :':<20}{grand_totals['TOTAL_RECORDS']:>11}\n")
         f.write(f"{'TOTAL BRANCH   :':<20}{grand_totals['TOTAL_BRANCH']:>11}\n")
-
-print("✅ Detail report written to", detail_txt)
-print("✅ Summary report written to", summary_txt)
