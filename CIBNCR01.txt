@@ -1,0 +1,220 @@
+//CIBNCR01 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB22891
+//*---------------------------------------------------------------------
+//* CASH THRESHOLD REPORTING (CTR)
+//* TO GENERATE REPORT FOR ERROR AMENDMENT
+//* ESMR 2010-2716 - USE BATCH DATE
+//*---------------------------------------------------------------------
+//* DETAILED AND SUMMARY EXCEPTION REPORT
+//*---------------------------------------------------------------------
+//EXCEPT   EXEC SAS609
+//IEFRDER   DD DUMMY
+//INFILE    DD DISP=SHR,DSN=RBP2.B033.BNMCTR.ERROR
+//CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//RPTFILE   DD DSN=RBP2.B033.BNMCTR.ERROR.RPT(+1),
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(50,50),RLSE),
+//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//SUMFILE   DD DSN=RBP2.B033.BNMCTR.ERROR.SUM(+1),
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(TRK,(5,1),RLSE),
+//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+
+ /*----------------------------------------------------------------*/
+ /*    SET DATES                                                   */
+ /*----------------------------------------------------------------*/
+    DATA SRSDATE;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
+
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('DATE1',PUT(TODAYSAS,DDMMYY8.));
+    RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    SEND TO OUTPUT                                              */
+ /*----------------------------------------------------------------*/
+DATA TEMP1;
+   INFILE INFILE;
+           INPUT @01   BANKNO            $3.
+                 @04   BRANCH            $7.
+                 @11   ACCTNO            $20.
+                 @31   CUSTNO            $11.
+                 @42   FIELDTYPE         $20.
+                 @62   FIELDVALUE        $30.
+                 @92   REMARKS           $40.;
+RUN;
+
+PROC SORT DATA=TEMP1
+     (KEEP = BRANCH ACCTNO CUSTNO FIELDTYPE FIELDVALUE REMARKS)
+     NODUPKEY;
+     BY BRANCH ACCTNO CUSTNO FIELDTYPE FIELDVALUE REMARKS;
+PROC PRINT DATA=TEMP1;
+RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+  IF TRN=0 THEN DO;
+     BRANCH = '0000000';
+     FILE RPTFILE PRINT HEADER=NEWPAGE;
+     PUT _PAGE_;
+     PUT  /@044   '**********************************';
+     PUT  /@044   '*                                *';
+     PUT  /@044   '*       NO ERROR RECORDS         *';
+     PUT  /@044   '*                                *';
+     PUT  /@044   '**********************************';
+  END;
+
+  RETAIN TRN;
+
+  SET TEMP1 NOBS=TRN END=EOF; BY BRANCH;
+  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
+  LINECNT = 0;
+  FORMAT BANKNAME $45.;
+
+  IF LINECNT >= 40 OR FIRST.BRANCH THEN DO;
+     PUT _PAGE_;
+  END;
+
+    LINECNT + 5;
+    BRCNT + 1;
+
+
+  IF ACCTNO  NE SPACES THEN DO;
+     LINECNT + 1;
+
+     PUT @2    ACCTNO            $20.
+         @23   CUSTNO            $11.
+         @35   FIELDTYPE         $20.
+         @57   FIELDVALUE        $30.
+         @88   REMARKS           $40.;
+     BRCUST   + 1;
+     GRCUST   + 1;
+     END;
+
+  IF LAST.BRANCH THEN DO;
+     PUT  @1  'TOTAL RECORDS = '
+          @23  BRCUST      7.;
+
+          BRCUST  = 0;
+          PAGECNT = 0;
+  END;
+
+  RETURN;
+
+  NEWPAGE :
+    PAGECNT+1;
+    LINECNT = 0;
+
+    BANKNAME = 'PUBLIC BANK BERHAD';
+
+    PUT @1   'REPORT ID   : CTR ECP PBB'
+        @55   BANKNAME
+        @94  'PAGE        : ' PAGECNT   4.
+       /@1   'PROGRAM ID  : CIBNCR01'
+        @94  'REPORT DATE : ' "&DATE1"
+       /@1   'BRANCH      : '  BRANCH    $7.
+        @43  'CASH THRESHOLD REPORTING - DATA AMENDMENT'
+       /@43  '=========================================';
+
+    PUT   /@2    'ACCT NUMBER'
+           @23   'CUSTOMER NO'
+           @35   'FIELD TYPE'
+           @57   'FIELD VALUE'
+           @88   'REMARKS';
+    PUT    @2    '==========='
+           @23   '==========='
+           @35   '=========='
+           @57   '==========='
+           @88   '=======';
+
+    LINECNT = 9;
+  RETURN;
+RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT SUMMARY REPORT                                        */
+ /*----------------------------------------------------------------*/
+ DATA _NULL_;
+  IF TRN=0 THEN DO;
+     BRANCH = '0000000';
+     FILE SUMFILE PRINT HEADER=NEWPAGE;
+     PUT _PAGE_;
+     PUT  /@05    '**********************************';
+     PUT  /@05    '*                                *';
+     PUT  /@05    '*       NO ERROR RECORDS         *';
+     PUT  /@05    '*                                *';
+     PUT  /@05    '**********************************';
+  END;
+
+  RETAIN TRN;
+
+     SET TEMP1 NOBS=TRN END=EOF; BY BRANCH;
+     FILE SUMFILE PRINT HEADER=NEWPAGE NOTITLE;
+
+     IF ACCTNO  NE SPACES THEN DO;
+        GRCUST   + 1;
+        TOTCUST  + 1;
+     END;
+
+     IF LAST.BRANCH THEN DO;
+         PUT   / @05    BRANCH     $7.
+                 @30    TOTCUST    11.;
+         TOTBRCH  + 1;
+         TOTCUST  = 0;
+     END;
+
+     IF EOF THEN DO;
+        PUT /// @05    'TOTAL RECORDS  : '
+                @30     GRCUST      11.
+              / @05    'TOTAL BRANCH   : '
+                @30     TOTBRCH     11.;
+     END;
+     RETURN;
+
+     NEWPAGE :
+     PAGECNT+1;
+
+     BANKNAME = 'PUBLIC BANK BERHAD';
+
+     PUT @1   'REPORT ID   : CTR ECP SUM'
+         @55   BANKNAME
+         @94  'PAGE        : ' PAGECNT   4.
+        /@1   'PROGRAM ID  : CIBNCR01'
+         @94  'REPORT DATE : ' "&DATE1"
+        /@38  'CASH THRESHOLD REPORTING - DATA AMENDMENT (SUMMARY)'
+        /@38  '===================================================';
+
+     PUT ///@05  'BRANCH'
+            @30  'TOTAL RECORD'
+           /@05  '======'
+            @30  '============';
+
+      RETURN;
+
+  RUN;
+
+//*--------------------------------------------------------------------
+//*PRINT THE RESULT (DETAIL)
+//*--------------------------------------------------------------------
+//DETAIL   EXEC PGM=IEBGENER
+//SYSPRINT DD SYSOUT=X
+//SYSUT1   DD DSN=RBP2.B033.BNMCTR.ERROR.RPT(+1),DISP=SHR
+//SYSUT2   DD SYSOUT=X
+//SYSIN    DD DUMMY
+//*--------------------------------------------------------------------
+//*PRINT THE RESULT (SUMMARY)
+//*--------------------------------------------------------------------
+//SUMMARY  EXEC PGM=IEBGENER
+//SYSPRINT DD SYSOUT=X
+//SYSUT1   DD DSN=RBP2.B033.BNMCTR.ERROR.SUM(+1),DISP=SHR
+//SYSUT2   DD SYSOUT=X
+//SYSIN    DD DUMMY
+
