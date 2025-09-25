@@ -1,24 +1,50 @@
-import os
-import datetime
-import glob
+-- Step 4 - Unique records (keep first only)
+CREATE VIEW UNQREC AS
+SELECT sub.*,
+       {year} AS year,
+       {month} AS month,
+       {day} AS day
+FROM (
+    SELECT a.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY 
+                   a.CUSTNO1, a.INDORG1, a.CODE1, a.DESC1,
+                   a.CUSTNO2, a.INDORG2, a.CODE2, a.DESC2,
+                   a.EXPDATE,
+                   a.CUSTNAME1, a.ALIAS1,
+                   a.CUSTNAME2, a.ALIAS2,
+                   a.OLDIC1, a.BASICGRPCODE1,
+                   a.OLDIC2, a.BASICGRPCODE2,
+                   a.EFFDATE
+               ORDER BY a.CUSTNO1, a.CODE1
+           ) AS rn
+    FROM alloutput a
+) sub
+WHERE sub.rn = 1
+ORDER BY CUSTNO1, CODE1;
 
-# Base name like GDG
-base_name = "detail_report"
 
-# Add timestamp (yyyymmdd)
-today = datetime.date.today().strftime("%Y%m%d")
-detail_txt = f"{base_name}_{today}.txt"
-
-# Write your report
-with open(detail_txt, "w") as f:
-    f.write("This is today's report\n")
-
-print("Report written:", detail_txt)
-
-# Keep only last 3 generations (like GDG LIMIT)
-max_versions = 3
-files = sorted(glob.glob(f"{base_name}_*.txt"))
-if len(files) > max_versions:
-    for old_file in files[:-max_versions]:
-        os.remove(old_file)
-        print("Deleted old generation:", old_file)
+-- Step 5 - Duplicate records (all rows except the first)
+CREATE VIEW DUPREC AS
+SELECT sub.*,
+       {year} AS year,
+       {month} AS month,
+       {day} AS day
+FROM (
+    SELECT a.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY 
+                   a.CUSTNO1, a.INDORG1, a.CODE1, a.DESC1,
+                   a.CUSTNO2, a.INDORG2, a.CODE2, a.DESC2,
+                   a.EXPDATE,
+                   a.CUSTNAME1, a.ALIAS1,
+                   a.CUSTNAME2, a.ALIAS2,
+                   a.OLDIC1, a.BASICGRPCODE1,
+                   a.OLDIC2, a.BASICGRPCODE2,
+                   a.EFFDATE
+               ORDER BY a.CUSTNO1, a.CODE1
+           ) AS rn
+    FROM alloutput a
+) sub
+WHERE sub.rn > 1
+ORDER BY CUSTNO1, CODE1;
