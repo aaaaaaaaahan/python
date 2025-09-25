@@ -1,20 +1,20 @@
-BEFORE STEP4:
-CUST A     CUST B
-CUST C     CUST D
-
-AFTER STEP4:
-CUST A     CUST B
-CUST B     CUST A
-CUST C     CUST D
-CUST D     CUST C
-
-
 import duckdb
 from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
 import datetime
 
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+#-------------------------------------------------------------------#
+# Original Program: CCRCCRLN                                        #
+#-------------------------------------------------------------------#
+#-EJS A2014-00021883  (CRMS PROJECT)                                #
+# INCLUDE ADDITIONAL COLUMNS TO BE PLACED INTO CIS INTERFACE FILES  #
+# 2016-4519 INCLUDE EFFECTIVE DATE INTO FILE                        #
+#-------------------------------------------------------------------#
+# ESMR 2021-00002352                                                #
+# TO EXCLUDE RECORD WITH EXPIRED DATE IN RLEN CC FILE               #
+#-------------------------------------------------------------------#
 
 #================================#
 #   CONNECT TO DUCKDB            #
@@ -230,7 +230,7 @@ SELECT sub.*,
        {day} AS day
 FROM (
     SELECT a.*,
-           COUNT(*) OVER (
+           ROW_NUMBER() OVER (
                PARTITION BY 
                    a.CUSTNO1, a.INDORG1, a.CODE1, a.DESC1,
                    a.CUSTNO2, a.INDORG2, a.CODE2, a.DESC2,
@@ -240,10 +240,11 @@ FROM (
                    a.OLDIC1, a.BASICGRPCODE1,
                    a.OLDIC2, a.BASICGRPCODE2,
                    a.EFFDATE
-           ) AS cnt
+               ORDER BY a.CUSTNO1, a.CODE1
+           ) AS rn
     FROM alloutput a
 ) sub
-WHERE sub.cnt > 1
+WHERE sub.rn > 1
 ORDER BY CUSTNO1, CODE1;
 """)
 
