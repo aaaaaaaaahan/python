@@ -1,21 +1,15 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
 import datetime
+from datetime import date
 from textwrap import dedent
-
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-
-#================================================================#
-# Original Program: CICARWRP                                     #
-#================================================================#
-# GENERATE WEEKLY MATCHING EXCEPTION UNOFAC REPORT               #
-#================================================================#
 
 # ================================================================
 # Part 1: Setup (DuckDB connection, date handling)
 # ================================================================
 con = duckdb.connect()
+
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 # --- Control file (equivalent to CTRLDATE dataset) ---
 ctrl = con.execute("""
@@ -70,16 +64,17 @@ rdata = con.execute("""
 # Part 3: Handle Empty Report
 # ================================================================
 if rdata.num_rows == 0:
-    empty_text = [
-        "**********************************",
-        "*                                *",
-        "*         EMPTY REPORT           *",
-        "*                                *",
-        "**********************************"
-    ]
-    tbl = pa.table({"REPORT": pa.array(empty_text)})
-    with pa.OSFile("UNOFAC_CARD_WKLRPT.csv", "wb") as sink:
-        csv.write_csv(tbl, sink)
+    empty_text = dedent("""
+        **********************************
+        *                                *
+        *         EMPTY REPORT           *
+        *                                *
+        **********************************
+    """).strip("\n").split("\n")
+
+    with open("UNOFAC_CARD_WKLRPT.txt", "w") as f:
+        for line in empty_text:
+            f.write(line + "\n")
     exit()
 
 # ================================================================
@@ -104,15 +99,16 @@ def newpage(branch):
     global pagecnt, linecnt
     pagecnt += 1
     linecnt = 0
-    return [
-        f"REPORT NO : UN/OFAC/CARD/NEW/ACCT   P U B L I C  B A N K  B H D     PAGE : {pagecnt}",
-        f"PROGRAM ID: CICARWRP                WEEKLY UNICARD EXCEPTION REPORT FOR OFAC & UN LIST   REPORT DATE: {rept_date}",
-        f"BRANCH NO : {branch}",
-        "NAME                                     ID NO.     DATE OPEN  CARD TYPE  CARD NO.            REMARKS.",
-        "======================================== ==================== ========== ========== ================ ========",
-        "UN/OFAC NAME                            UN/OFAC IC NO         UN/OFAC OTHER ID",
-        "------------                            -------------         ----------------"
-    ]
+    header = dedent(f"""
+        REPORT NO : UN/OFAC/CARD/NEW/ACCT   P U B L I C  B A N K  B H D     PAGE : {pagecnt}
+        PROGRAM ID: CICARWRP                WEEKLY UNICARD EXCEPTION REPORT FOR OFAC & UN LIST   REPORT DATE: {rept_date}
+        BRANCH NO : {branch}
+        NAME                                     ID NO.     DATE OPEN  CARD TYPE  CARD NO.            REMARKS.
+        ======================================== ==================== ========== ========== ================ ========
+        UN/OFAC NAME                            UN/OFAC IC NO         UN/OFAC OTHER ID
+        ------------                            -------------         ----------------
+    """).strip("\n").split("\n")
+    return header
 
 branch_prev, matchby_prev, acct_prev = None, None, None
 
@@ -125,23 +121,29 @@ for rec in rdata.to_pylist():
     # New MATCHBY section
     if matchby_prev != rec["MATCHBY"]:
         if rec["MATCHBY"] == "ICD ":
-            rows.append("Customer with NAME AND ID fully matched")
-            rows.append("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            rows.extend(dedent("""
+                Customer with NAME AND ID fully matched
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            """).strip("\n").split("\n"))
         elif rec["MATCHBY"] == "NAME":
-            rows.append("Customer NAME matched but ID unmatched/unavailable OR customer ID matched but NAME unmatched")
-            rows.append("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            rows.extend(dedent("""
+                Customer NAME matched but ID unmatched/unavailable OR customer ID matched but NAME unmatched
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+            """).strip("\n").split("\n"))
         linecnt += 2
 
     # First record of ACCTNO
     if acct_prev != rec["ACCTNO"]:
         if (rec["ALIAS"].strip() == "") or (rec["TAXID"].strip() and rec["OTHERID"].strip() == rec["TAXID"].strip()):
-            rows.append(f"{rec['CUSTNAME']:<40}{rec['TAXID']:<20}{rec['ACTOPND']:<12}{rec['APPLCODE']:<8}{rec['ACCTNO']:<22}{rec['DISPRMK'] or ''}")
+            line = f"{rec['CUSTNAME']:<40}{rec['TAXID']:<20}{rec['ACTOPND']:<12}{rec['APPLCODE']:<8}{rec['ACCTNO']:<22}{rec['DISPRMK'] or ''}"
         else:
-            rows.append(f"{rec['CUSTNAME']:<40}{rec['ALIAS']:<20}{rec['ACTOPND']:<12}{rec['APPLCODE']:<8}{rec['ACCTNO']:<22}{rec['DISPRMK'] or ''}")
+            line = f"{rec['CUSTNAME']:<40}{rec['ALIAS']:<20}{rec['ACTOPND']:<12}{rec['APPLCODE']:<8}{rec['ACCTNO']:<22}{rec['DISPRMK'] or ''}"
+        rows.append(line)
         linecnt += 1
 
         if rec["MATCHBY"] == "ICD ":
-            rows.append(f"     {rec['NAME']:<40}{rec['NEWIC']:<20}{rec['OTHERID']:<42}{rec['SOURCE'] or ''}")
+            detail = f"     {rec['NAME']:<40}{rec['NEWIC']:<20}{rec['OTHERID']:<42}{rec['SOURCE'] or ''}"
+            rows.append(detail)
             linecnt += 1
 
         if rec["INDORG"] == "I":
@@ -151,7 +153,8 @@ for rec in rdata.to_pylist():
         grdtot_all += 1
     else:
         if rec["MATCHBY"] == "ICD ":
-            rows.append(f"     {rec['NAME']:<40}{rec['NEWIC']:<20}{rec['OTHERID']:<42}{rec['SOURCE'] or ''}")
+            detail = f"     {rec['NAME']:<40}{rec['NEWIC']:<20}{rec['OTHERID']:<42}{rec['SOURCE'] or ''}"
+            rows.append(detail)
             linecnt += 1
 
     branch_prev, matchby_prev, acct_prev = rec["BRANCH"], rec["MATCHBY"], rec["ACCTNO"]
@@ -164,8 +167,8 @@ rows.append(f"TOTAL NUMBER OF RECORDS (ORGANISATION) : {grdtot_org}")
 rows.append(f"GRAND TOTAL OF RECORD TO BE MATCH      : {grdtot_all}")
 
 # ================================================================
-# Part 7: Output using PyArrow CSV
+# Part 7: Output as plain text file
 # ================================================================
-tbl = pa.table({"REPORT": pa.array(rows)})
-with pa.OSFile("UNOFAC_CARD_WKLRPT.csv", "wb") as sink:
-    csv.write_csv(tbl, sink)
+with open("UNOFAC_CARD_WKLRPT.txt", "w") as f:
+    for line in rows:
+        f.write(line + "\n")
