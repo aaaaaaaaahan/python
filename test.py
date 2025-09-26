@@ -6,16 +6,6 @@ from textwrap import dedent
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-#================================================================#
-# Original Program: CIBNCR01                                     #
-#================================================================#
-# CASH THRESHOLD REPORTING (CTR)                                 #
-# TO GENERATE REPORT FOR ERROR AMENDMENT                         #
-# ESMR 2010-2716 - USE BATCH DATE                                #
-#================================================================#
-# DETAILED AND SUMMARY EXCEPTION REPORT                          #
-#================================================================#
-
 # ======================================================
 # Step 1: DuckDB connection
 # ======================================================
