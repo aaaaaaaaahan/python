@@ -1,0 +1,457 @@
+//CISVDP06 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID     JOB04571
+//*---------------------------------------------------------------------
+//* ESMR 2010-4260 INTEGRATED MANAGEMENT INFORMATION SYSTEMS(IMIS)- AMLA
+//* ESMR 2010-4260 IMIS - DEPOSIT SA 06 SERIES
+//* ESMR 2014-2571  LAM YEONG KANG
+//* ADDITIONAL MATCHING CRITERIA - NAME AND DOB MATCHING(ADD DOB FIELD)
+//* ESMR 2020-4598 INCORPORATE MASCO CODE AND MSIC CODE
+//* ESMR 2023-5054 ENHANCE EXISTING SPOT RATE REPORT PBGL/SR01 TO
+//*                EXTRACT SPOT RATE IN 7 DECIMAL (PBB/PIBB)
+//* ESMR 2023-3065 ENHANCE EXISTING SPOT RATE REPORT PBGL/SR01 TO
+//*                EXTRACT SPOT RATE IN 13.7
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP06,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP06,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//MOVEDATA EXEC SAS609
+//IEFRDER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK09  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK10  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//DEMOFILE  DD DISP=SHR,DSN=RBP2.B033.BANKCTRL.DEMOCODE
+//RLENCA    DD DISP=SHR,DSN=RBP2.B033.BANKCTRL.RLENCODE.CA
+//PBBRANCH  DD DISP=SHR,DSN=RBP2.B033.PBB.BRANCH
+//FOREXGIA  DD DISP=SHR,DSN=SAP.PBB.FOREIGN.RATE(0)
+//DORMFILE  DD DISP=SHR,DSN=RBP2.B033.FROZEN.INACTIVE.ACCT(0)
+//DPTRBALS  DD DISP=SHR,DSN=RBP2.B033.DPTRBLGS
+//CUSTFILE  DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY
+//INDFILE   DD DISP=SHR,DSN=RBP2.B033.CIS.IDIC.DAILY.INDV
+//IDICFILE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIBCCIST.FB
+//OUTFILE   DD DISP=(NEW,PASS),DSN=&&ALLREC,
+//             UNIT=SYSDA,SPACE=(CYL,(500,300),RLSE),
+//             DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+ /*----------------------------------------------------------------*/
+ /*    OCCUPATION FILE                                             */
+ /*----------------------------------------------------------------*/
+ DATA OCCUPATION (INDEX=(OCCUPCD/UNIQUE/NOMISS));
+     INFILE DEMOFILE ;
+     INPUT @05  DEMOCATEGORY  $5.
+           @10  OCCUPNUM      $4.
+           @40  OCCUPDESC     $20.;
+           IF DEMOCATEGORY IN ('OCCUP','BUSIN');
+           OCCUPCD=DEMOCATEGORY||OCCUPNUM;
+   RUN;
+ PROC PRINT DATA=OCCUPATION (OBS=5);TITLE 'OCCUPATION FILE';
+
+ /*----------------------------------------------------------------*/
+ /*    RELATIONSHIP CODES FILE                                     */
+ /*----------------------------------------------------------------*/
+ DATA RLENCA   (INDEX=(RLENCODE/UNIQUE/NOMISS));
+     INFILE RLENCA   ;
+     INPUT @05  RLENCATEGORY  $2.
+           @10  RLENCODE       3.
+           @40  RELATIONDESC  $20.;
+   RUN;
+ PROC PRINT DATA=RLENCA (OBS=5);TITLE 'CA RELATIONSHIP FILE';
+
+ /*----------------------------------------------------------------*/
+ /*    IDIC INDVIDUAL FILE                                         */
+ /*----------------------------------------------------------------*/
+   DATA INDV;
+      FORMAT CUSTNO $11.;
+      SET INDFILE.INDVDLY;
+      KEEP CUSTNOX EMPLOYMENT_TYPE LAST_UPDATE_DATE CUSTNO;
+         CUSTNOX = CUSTNO;
+         IF EMPLOYMENT_TYPE = ' ' THEN DELETE;
+      RUN;
+      PROC SORT  DATA=INDV NODUPKEY; BY CUSTNO;
+      PROC PRINT DATA=INDV(OBS=15);TITLE 'INDV IDIC';RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    MISC CODE FILE                                              */
+ /*----------------------------------------------------------------*/
+ DATA MSCO(DROP=MSICCODE) MSIC(DROP=MASCO2008);
+   INFILE IDICFILE;
+   INPUT   @001   FIELDNAME      $20.
+           @021   MASCO2008      $5.
+           @021   MSICCODE       $5.
+           @055   MSCDESC        $150.;
+           IF FIELDNAME = 'MASCO2008' THEN OUTPUT MSCO;
+           IF FIELDNAME = 'MSIC2008' THEN OUTPUT MSIC;
+ RUN;
+ PROC SORT  DATA=MSCO; BY MASCO2008 ;RUN;
+ PROC SORT  DATA=MSIC; BY MSICCODE ;RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    BRANCH FILE PBBRANCH                                        */
+ /*----------------------------------------------------------------*/
+ DATA PBBBRCH  (INDEX=(BRANCHNO/UNIQUE/NOMISS));
+    INFILE PBBRANCH MISSOVER;
+    INPUT @02 BRANCHNO    3.
+          @06 ACCTBRABBR $3.;
+ RUN;
+ PROC PRINT DATA=PBBBRCH(OBS=5);TITLE 'PBB BRANCH FILE';
+
+ /*----------------------------------------------------------------*/
+ /*    FOREX CONTROL FILE                                          */
+ /*----------------------------------------------------------------*/
+   DATA FOREX;
+     INFILE FOREXGIA ;
+     INPUT @02  CURRCODE      $3.
+           @07  FOREXRATE   13.7;
+     IF _N_=1 THEN DELETE;
+     IF _N_=2 EQ '     ' THEN FOREXRATE = 0;
+   RUN;
+ PROC SORT DATA=FOREX ; BY CURRCODE; RUN;
+ PROC PRINT DATA=FOREX;TITLE 'FOREXMRG';
+
+ /*----------------------------------------------------------------*/
+ /*    FROZEN AND INACTIVE DATES                                   */
+ /*----------------------------------------------------------------*/
+      DATA FRZ;
+        FORMAT ACCTSTATUS $24.
+               DATE1 DDMMYYN8. DATE2 DDMMYYN8.
+               DATE3 DDMMYYN8. DATECLSE YYMMDDN8.;
+        INFILE DORMFILE ;
+        KEEP ACCTNO ACCTSTATUS DATE1 DATE2 DATE3 DATECLSE;
+        INPUT @ 1   ACCTNO                 11.
+              @12   LCUSTDATEM             2.
+              @14   LCUSTDATED             2.
+              @16   LCUSTDATEY             2.
+              @21   CURRENCY               $3.
+              @24   OPENINDC               $1.
+              @25   DORM1                  $1.
+              @26   POST1                  $1.
+              @27   POSTDATE              MMDDYY8.
+              @38   POSTREASON             $20.
+              @58   POSTINSTRUCTION        $30.;
+              IF 6000000000 < ACCTNO < 6999999999 ;
+              LCUSTDATE=MDY(LCUSTDATEM,LCUSTDATED,LCUSTDATEY);
+              DATE1=LCUSTDATE;
+              DATE2=POSTDATE;
+
+              IF POST1      NE ' ' THEN DO;
+                   ACCTSTATUS = 'FROZEN';
+                   DATE3      = DATE2;
+              END;
+              ELSE DO;
+                 IF DORM1      EQ 'D' THEN DO;
+                    ACCTSTATUS = 'DORMANT ';
+                    DATE3      = DATE1;
+                 END;
+                 IF DORM1      EQ 'N' THEN DO;
+                    ACCTSTATUS = 'INACTIVE';
+                    DATE3      = DATE1;
+                 END;
+              END;
+              DATECLSE=DATE3;
+      RUN;
+    PROC SORT  DATA=FRZ ; BY ACCTNO; RUN;
+    PROC PRINT DATA=FRZ(OBS=5);TITLE 'FROZEN ACCT FILE';
+ /*----------------------------------------------------------------*/
+ /*    DEPOSIT TRIAL BALANCE                                       */
+ /*----------------------------------------------------------------*/
+  DATA DPTRBALS DPMYR DPOTH;
+     INFILE DPTRBALS ;
+     FORMAT OPENDD $2. OPENMM $2. OPENYY $4. OPENMM1 $2.
+            CLSEDD $2. CLSEMM $2. CLSEYY $4. CLSEMM1 $2.
+            DATECLSE YYMMDDN8.   DATEOPEN YYMMDDN8.   LEDGERBAL 13.2
+            ACCTSTATUS $24.      FOREXAMT 13.2        ODLIMIT 13.2 ;
+
+     INPUT @03  BANKNO       PD2.
+           @24  REPTNO       PD3.
+           @27  FMTCODE      PD2. @;
+
+     IF (REPTNO = 1001 AND (FMTCODE IN (1,10,22,019,020,021))) THEN DO;
+        INPUT @106   BRANCHNO     PD4.
+              @110   ACCTNO       PD6.
+              @110   ACCTX        $1.
+              @158   CLSEDATE     PD6.
+              @164   OPENDATE     PD6.
+              @179   HOLDAMT1     PD7. /* HOLD/EARMARK AMOUNT        */
+              @319   LEDGERBAL1   PD7.
+              @403   BALHOLD      $1.  /* HOLD/EARMARK  (Y/N)        */
+              @566   ODLIMIT      PD6. /* OD LIMIT                   */
+              @588   CURRCODE     $3.  /* CURRENCY CODE              */
+              @716   OPENIND      $1.  /* VALID VALUE = SPACE,B,C,P,Z*/
+              @723   DORMIND      $1.  /* D-DORMANT  ,  N-INACTIVE   */
+              @830   COSTCTR      PD4.
+              @855   POSTIND      $1.; /*POST INDICATOR*/
+
+        /*--------------------------------------------------*/
+        /*  PROCESS SAVINGS ACCOUNTS ONLY (06*** SERIES)    */
+        /*--------------------------------------------------*/
+         IF 6000000000 < ACCTNO < 6999999999 ;
+         IF 3000 < COSTCTR < 3999 THEN BANKINDC = 'I';
+            ELSE BANKINDC = 'C';
+         HOLDAMT=HOLDAMT1/100;
+         LEDGERBAL=LEDGERBAL1/100;
+         IF CURRCODE NE 'MYR' THEN DO;
+            FOREXAMT=LEDGERBAL;
+            LEDGERBAL=0;
+         END;
+
+         OPENDD=SUBSTR(OPENDATE,4,2);
+         OPENMM=SUBSTR(OPENDATE,2,2);
+         OPENYY=SUBSTR(OPENDATE,6,4);
+         DATEOPEN=MDY(OPENMM,OPENDD,OPENYY);
+
+         CLSEDD=SUBSTR(CLSEDATE,4,2);
+         CLSEMM=SUBSTR(CLSEDATE,2,2);
+         CLSEYY=SUBSTR(CLSEDATE,6,4);
+         DATECLSE=MDY(CLSEMM,CLSEDD,CLSEYY);
+
+         IF OPENIND = ''  THEN ACCTSTATUS='ACTIVE                   ';
+         ELSE IF OPENIND = 'B' THEN ACCTSTATUS='CLOSED              ';
+         ELSE IF OPENIND = 'C' THEN ACCTSTATUS='CLOSED              ';
+         ELSE IF OPENIND = 'P' THEN ACCTSTATUS='CLOSED              ';
+         ELSE IF OPENIND = 'Z' THEN ACCTSTATUS='ZERO BALANCE        ';
+         IF ACCTSTATUS EQ 'ACTIVE' OR ACCTSTATUS='ZERO BALANCE'
+                           THEN DATECLSE='';
+
+         IF DORMIND = 'D' THEN ACCTSTATUS='DORMANT             ';
+         ELSE IF DORMIND = 'N' THEN ACCTSTATUS='INACTIVE            ';
+
+         IF POSTIND NE ' ' THEN ACCTSTATUS='FROZEN       ';
+
+         IF HOLDAMT > 0   THEN DO;
+            ACCTSTATUS='HOLD/EARMARK        ';
+            AMT1INDC='HOLD';
+            AMT1=HOLDAMT;
+         END;
+         IF CURRCODE EQ 'MYR' THEN OUTPUT DPMYR;
+         IF CURRCODE NE 'MYR' THEN OUTPUT DPOTH;
+     END;
+ RUN;
+ PROC PRINT DATA=DPMYR(OBS=5);TITLE 'DEPOSIT';RUN;
+
+ PROC SORT DATA=DPMYR ; BY ACCTNO; RUN;
+ PROC SORT DATA=DPOTH ; BY CURRCODE; RUN;
+
+ /* MERGE WITH FOREX FILE */
+ DATA FOREXMRG;
+      MERGE DPOTH(IN=A) FOREX(IN=B); BY CURRCODE;
+      IF A ;
+      LEDGERBAL=ROUND(INT((FOREXAMT*FOREXRATE)/.01) * .01,.01);
+
+ RUN;
+ PROC PRINT DATA=FOREXMRG(OBS=5);TITLE 'FOREXMRG';RUN;
+
+ DATA DEPOSIT;
+      SET DPMYR FOREXMRG;
+ RUN;
+ PROC SORT DATA=DEPOSIT ; BY ACCTNO; RUN;
+
+ DATA DEPOSIT2;
+      MERGE DEPOSIT(IN=K) FRZ(IN=L); BY ACCTNO;
+      IF K;
+ RUN;
+ PROC SORT DATA=DEPOSIT2 ; BY ACCTNO; RUN;
+ /*----------------------------------------------------------------*/
+ /*    CIS CUSTOMER FILE                                           */
+ /*----------------------------------------------------------------*/
+   DATA CUST;
+   SET CUSTFILE.CUSTDLY;
+    FORMAT SICCODE $5. ;
+        IF ACCTCODE EQ 'DP';
+        IF 6000000000 < ACCTNO < 6999999999 ;
+        IF CUSTNAME EQ '' AND ALIAS EQ '' THEN DELETE;
+        IF PRISEC = 901 THEN PRIMSEC = 'P';
+        IF PRISEC = 902 THEN PRIMSEC = 'S';
+        IF INDORG='O' THEN OCCUPCD='BUSIN'||LEFT(SICCODE);
+        IF INDORG='I' THEN OCCUPCD='OCCUP'||OCCUP;
+        IF JOINTACC = '' THEN JOINTACC = 'N' ;
+        ACCTCODE='SA';
+   RUN;
+   PROC SORT  DATA=CUST ;BY MASCO2008;RUN;
+   PROC PRINT DATA=CUST (OBS=05);TITLE 'CUST';RUN;
+
+ DATA CUSTMSCA;
+      MERGE CUST(IN=X) MSCO(IN=Y); BY MASCO2008;
+      IF X;
+      IF MSICCODE NOT = ' ' THEN DELETE;
+ RUN;
+   PROC SORT  DATA=CUSTMSCA ;BY CUSTNO;RUN;
+
+ PROC SORT  DATA=CUST ;BY MSICCODE;RUN;
+ DATA CUSTMSCB;
+      MERGE CUST(IN=X) MSIC(IN=Y); BY MSICCODE;
+      IF X;
+ RUN;
+   PROC SORT  DATA=CUSTMSCB ;BY CUSTNO;RUN;
+
+ DATA CUSTMSC;
+      SET CUSTMSCA CUSTMSCB;
+ RUN;
+ PROC SORT DATA=CUSTMSC NODUPKEY;BY CUSTNO ACCTNO; RUN;
+ PROC PRINT DATA=CUSTMSC (OBS=30);TITLE 'CUSTMSC';RUN;
+
+ PROC SORT  DATA=CUSTMSC ;BY CUSTNO;RUN;
+ DATA CUSTA;
+      MERGE CUSTMSC(IN=X) INDV(IN=Y); BY CUSTNO;
+      IF X;
+ RUN;
+   PROC SORT  DATA=CUSTA ;BY ACCTNO;RUN;
+   PROC PRINT DATA=CUSTA (OBS=30);TITLE 'CUSTA';RUN;
+
+ DATA CISDP;
+      MERGE CUSTA(IN=A) DEPOSIT2(IN=B); BY ACCTNO;
+      IF A AND B;
+ RUN;
+ /*----------------------------------------------------------------*/
+ /*    LOOKUP CONTROL FILES FOR DESCRIPTIONS                       */
+ /*----------------------------------------------------------------*/
+ DATA IDX1;          /* OCCUPATION CODES */
+      SET CISDP;
+      SET OCCUPATION  KEY=OCCUPCD;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ DATA IDX2;          /* RELATIONSHIP CODES */
+      SET IDX1;
+      SET RLENCA  KEY=RLENCODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ DATA IDX3;          /* BRANCH ABBREVIATION */
+      SET IDX2;
+      SET PBBBRCH KEY=BRANCHNO;
+      NOM_IDX=ACCTNO||CUSTNAME||ALIAS;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+  FORMAT EMPLMASCO $10. ;
+  SET IDX3;
+  FILE OUTFILE;
+
+     CUSTNAME=TRANWRD(CUSTNAME,'\','\\');    /* 2011-2834 */
+     IF BRANCHNO=. THEN DO;
+        ACCTBRABBR='';
+        BRANCHNO=0;
+     END;
+     OCCUPCD1=SUBSTR(OCCUPCD,6,5);
+     IF CURRCODE = '' THEN BAL1INDC = '     ';
+        ELSE BAL1INDC = 'LEDGB';
+     IF CURRCODE='XAU' THEN DO;
+        CURRCODE='GM ';
+        ACCTCODE='GIA';
+     END;
+     IF CURRCODE = 'MYR' THEN CURRCODE = '';
+     IF OCCUPCD1='' THEN OCCUPDESC='';
+     IF BAL1INDC='' THEN LEDGERBAL=0;
+     IF LEDGERBAL='' THEN LEDGERBAL=0;
+     IF FOREXAMT=. THEN FOREXAMT=0;
+   /*IF INDORG='I' THEN SIGNATORY='Y'; */
+     SIGNATORY='Y';
+     AMT2=0;
+     COLLINDC='N';
+     IF INDORG='O' THEN DO;
+           EMPLMASCO = MSICCODE;
+             IF MSICCODE = ' ' THEN DO;
+                EMPLMASCO = OCCUPCD1;
+                MSCDESC   = OCCUPDESC;
+             END;
+     END;
+     IF INDORG='I' THEN DO;
+        EMPLMASCO = COMPRESS(EMPLOYMENT_TYPE||MASCO2008);
+        IF EMPLOYMENT_TYPE = ' ' OR MASCO2008 = ' ' THEN DO;
+           EMPLMASCO = OCCUPCD1;
+           MSCDESC   = OCCUPDESC;
+        END;
+        IF EMPLMASCO = '          ' THEN DO;
+           EMPLMASCO = OCCUPCD1;
+           MSCDESC   = OCCUPDESC;
+        END;
+     END;
+     PUT @1    '"'
+         @2    '033'               @5     '","' /*BANK NO        */
+         @8    CUSTNO         $11. @19    '","'
+         @22   INDORG         $01. @23    '","'
+         @26   CUSTNAME       $40. @66    '","'
+         @69   ALIASKEY       $03. @72    '","'
+         @75   ALIAS          $20. @95    '","'
+         @98   OCCUPCD1       $05. @103   '","'
+         @106  OCCUPDESC      $20. @126   '","'
+      /* @129  EMPLNAME       $60. */    @189   '","'
+         @192  ACCTBRABBR     $07. @199   '","'
+         @202  BRANCHNO        Z5. @207   '","'
+         @210  ACCTCODE       $05. @215   '","' /*ACCOUNT CODE   */
+         @218  ACCTNO         Z11. @238   '","' /*ACCOUNT NUM    */
+      /* @241  NOTENO         $05. */     @246   '","'
+         @249  BANKINDC       $01. @250   '","'
+         @253  PRIMSEC        $01. @254   '","' /*PRIM SEC ACCT  */
+         @257  RLENCODE        Z3. @260   '","'
+         @263  RELATIONDESC   $15. @278   '","'
+         @281  ACCTSTATUS     $25. @306   '","'
+         @309  DATEOPEN  YYMMDDN8. @319   '","'
+         @322  DATECLSE  YYMMDDN8. @332   '","'
+         @335  SIGNATORY      $01. @336   '","'
+         @339  BAL1INDC       $05. @344   '","' /*LEDGER BAL     */
+         @350  LEDGERBAL      13.2 @365   '","' /*LEDGER BAL AMT */
+         @368  CURRCODE       $05. @373   '","' /*CURRENCY CODE  */
+         @376  FOREXAMT       13.2 @391   '","' /*CURRENCY AMT   */
+         @394  AMT1INDC       $05. @399   '","' /*EARMARK CODE   */
+         @402  AMT1           13.2 @417   '","' /*EARMARK AMT    */
+      /* @420  AMT2INDC       $05. */     @425   '","'
+      /* @428  AMT2           13.2 */     @443   '","'
+      /* @446  COLLTYPE       $05. */     @451   '","'
+      /* @454  COLLCODE       $05. */     @459   '","'
+      /* @462  COLLDESC       $30. */     @492   '","'
+         @495  COLLINDC        $1. @496   '","'
+      /* @499  COLLNO         $11. */     @510   '","'
+      /* @513  COLLCLASS      $03. */     @516   '","'
+      /* @519  AANUMBER       $20. */     @539   '","'
+      /* @542  ARREARDAY       Z5. */     @547   '","'
+         @550  JOINTACC        $1. @551   '","'
+      /* @554  PRODDESC       $40. */     @594   '","'
+      /* @597  '\N'                */
+         @605  DOBDOR         $8.  @613   '","'
+         @616  EMPLMASCO      $10. @626   '","'
+         @629  MSCDESC        $150. @779  '","'
+         @782  '\N'  ;
+  RUN;
+//*---------------------------------------------------------------------
+//PBB#PIBB EXEC PGM=SORT                                                00170000
+//SYSOUT   DD SYSOUT=*                                                  00170000
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(500,300))                          00170000
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(500,300))                          00170000
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(500,300))                          00170000
+//SORTIN   DD DISP=(OLD,DELETE),DSN=&&ALLREC
+//PBBREC   DD DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP06,                      00170000
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,300),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//PIBBREC  DD DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP06,                      00170000
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,300),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//SYSIN  DD *
+ SORT FIELDS=COPY
+ OUTFIL INCLUDE=(249,1,CH,EQ,C'C'),FNAMES=PBBREC
+ OUTFIL INCLUDE=(249,1,CH,EQ,C'I'),FNAMES=PIBBREC
+
