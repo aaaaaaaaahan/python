@@ -1,62 +1,47 @@
 # ================================================================
-# FROZEN / INACTIVE ACCOUNTS FILE
+# Deposit Trial Balance (split MYR / non-MYR)
 # ================================================================
 con.execute(f"""
-    CREATE OR REPLACE TABLE FRZ AS
-    WITH raw AS (
-        SELECT
-            CAST(ACCTNO AS VARCHAR) AS ACCTNO,
-            CAST(LCUSTDATEM AS INTEGER) AS LCUSTDATEM,
-            CAST(LCUSTDATED AS INTEGER) AS LCUSTDATED,
-            CAST(LCUSTDATEY AS INTEGER) AS LCUSTDATEY,
-            CURRENCY,
-            OPENINDC,
-            DORM1,
-            POST1,
-            POSTDATE,
-            POSTREASON,
-            POSTINSTRUCTION
-        FROM '{host_parquet_path("FROZEN_INACTIVE_ACCT.parquet")}'
-        WHERE ACCTNO > '01000000000' AND ACCTNO < '01999999999'
-    ),
-    dated AS (
-        SELECT
-            ACCTNO,
-            CONCAT(LPAD(LCUSTDATED, 2, '0'), 
-                   LPAD(LCUSTDATEM, 2, '0'), 
-                   2000+LCUSTDATEY) AS DATE1,
-            POSTDATE AS DATE2,
-            DORM1,
-            POST1
-        FROM raw
-    ),
-    status AS (
-        SELECT
-            ACCTNO,
-            DATE1,
-            DATE2,
-            CASE
-                WHEN POST1 IS NOT NULL AND POST1 <> '' THEN 'FROZEN'
-                WHEN DORM1 = 'D' THEN 'DORMANT'
-                WHEN DORM1 = 'N' THEN 'INACTIVE'
-                ELSE 'UNKNOWN'
-            END AS ACCTSTATUS,
-            CASE
-                WHEN POST1 IS NOT NULL AND POST1 <> '' THEN DATE2
-                ELSE DATE1
-            END AS DATE3
-        FROM dated
-    )
+    CREATE OR REPLACE TABLE DP_ALL AS
     SELECT
+        BANKNO,
+        REPTNO,
+        FMTCODE,
+        ACCTBRCH1 AS BRANCHNO,
         ACCTNO,
-        ACCTSTATUS,
-        DATE1,
-        DATE2,
-        DATE3,
-        DATE3 AS DATECLSE
-    FROM status
-    ORDER BY ACCTNO
+        ACCTX,
+        CLSEDATE,
+        OPENDATE,
+        HOLDAMT1/100.0 AS HOLDAMT,
+        LEDGERBAL1/100.0 AS LEDGERBAL,
+        ODLIMIT,
+        CURRCODE,
+        OPENIND,
+        DORMIND,
+        COSTCTR,
+        POSTIND,
+        CASE 
+            WHEN COSTCTR > 3000 AND COSTCTR < 3999 THEN 'I'
+            ELSE 'C'
+        END AS BANKINDC,
+        CASE 
+            WHEN CURRCODE <> 'MYR' THEN LEDGERBAL1/100.0
+            ELSE 0
+        END AS FOREXAMT,
+        CASE 
+            WHEN OPENIND = ''  THEN 'ACTIVE'
+            WHEN OPENIND IN ('B','C','P') THEN 'CLOSED'
+            WHEN OPENIND = 'Z' THEN 'ZERO BALANCE'
+            ELSE ''
+        END AS ACCTSTATUS,
+        substr(OPENDATE,4,2) AS OPENDD,
+        substr(OPENDATE,2,2) AS OPENMM,
+        substr(OPENDATE,6,4) AS OPENYY,
+        substr(CLSEDATE,4,2) AS CLSEDD,
+        substr(CLSEDATE,2,2) AS CLSEMM,
+        substr(CLSEDATE,6,4) AS CLSEYY
+    FROM '{host_parquet_path("DPTRBLGS.parquet")}'
+    WHERE REPTNO = 1001
+      AND FMTCODE IN (1,10,22,19,20,21)
+      AND ACCTNO > 1000000000 AND ACCTNO < 1999999999
 """)
-
-print("FRZ (first 5 rows):")
-print(con.execute("SELECT * FROM FRZ LIMIT 5").fetchdf())
