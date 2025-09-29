@@ -1,10 +1,9 @@
-          lrecl = 100
+          lrecl = 238
 
-
-INPUT  @01   BANKNO          S370FPD3.   
-      @05   RLENTYPE          $EBCDIC2.   
-      @10   RLENCODE          S370FPD3.   
-      @15   EFFDATE           S370FPD7.   
-      @25   ENTRYDATE         S370FPD11.  
-      @40   RLENDESC          $EBCDIC15.  
-      @60   OWNER             $EBCDIC1.;    
+INPUT @001   FIELDNAME            $EBCDIC20.
+      @021   BC-FIELD-CODE        $EBCDIC20. 
+      @041   BC-EFF-DATETIME      $EBCDIC14. 
+      @055   MSCDESC              $EBCDIC150.
+      @205   BC-LAST-CHANGE       $EBCDIC14. 
+      @219   BC-LAST-OPER         $EBCDIC20.  
+      ;
