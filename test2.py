@@ -1,8 +1,67 @@
-con.execute(f"""
-    CREATE OR REPLACE TABLE RLENCA AS
-    SELECT
-        RLENTYPE,
-        CAST(RLENCODE AS INTEGER) AS RLENCODE,
-        RLENDESC AS RELATIONDESC
-    FROM parquet_scan('{RLENCAFILE}')
-""")
+indvdly = """
+    SELECT DISTINCT
+        m.CISNO,
+        m.MAIN_ENTITY_TYPE,
+        m.BRANCH,
+        m.CUSTNAME,
+        m.BIRTHDATE,
+        m.GENDER,
+        ci.IDTYPE,
+        ci.ID,
+        ci.CUSTBRANCH,
+        ci.FIRST_CREATE_DATE,
+        ci.FIRST_CREATE_TIME,
+        ci.FIRST_CREATE_OPER,
+        ci.LAST_UPDATE_DATE,
+        ci.LAST_UPDATE_TIME,
+        ci.LAST_UPDATE_OPER,
+        ci.LONGNAME,
+        ci.ENTITYTYPE,
+        ci.BNM_ASSIGNED_ID,
+        ci.OLDIC,
+        ci.CITIZENSHIP,
+        ci.PRCOUNTRY,
+        ci.RESIDENCY_STATUS,
+        ci.CUSTOMER_CODE,
+        ci.ADDRLINE1,
+        ci.ADDRLINE2,
+        ci.ADDRLINE3,
+        ci.ADDRLINE4,
+        ci.ADDRLINE5,
+        ci.POSTCODE,
+        ci.TOWN_CITY,
+        ci.STATE_CODE,
+        ci.COUNTRY,
+        ci.ADDR_LAST_UPDATE,
+        ci.ADDR_LAST_UPTIME,
+        ci.PHONE_HOME,
+        ci.PHONE_BUSINESS,
+        ci.PHONE_FAX,
+        ci.PHONE_MOBILE,
+        ci.PHONE_PAC,
+        ci.EMPLOYER_NAME,
+        ci.MASCO2008,
+        ci.MASCO2012,
+        ci.EMPLOYMENT_TYPE,
+        ci.EMPLOYMENT_SECTOR,
+        ci.EMPLOYMENT_LAST_UPDATE,
+        ci.EMPLOYMENT_LAST_UPTIME,
+        ci.INCOME_AMT,
+        ci.ENABLE_TAB,
+        ci.APPL_CODE,
+        ci.APPL_NO,
+        ci.PRI_SEC,
+        ci.RELATIONSHIP,
+        ci.AA_REF_NO,
+        ci.EFF_DATE,
+        ci.EFF_TIME,
+        ci.LAST_MNT_DATE,
+        ci.LAST_MNT_TIME,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM main_indv m
+    INNER JOIN custinfo_indv ci
+    ON m.CISNO = ci.CISNO
+ORDER BY m.CISNO
+""".format(year=year,month=month,day=day)
