@@ -1,9 +1,10 @@
-          lrecl = 238
+          lrecl = 80
 
-INPUT @001   FIELDNAME            $EBCDIC20.
-      @021   BC-FIELD-CODE        $EBCDIC20. 
-      @041   BC-EFF-DATETIME      $EBCDIC14. 
-      @055   MSCDESC              $EBCDIC150.
-      @205   BC-LAST-CHANGE       $EBCDIC14. 
-      @219   BC-LAST-OPER         $EBCDIC20.  
-      ;
+
+INPUT @01 CODE1          $EBCDIC1. 
+      @02 BRANCHNO       $EBCDIC3. 
+      @06 ACCTBRABBR     $EBCDIC5. 
+      @12 BRANCHNAME     $EBCDIC25.
+      @45 CODE2          $EBCDIC1. 
+      @50 CODE3          $EBCDIC1.
+      ;   
