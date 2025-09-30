@@ -5,6 +5,20 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
+#=======================================================================#
+# Original Program: CISVDP01                                            #
+#=======================================================================#
+# ESMR 2010-4260 INTEGRATED MANAGEMENT INFORMATION SYSTEMS(IMIS)- AMLA  #
+# ESMR 2010-4260 IMIS - DEPOSIT SA 04 SERIES                            #
+# ESMR 2014-2571  LAM YEONG KANG                                        #
+# ADDITIONAL MATCHING CRITERIA - NAME AND DOB MATCHING(ADD DOB FIELD)   #
+# ESMR 2020-4598 INCORPORATE MASCO CODE AND MSIC CODE                   #
+# ESMR 2023-5054 ENHANCE EXISTING SPOT RATE REPORT PBGL/SR01 TO         #
+#                EXTRACT SPOT RATE IN 7 DECIMAL (PBB/PIBB)              #
+# ESMR 2023-3065 ENHANCE EXISTING SPOT RATE REPORT PBGL/SR01 TO         #
+#                EXTRACT SPOT RATE IN 13.7                              #
+#=======================================================================#
+
 # ================================================================
 # Setup DuckDB connection
 # ================================================================
@@ -122,66 +136,6 @@ print("FOREX FILE (first 5 rows):")
 print(con.execute("SELECT * FROM FOREX LIMIT 5").fetchdf())
 
 # ================================================================
-# SIGNATORY FILE
-# ================================================================
-# Read all signatory parquet files (FD10–FD19)
-con.execute(f"""
-    CREATE VIEW signator_all AS
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD10.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD11.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD12.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD13.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD14.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD15.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD16.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD17.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD18.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("SNGLVIEW_SIGN_FD19.parquet")}';
-""")
-
-# Now use it inside the query
-con.execute(f"""
-    CREATE OR REPLACE TABLE SIGNATORY5 AS
-    SELECT
-        CAST(BANKNO AS VARCHAR) AS BANKNO,
-        CAST(ACCTNO AS VARCHAR)  AS ACCTNO,
-        NAME AS SIGNATORY_NAME,
-        ID AS ALIAS,
-        STATUS AS SIGN_STAT,
-        CONCAT(CAST(ACCTNO AS VARCHAR), SIGNATORY_NAME, ALIAS) AS NOM_IDX
-    FROM signator_all
-    WHERE ACCTNO > '01000000000' AND ACCTNO < '01999999999'
-      AND COALESCE(ALIAS,'') <> ''
-      AND COALESCE(SIGNATORY_NAME,'') <> ''
-""")
-
-print("SIGNATORY5 (first 5 rows):")
-print(con.execute("SELECT * FROM SIGNATORY5 LIMIT 5").fetchdf())
-
-# Deduplicate by NOM_IDX (PROC SORT NODUPKEY)
-con.execute("""
-    CREATE OR REPLACE TABLE SIGNATORY AS
-    SELECT * FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY NOM_IDX ORDER BY ACCTNO) AS rn
-        FROM SIGNATORY5
-    ) t
-    WHERE rn = 1
-""")
-
-print("SIGNATORY (deduped, first 5 rows):")
-print(con.execute("SELECT * FROM SIGNATORY LIMIT 5").fetchdf())
-
-
-# ================================================================
 # FROZEN / INACTIVE ACCOUNTS FILE
 # ================================================================
 con.execute(f"""
@@ -200,7 +154,7 @@ con.execute(f"""
             POSTREASON,
             POSTINSTRUCTION
         FROM '{host_parquet_path("FROZEN_INACTIVE_ACCT.parquet")}'
-        WHERE ACCTNO > '01000000000' AND ACCTNO < '01999999999'
+        WHERE ACCTNO > '04000000000' AND ACCTNO < '04999999999'
     ),
     dated AS (
         SELECT
@@ -290,9 +244,9 @@ con.execute(f"""
         CONCAT(CLSEMM, CLSEDD, CLSEYY) AS DATECLSE
         
     FROM '{host_parquet_path("DPTRBLGS.parquet")}'
-    WHERE REPTNO = 1001
-      AND FMTCODE IN (1,10,22,19,20,21)
-      AND ACCTNO > '01000000000' AND ACCTNO < '01999999999'
+    WHERE REPTNO = '1001'
+      AND FMTCODE IN ('1', '10', '22', '19', '20', '21')
+      AND ACCTNO > '04000000000' AND ACCTNO < '04999999999'
 """)
 
 # Split into MYR and non-MYR
@@ -412,7 +366,7 @@ print(con.execute("SELECT * FROM DEPOSIT2 LIMIT 5").fetchdf())
 # Customer File (CIS_CUST_DAILY)
 # ================================================================
 con.execute(f"""
-    CREATE OR REPLACE TABLE CUST1 AS
+    CREATE OR REPLACE TABLE CUST AS
     SELECT
         *,
         CASE WHEN PRISEC = 901 THEN 'P'
@@ -424,19 +378,11 @@ con.execute(f"""
         CASE WHEN JOINTACC = '' OR JOINTACC IS NULL THEN 'N'
              ELSE JOINTACC END AS JOINTACC_NEW,
         CASE WHEN ACCTNO > '01590000000' AND ACCTNO < '01599999999'
-             THEN 'FCYFD' ELSE 'FD' END AS ACCTCODE_NEW
+             THEN 'FCYFD' ELSE 'SA' END AS ACCTCODE_NEW
     FROM read_parquet('/host/cis/parquet/CIS_CUST_DAILY/year=2025/month=9/day=29/data_0.parquet')
     WHERE ACCTCODE = 'DP'
-      AND ACCTNO > '01000000000' AND ACCTNO < '01999999999'
+      AND ACCTNO > '04000000000' AND ACCTNO < '04999999999'
       AND NOT (CUSTNAME = '' AND ALIAS = '')
-""")
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE CUST AS
-    SELECT
-        *,
-        LPAD(CAST(CAST(RLENCODE AS BIGINT) AS VARCHAR), 3, '0') AS RLENCODE,
-    FROM CUST1
 """)
 
 print("CUST (first 5 rows):")
@@ -544,18 +490,6 @@ con.execute("""
 print("idx3_mod (first 5 rows):")
 print(con.execute("SELECT * FROM idx3_mod LIMIT 5").fetchdf())
 
-con.execute("""
-    CREATE OR REPLACE TABLE idx4 AS
-    SELECT k.*, l.*,
-           CASE WHEN l.NOM_IDX IS NOT NULL THEN 'Y' ELSE 'N' END AS SIGNATORY
-    FROM idx3_mod k
-    LEFT JOIN SIGNATORY l
-    ON k.NOM_IDX = l.NOM_IDX
-""")
-
-print("idx4 (first 5 rows):")
-print(con.execute("SELECT * FROM idx4 LIMIT 5").fetchdf())
-
 # ==============================================================
 # Transform fields for output
 # ==============================================================
@@ -596,9 +530,10 @@ tbl = con.execute("""
         END AS ACCTCODE_NEW,
         COALESCE(LEDGERBAL,0.0) AS LEDGERBAL,
         COALESCE(FOREXAMT,0.0) AS FOREXAMT,
-        COALESCE(SIGNATORY,'N') AS SIGNATORY_FINAL,
         COALESCE(JOINTACC,'N') AS JOINTACC,
-        'N' AS COLLINDC,
+        'Y' as SIGNATORY,
+        0 as AMT2,
+        'N' as COLLINDC,
         -- Employment logic
         CASE 
             WHEN INDORG='O' AND MSICCODE <> '' THEN MSICCODE
@@ -612,7 +547,7 @@ tbl = con.execute("""
             ELSE OCCUPDESC
         END AS MSCDESC,
         DOBDOR
-    FROM idx4
+    FROM idx3_mod
 """).arrow()
 
 # ==============================================================
@@ -642,8 +577,8 @@ pibbrec = """
 # Export with PyArrow
 # ======================================================
 queries = {
-    "B033_SNGLVIEW_DEPOSIT_DP01"            : pbbrec,
-    "B051_SNGLVIEW_DEPOSIT_DP01"            : pibbrec,
+    "B033_SNGLVIEW_DEPOSIT_DP04"            : pbbrec,
+    "B051_SNGLVIEW_DEPOSIT_DP04"            : pibbrec,
 }
 
 for name, query in queries.items():
