@@ -1,8 +1,11 @@
 for i in range(1, 11):
     query = f"""
         SELECT *
-        FROM ({pbbrec})
-        WHERE MOD(ROW_NUMBER() OVER (), 10) = {i-1}
+        FROM (
+            SELECT *, ROW_NUMBER() OVER () AS rn
+            FROM ({pbbrec})
+        )
+        WHERE MOD(rn, 10) = {i-1}
     """
     
     # Parquet output
