@@ -5,20 +5,6 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-#=======================================================================#
-# Original Program: CISVDP01                                            #
-#=======================================================================#
-# ESMR 2010-4260 INTEGRATED MANAGEMENT INFORMATION SYSTEMS(IMIS)- AMLA  #
-# ESMR 2010-4260 IMIS - DEPOSIT SA 04 SERIES                            #
-# ESMR 2014-2571  LAM YEONG KANG                                        #
-# ADDITIONAL MATCHING CRITERIA - NAME AND DOB MATCHING(ADD DOB FIELD)   #
-# ESMR 2020-4598 INCORPORATE MASCO CODE AND MSIC CODE                   #
-# ESMR 2023-5054 ENHANCE EXISTING SPOT RATE REPORT PBGL/SR01 TO         #
-#                EXTRACT SPOT RATE IN 7 DECIMAL (PBB/PIBB)              #
-# ESMR 2023-3065 ENHANCE EXISTING SPOT RATE REPORT PBGL/SR01 TO         #
-#                EXTRACT SPOT RATE IN 13.7                              #
-#=======================================================================#
-
 # ================================================================
 # Setup DuckDB connection
 # ================================================================
