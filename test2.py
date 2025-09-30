@@ -1,8 +1,61 @@
-Error in sitecustomize; set PYTHONVERBOSE for traceback:
-TypeError: expected str, bytes or os.PathLike object, not NoneType
-Traceback (most recent call last):
-  File "/pythonITD/cis_dev/jobs/cis_internal/CIS_PY_CCRNMX3B.py", line 91, in <module>
-    con.execute(f"""
-duckdb.duckdb.ConversionException: Conversion Error: Could not convert string 'I' to INT64 when casting from source column SECPHONE
+con.execute(f"""
+    CREATE OR REPLACE TABLE DP_ALL AS
+    SELECT
+        LPAD(CAST(CAST(BANKNO AS BIGINT) AS VARCHAR), 3, '0') AS BANKNO,
+        CAST(REPTNO AS BIGINT) AS REPTNO,
+        CAST(FMTCODE AS BIGINT) AS FMTCODE,
+        LPAD(CAST(CAST(ACCTBRCH1 AS BIGINT) AS VARCHAR), 3, '0') AS BRANCHNO,
+        LPAD(CAST(CAST(ACCTNO AS BIGINT) AS VARCHAR), 11, '0') AS ACCTNO,
+        ACCTX,
+        CAST(CLSEDATE AS VARCHAR) AS CLSEDATE,
+        CAST(OPENDATE AS VARCHAR) AS OPENDATE,
+        HOLDAMT1/100.0 AS HOLDAMT,
+        LEDGERBAL1/100.0 AS LEDGERBAL,
+        ODLIMIT,
+        CURRCODE,
+        OPENIND,
+        DORMIND,
+        COSTCTR,
+        POSTIND,
+        CASE 
+            WHEN COSTCTR > '3000' AND COSTCTR < '3999' THEN 'I'
+            ELSE 'C'
+        END AS BANKINDC,
 
-LINE 16:     FROM name_clean n
+        -- Forex logic
+        CASE WHEN CURRCODE <> 'MYR' THEN LEDGERBAL1/100.0 ELSE 0 END AS FOREXAMT,
+        CASE WHEN CURRCODE <> 'MYR' THEN 0 ELSE LEDGERBAL1/100.0 END AS LEDGERBAL_MYR,
+
+        -- Dates split
+        substr(CAST(OPENDATE AS VARCHAR), 4, 2) AS OPENDD,
+        substr(CAST(OPENDATE AS VARCHAR), 2, 2) AS OPENMM,
+        substr(CAST(OPENDATE AS VARCHAR), 6, 4) AS OPENYY,
+        substr(CAST(CLSEDATE AS VARCHAR), 4, 2) AS CLSEDD,
+        substr(CAST(CLSEDATE AS VARCHAR), 2, 2) AS CLSEMM,
+        substr(CAST(CLSEDATE AS VARCHAR), 6, 4) AS CLSEYY,
+
+        -- Correct DATEOPEN / DATECLSE (YYYY-MM-DD style)
+        MAKE_DATE(CAST(substr(CAST(OPENDATE AS VARCHAR), 6, 4) AS INT),
+                  CAST(substr(CAST(OPENDATE AS VARCHAR), 2, 2) AS INT),
+                  CAST(substr(CAST(OPENDATE AS VARCHAR), 4, 2) AS INT)) AS DATEOPEN,
+        MAKE_DATE(CAST(substr(CAST(CLSEDATE AS VARCHAR), 6, 4) AS INT),
+                  CAST(substr(CAST(CLSEDATE AS VARCHAR), 2, 2) AS INT),
+                  CAST(substr(CAST(CLSEDATE AS VARCHAR), 4, 2) AS INT)) AS DATECLSE,
+
+        -- Account Status rules
+        CASE
+            WHEN HOLDAMT1/100.0 > 0 THEN 'HOLD/EARMARK'
+            WHEN POSTIND <> '' THEN 'FROZEN'
+            WHEN DORMIND = 'D' THEN 'DORMANT'
+            WHEN DORMIND = 'N' THEN 'INACTIVE'
+            WHEN OPENIND = '' THEN 'ACTIVE'
+            WHEN OPENIND IN ('B','C','P') THEN 'CLOSED'
+            WHEN OPENIND = 'Z' THEN 'ZERO BALANCE'
+            ELSE ''
+        END AS ACCTSTATUS
+
+    FROM '{host_parquet_path("DPTRBLGS.parquet")}'
+    WHERE REPTNO = 1001
+      AND FMTCODE IN (1,10,22,19,20,21)
+      AND CAST(ACCTNO AS BIGINT) BETWEEN 1000000000 AND 1999999999
+""")
