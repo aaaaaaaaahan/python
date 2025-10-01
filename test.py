@@ -3,41 +3,84 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CCRTAX2B JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB76242
+//CIBNCWK1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB51222
 //*--------------------------------------------------------------------
-//NAMEFILE EXEC SAS609
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//IDFILE   DD DISP=SHR,DSN=UNLOAD.ALLALIAS.OUT
-//CCRISEXT DD DSN=CCRIS.ALIAS.GDG,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=133,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-    DATA TAXID;
-      INFILE IDFILE;
-      INPUT  @005  CUSTNO             $11.
-             @029  EFFDATE            PD5.
-             @034  EFFTIME            $8.
-             @089  ALIASKEY           $3.
-             @092  ALIAS              $20.
-             @343  MNTDATE            $10.;
-       ALIAS10=SUBSTR(ALIAS,1,10);
-    RUN;
-   PROC SORT DATA=TAXID NODUPKEY; BY CUSTNO;RUN;
-   PROC PRINT DATA=TAXID(OBS=10);TITLE 'TAXID';RUN;
+//SAS609    EXEC SAS609
+//SASLIST   DD SYSOUT=X
+//DEPFILE   DD DISP=SHR,DSN=CCRIS.CISDEMO.SAFD(0)
+//          DD DISP=SHR,DSN=CCRIS.CISDEMO.DP.GDG(0)
+//NAMEFILE  DD DISP=SHR,DSN=CCRIS.CISNAME.GDG(0)
+//TAXFILE   DD DISP=SHR,DSN=CCRIS.TAXID.GDG(0)
+//DPFILE    DD DSN=BNMCTR.CISWEEK.DEP,
+//             DISP=(NEW,CATLG,DELETE),
+//             SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
+//             DCB=(LRECL=150,BLKSIZE=0,RECFM=FB)
+//SYSIN     DD *
+OPTIONS YEARCUTOFF=1950;
+ /*----------------------------------------------------------------*/
+ /*    DATA DECLARATION                                            */
+ /*----------------------------------------------------------------*/
+DATA DEMODP;
+     INFILE DEPFILE;
+     INPUT @001  ACCTNO            $11.
+           @012  INDORG            $1.
+           @013  CUSTNO            $11.
+           @025  CACCCODE          $3.
+           @028  PRISEC            $3.
+           @031  CITIZENSHIP       $2.;
+     IF CITIZENSHIP = '  ' THEN CITIZENSHIP = '99';
+        ACCTTYPE = 'DP   ';
+RUN;
+PROC SORT; BY CUSTNO;
+PROC PRINT DATA=DEMODP (OBS=10);RUN;
 
-DATA CCRIS;
-  SET TAXID;
-  FILE CCRISEXT;
-     PUT @ 1   CUSTNO            $11.
-         @12   '1'                        /* DUMMY FIELD */
-         @13   ALIASKEY          $3.
-         @16   ALIAS             $20.
-         @53   ALIASKEY          $15.
-         @68   ALIAS10           $10.;
-  RETURN;
-  RUN;
+DATA NAME;
+     INFILE NAMEFILE;
+     INPUT @001  CUSTNO            $11.
+           @012  NAME              $40.;
+RUN;
+PROC SORT; BY CUSTNO;
+
+DATA MERGE1;
+     MERGE NAME DEMODP(IN=A); BY CUSTNO;
+     IF A;
+RUN;
+
+DATA TAXID;
+     INFILE TAXFILE;
+     INPUT @ 1   CUSTNO            $11.
+           @12   OLDIC             $20.
+           @32   NEWIC             $23.
+           @55   NEWIC2            $23.
+           @78   BRANCH            $5.;
+RUN;
+PROC SORT; BY CUSTNO;
+PROC PRINT DATA=TAXID (OBS=10);RUN;
+
+DATA MERGE2;
+     MERGE TAXID MERGE1(IN=A); BY CUSTNO;
+     IF A;
+RUN;
+
+PROC SORT DATA=MERGE2;
+     BY ACCTNO CUSTNO PRISEC;
+
+DATA OUT1;
+     SET MERGE2;
+     FILE DPFILE;
+             IF PRISEC      = '901' THEN PRISEC = 'P';
+             IF PRISEC      = '902' THEN PRISEC = 'S';
+             PUT @01   '033'
+                 @04   ACCTTYPE          $5.
+                 @09   ACCTNO            $11.
+                 @20   '         '
+                 @29   PRISEC            $1.
+                 @30   CACCCODE          $3.
+                 @33   CUSTNO            $11.
+                 @53   INDORG            $1.
+                 @54   BRANCH            $5.
+                 @61   NEWIC             $23.
+                 @101  CODE              $3.
+                 @104  NAME              $40.;
+RUN;
+PROC PRINT DATA=OUT1 (OBS=10);RUN;
