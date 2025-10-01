@@ -1,3 +1,8 @@
+convert program to python with duckdb and pyarrow
+duckdb for process input file
+pyarrow use for output
+assumed all the input file ady convert to parquet can directly use it
+
 //CCRTAX2B JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB76242
 //*--------------------------------------------------------------------
 //NAMEFILE EXEC SAS609
