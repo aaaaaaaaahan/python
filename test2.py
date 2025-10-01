@@ -1,23 +1,24 @@
-for i in range(1, 11):
-    query = f"""
-        SELECT *
-        FROM (
-            SELECT *, ROW_NUMBER() OVER () AS rn
-            FROM ({pbbrec})
-        )
-        WHERE MOD(rn, 10) = {i-1}
-    """
-    
-    # Parquet output
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_output_path(f"B033_SNGLVIEW_DEPOSIT_DP04{i:02d}")}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true)
-    """)
+CI-BANK-NO           PIC X(3). 
+CI-APPL-CODE         PIC X(5). 
+CI-APPL-NO           PIC X(20).
+CI-CONSENT           PIC X(1). 
+CI-CUST-TYPE         PIC X(1). 
+CI-FIRST-DATE        PIC X(10).
+CI-NO-OF-PROMPT      PIC S9(1)V
+CI-PROMPT-SOURCE     PIC X(5). 
+CI-PROMPT-DATE       PIC X(10).
+CI-PROMPT-TIME       PIC X(8). 
+CI-UPDATE-SOURCE     PIC X(5). 
+CI-UPDATE-DATE       PIC X(10).
+CI-UPDATE-TIME       PIC X(8). 
+CI-UPDATE-OPERATOR   PIC X(8). 
+CI-TRX-APPL-CODE     PIC X(5). 
+CI-TRX-APPL-NO       PIC X(20).
 
-    # CSV output
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_output_path(f"B033_SNGLVIEW_DEPOSIT_DP04{i:02d}.csv")}'
-    (HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true)
-    """)
+INPUT @001   FIELDNAME            $EBCDIC20.
+      @021   BC_FIELD_CODE        $EBCDIC20. 
+      @041   BC_EFF_DATETIME      $EBCDIC14. 
+      @055   MSCDESC              $EBCDIC150.
+      @205   BC_LAST_CHANGE       $EBCDIC14. 
+      @219   BC_LAST_OPER         $EBCDIC20.  
+      ;
