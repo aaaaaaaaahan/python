@@ -1,174 +1,121 @@
-import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
-import datetime
+//CIRMKLNS JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0125252
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.LOANS.CISRMRK.EMAIL.DUP,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.LOANS.CISRMRK.EMAIL,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//RMKFILE  DD DISP=SHR,DSN=CISRMRK.EMAIL.FIRST
+//LNSPRIM  DD DISP=SHR,DSN=LOANS.CUST.PRIMARY
+//LNSSECD  DD DISP=SHR,DSN=LOANS.CUST.SCNDARY
+//OUTFILE  DD DSN=LOANS.CISRMRK.EMAIL.DUP,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
 
-# =========================
-#   DATE HANDLING
-# =========================
-# Equivalent to &DATEMM1, &DATEDD1, &DATEYY1
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-DATEMM1 = month
-DATEDD1 = day
-DATEYY1 = year
+DATA RMK;
+   INFILE RMKFILE;
+   INPUT @009     CUSTNO                      $11.
+         @052     REMARKS                     $60.;
+RUN;
+PROC SORT  DATA=RMK; BY CUSTNO;RUN;
+PROC PRINT DATA=RMK(OBS=10);TITLE 'REMARK DATA';RUN;
 
-# =========================
-#   CONNECT TO DUCKDB
-# =========================
-con = duckdb.connect()
+DATA PRIM;
+   INFILE LNSPRIM;
+   INPUT @001     CUSTNO              $11.
+         @022     ACCTNOC             $20.
+         @052     DOBDOR              $10.
+         @063     LONGNAME            $150.
+         @220     INDORG              $1.
+         @222     PRIMSEC             $1.;
+RUN;
+PROC SORT  DATA=PRIM; BY ACCTNOC;RUN;
+PROC PRINT DATA=PRIM(OBS=10);TITLE 'PRIM DATA';RUN;
 
-# =========================
-#   LOAD DATASETS
-# =========================
-# Assuming already in parquet
-#CISFILE = "CIS_CUST_DAILY.parquet"
-#CICON1ST = "UNLOAD_CICON1ST_FB.parquet"
+DATA SECD;
+   INFILE LNSSECD;
+   INPUT @001     CUSTNO1             $11.
+         @022     ACCTNOC             $20.
+         @052     DOBDOR1             $10.
+         @063     LONGNAME1           $150.
+         @220     INDORG1             $1.
+         @222     PRIMSEC1            $1.;
+RUN;
+PROC SORT  DATA=SECD; BY ACCTNOC;RUN;
+PROC PRINT DATA=SECD(OBS=10);TITLE 'SECD DATA';RUN;
 
-# -------------------------
-# Step 1: Process CISFILE (CUSTDLY)
-# -------------------------
-con.execute(f"""
-    CREATE OR REPLACE TABLE CIS AS
-    SELECT 
-        CUSTNO,
-        INDORG,
-        CUSTCONSENT,
-        CAST(CUSTOPENDATE AS VARCHAR) AS CUSTOPENDATEX,
-        SUBSTR(CAST(CUSTOPENDATE AS VARCHAR),1,2) AS OPENCUSTMM,
-        SUBSTR(CAST(CUSTOPENDATE AS VARCHAR),3,2) AS OPENCUSTDD,
-        SUBSTR(CAST(CUSTOPENDATE AS VARCHAR),5,4) AS OPENCUSTYYYY
-    FROM read_parquet('/host/cis/parquet/CIS_CUST_DAILY/year=2025/month=9/day=29/data_0.parquet')
-""")
+ /*-----------------------------------------------------------*/
+ /*  MATCH TO GET JOINT (FOR CUSTOMER NAME)/2024-3454         */
+ /*-----------------------------------------------------------*/
+DATA MATCH1 XMATCH;
+FORMAT JOINT $1.;
+MERGE PRIM(IN=A) SECD(IN=B);
+      BY ACCTNOC;
+      IF A AND NOT B THEN DO;
+      JOINT = 'N';
+      OUTPUT XMATCH;
+      END;
+      IF A AND B THEN DO;
+      JOINT = 'Y';
+      LONGNAME=TRIM(LONGNAME)||' & ' ||TRIM(LONGNAME1);
+      OUTPUT MATCH1;
+      END;
+RUN;
+PROC SORT  DATA=MATCH1; BY CUSTNO ;RUN;
+PROC PRINT DATA=MATCH1(OBS=10) ;TITLE 'JOINT';RUN;
+PROC SORT  DATA=XMATCH; BY CUSTNO ;RUN;
+PROC PRINT DATA=XMATCH(OBS=10) ;TITLE 'XJOINT';RUN;
 
-# Deduplicate by CUSTNO
-con.execute("""
-    CREATE OR REPLACE TABLE CIS AS
-    SELECT * FROM CIS
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
-""")
+ /*-----------------------------------------------------------*/
+ /*  MATCH EMAIL DATASET AND CUST DAILY                       */
+ /*-----------------------------------------------------------*/
+DATA MATCH2;
+MERGE RMK(IN=A)  MATCH1(IN=B);
+      BY CUSTNO;
+      IF B;
+RUN;
+PROC SORT  DATA=MATCH2; BY ACCTNOC;RUN;
+PROC PRINT DATA=MATCH2(OBS=10) ;TITLE 'MATCH 2';RUN;
 
-# -------------------------
-# Step 2: Process CONSENT1
-# -------------------------
-con.execute(f"""
-    CREATE OR REPLACE TABLE CONSENT1 AS
-    SELECT 
-        CI_APPL_NO AS CUSTNO,
-        '' AS CONSENT1,
-        0 AS PROMPT
-    FROM '{host_parquet_path("UNLOAD_CICON1ST_FB.parquet")}'
-""")
+DATA MATCH3;
+MERGE RMK(IN=A)  XMATCH(IN=B);
+      BY CUSTNO;
+      IF B;
+RUN;
+PROC SORT  DATA=MATCH3 ;BY ACCTNOC;RUN;
+PROC PRINT DATA=MATCH3(OBS=10) ;TITLE 'MATCH 3';RUN;
 
-# Deduplicate by CUSTNO
-con.execute("""
-    CREATE OR REPLACE TABLE CONSENT1 AS
-    SELECT * FROM CONSENT1
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
-""")
+ DATA OUT1;
+ FILE OUTFILE;
+   SET MATCH2 MATCH3;
+       PUT @001     CUSTNO              $20.
+           @022     ACCTNOC             $20.
+           @042     REMARKS             $60.
+           @143     DOBDOR              $10.
+           @160     LONGNAME            $200.
+           @400     INDORG              $1.
+           @402     JOINT               $1.
+           ;
+ RUN;
+ PROC PRINT DATA=OUT1(OBS=5);TITLE 'FULL OUTPUT ';
 
-# -------------------------
-# Step 3: Merge
-# -------------------------
-con.execute(f"""
-    CREATE OR REPLACE TABLE MERGE AS
-    SELECT 
-        B.CUSTNO,
-        B.INDORG,
-        B.CUSTCONSENT,
-        A.CONSENT1,
-        A.PROMPT,
-        B.OPENCUSTMM,
-        B.OPENCUSTDD,
-        B.OPENCUSTYYYY
-    FROM CONSENT1 A
-    FULL OUTER JOIN CIS B
-    ON A.CUSTNO = B.CUSTNO
-""")
-
-# Apply filtering + update CONSENT1 based on CUSTCONSENT
-con.execute(f"""
-    CREATE OR REPLACE TABLE MERGE AS
-    SELECT
-        CUSTNO,
-        INDORG,
-        CASE 
-            WHEN OPENCUSTMM='{DATEMM1}' 
-             AND OPENCUSTDD='{DATEDD1}'
-             AND OPENCUSTYYYY='{DATEYY1}'
-             AND CUSTCONSENT=001 THEN 'Y'
-            WHEN OPENCUSTMM='{DATEMM1}' 
-             AND OPENCUSTDD='{DATEDD1}'
-             AND OPENCUSTYYYY='{DATEYY1}'
-             AND CUSTCONSENT=002 THEN 'N'
-            ELSE CONSENT1
-        END AS CONSENT1,
-        PROMPT,
-        OPENCUSTMM,
-        OPENCUSTDD,
-        OPENCUSTYYYY
-    FROM MERGE
-    WHERE CUSTNO IS NOT NULL
-""")
-
-# -------------------------
-# Step 4: Build Output (TEMPOUT equivalent)
-# -------------------------
-result = f"""
-    SELECT
-        '033' AS CODE1,
-        'CUST' AS CODE2,
-        CUSTNO,
-        CONSENT1,
-        INDORG,
-        '{DATEYY1}' AS FIRST_DATE_YYYY,
-        '-' AS SEP1,
-        '{DATEMM1}' AS FIRST_DATE_MM,
-        '-' AS SEP2,
-        '{DATEDD1}' AS FIRST_DATE_DD,
-        PROMPT,
-        'INIT' AS PROMPT_SOURCE,
-        '{DATEYY1}' AS PROMPT_YYYY,
-        '-' AS SEP3,
-        '{DATEMM1}' AS PROMPT_MM,
-        '-' AS SEP4,
-        '{DATEDD1}' AS PROMPT_DD,
-        '01.01.01' AS PROMPT_TIME,
-        'INIT' AS UPDATE_SOURCE,
-        '{DATEYY1}' AS UPDATE_YYYY,
-        '-' AS SEP5,
-        '{DATEMM1}' AS UPDATE_MM,
-        '-' AS SEP6,
-        '{DATEDD1}' AS UPDATE_DD,
-        '01.01.01' AS UPDATE_TIME,
-        'INIT' AS UPDATE_OPERATOR,
-        'INIT' AS APP_CODE,
-        'INIT' AS APP_NO
-        ,{year} AS year
-        ,{month} AS month
-        ,{day} AS day
-    FROM MERGE
-""".format(year=year,month=month,day=day)
-
-# =========================
-#   WRITE OUTPUT (PyArrow)
-# =========================
-#pq.write_table(result, "RBP2_B033_CICON1ST_CUSTNEW.parquet")
-queries = {
-    "CICON1ST_CUSTNEW"            : result
-}
-
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
-
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+//*---------------------------------------------------------------------
+//* GET THE LAST ROW ONLY
+//*---------------------------------------------------------------------
+//SORT01   EXEC PGM=ICETOOL
+//INFILE1    DD DSN=LOANS.CISRMRK.EMAIL.DUP,DISP=SHR
+//OUTFILE1   DD DSN=LOANS.CISRMRK.EMAIL,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(10,5),RLSE),UNIT=SYSDA,
+//            DCB=(RECFM=FB,LRECL=600,BLKSIZE=0)
+//TOOLMSG    DD SYSOUT=*
+//DFSMSG     DD SYSOUT=*
+//TOOLIN     DD *
+  SELECT FROM(INFILE1) TO(OUTFILE1) ON(1,20,CH) LASTDUP
