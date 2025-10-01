@@ -1,24 +1,17 @@
-CI-BANK-NO           PIC X(3). 
-CI-APPL-CODE         PIC X(5). 
-CI-APPL-NO           PIC X(20).
-CI-CONSENT           PIC X(1). 
-CI-CUST-TYPE         PIC X(1). 
-CI-FIRST-DATE        PIC X(10).
-CI-NO-OF-PROMPT      PIC S9(1)V
-CI-PROMPT-SOURCE     PIC X(5). 
-CI-PROMPT-DATE       PIC X(10).
-CI-PROMPT-TIME       PIC X(8). 
-CI-UPDATE-SOURCE     PIC X(5). 
-CI-UPDATE-DATE       PIC X(10).
-CI-UPDATE-TIME       PIC X(8). 
-CI-UPDATE-OPERATOR   PIC X(8). 
-CI-TRX-APPL-CODE     PIC X(5). 
-CI-TRX-APPL-NO       PIC X(20).
-
-INPUT @001   FIELDNAME            $EBCDIC20.
-      @021   BC_FIELD_CODE        $EBCDIC20. 
-      @041   BC_EFF_DATETIME      $EBCDIC14. 
-      @055   MSCDESC              $EBCDIC150.
-      @205   BC_LAST_CHANGE       $EBCDIC14. 
-      @219   BC_LAST_OPER         $EBCDIC20.  
+INPUT @001   CI_BANK_NO          $EBCDIC3.
+      @004   CI_APPL_CODE        $EBCDIC5.
+      @009   CI_APPL_NO          $EBCDIC20.
+      @029   CI_CONSENT          $EBCDIC1.
+      @030   CI_CUST_TYPE        $EBCDIC1.
+      @031   CI_FIRST_DATE       $EBCDIC10.
+      @041   CI_NO_OF_PROMPT     $EBCDIC1.
+      @042   CI_PROMPT_SOURCE    $EBCDIC5.
+      @047   CI_PROMPT_DATE      $EBCDIC10.
+      @057   CI_PROMPT_TIME      $EBCDIC8.
+      @065   CI_UPDATE_SOURCE    $EBCDIC5.
+      @070   CI_UPDATE_DATE      $EBCDIC10.
+      @080   CI_UPDATE_TIME      $EBCDIC8.
+      @088   CI_UPDATE_OPERATOR  $EBCDIC8.
+      @096   CI_TRX_APPL_CODE    $EBCDIC5.
+      @101   CI_TRX_APPL_NO      $EBCDIC20.
       ;
