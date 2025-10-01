@@ -1,0 +1,128 @@
+//CICUSNE1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID     JOB22356
+//*---------------------------------------------------------------------
+//* ESMR 2012-2661 UPDATE OF CUSTOMER CONSENT INTO REMARKS TABLE
+//*     THIS JOB : GET NEW UNIQUE CUSTOMER FROM CIS
+//*                FIT INTO CICON1ST LOADING JOB
+//* RELATED ESMR 2012-2672 CUST CONSENT STORE EXISTING RECORD(1 OFF)
+//*              2012-3001 CUST CONSENT (BDS)
+//*              2013-346 CUST CONSENT NEW CUST
+//* A2013-00020605:REMOVE SETTING FOR OPTIONS
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CICON1ST.CUSTNEW,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//MOVEDATA EXEC SAS609
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//CISFILE   DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY
+//CICON1ST  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CICON1ST.FB
+//OUTFILE   DD DSN=RBP2.B033.CICON1ST.CUSTNEW,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=120,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS SORTPARM='HIPRMAX=0,MOSIZE=0' NOSORTBLKMODE;
+ /*----------------------------------------------------------------*/
+ /*    GET SYSTEMS DATE                                            */
+ /*----------------------------------------------------------------*/
+    DATA SRSDATE;
+          FORMAT DATEMM1 Z2. DATEDD1  Z2. DATEYY1 Z4.;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
+
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('DATEMM1',PUT(SRSMM,Z2.));
+          CALL SYMPUT('DATEDD1',PUT(SRSDD,Z2.));
+          CALL SYMPUT('DATEYY1',PUT(SRSYY,Z4.));
+RUN;
+   PROC PRINT DATA=SRSDATE;TITLE 'CONTROL DATE';RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    DATA DECLARATION                                            */
+ /*----------------------------------------------------------------*/
+   DATA CIS;
+   KEEP   CUSTOPENDATE  CUSTOPENDATEX CUSTNO         INDORG
+          OPENCUSTMM    OPENCUSTDD    OPENCUSTYYYY  CUSTCONSENT ;
+   FORMAT CUSTOPENDATE  Z11.
+          CUSTOPENDATEX $11.
+          OPENCUSTMM    Z2.
+          OPENCUSTDD    Z2.
+          OPENCUSTYYYY  Z4.  ;
+   SET CISFILE.CUSTDLY; /*  COVER INDIVIDUALS AND ORGANISATION CUST  */
+        CUSTOPENDATEX = CUSTOPENDATE;     /* MMDDYYYYJJJJ */
+        OPENCUSTMM    = SUBSTR(CUSTOPENDATEX,1,2);
+        OPENCUSTDD    = SUBSTR(CUSTOPENDATEX,3,2);
+        OPENCUSTYYYY  = SUBSTR(CUSTOPENDATEX,5,4);
+   RUN;
+   PROC SORT  DATA=CIS NODUPKEY ;BY CUSTNO;RUN;
+   PROC PRINT DATA=CIS(OBS=1);TITLE 'CIS';RUN;
+
+   DATA CONSENT1;
+       FORMAT CONSENT1 $1.  PROMPT PD1.;
+       INFILE CICON1ST;
+               INPUT @009  CUSTNO             $11.;
+                  CONSENT1=' ';
+                  PROMPT=0;
+       RUN;
+   PROC PRINT DATA=CONSENT1(OBS=5);TITLE 'CONSENT1';RUN;
+   PROC SORT DATA=CONSENT1 ; BY CUSTNO;RUN;
+
+   DATA MERGE;
+   MERGE CONSENT1(IN=A) CIS(IN=B) ;BY CUSTNO;
+   IF NOT A;
+   IF (  OPENCUSTMM     = "&DATEMM1"
+   AND   OPENCUSTDD     = "&DATEDD1"
+   AND   OPENCUSTYYYY   = "&DATEYY1"  ) THEN DO;
+       IF CUSTCONSENT = 001 THEN CONSENT1='Y';
+       IF CUSTCONSENT = 002 THEN CONSENT1='N';
+   END;
+   RUN;
+   PROC PRINT DATA=MERGE(OBS=5);TITLE 'RESULT';RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT;
+  SET MERGE;
+  FILE OUTFILE;
+     PUT @01   '033'
+         @04   'CUST'
+         @09   CUSTNO             $11.
+         @29   CONSENT1           $1.
+         @30   INDORG             $1.
+         @31   "&DATEYY1"                    /*FIRST DATE*/
+         @35   '-'
+         @36   "&DATEMM1"
+         @38   '-'
+         @39   "&DATEDD1"
+         @41   PROMPT             PD1.      /*NO OF PROMPT*/
+         @42   'INIT'                       /*PROMPT SOURCE*/
+         @47   "&DATEYY1"                   /*PROMPT DATE*/
+         @51   '-'
+         @52   "&DATEMM1"
+         @54   '-'
+         @55   "&DATEDD1"
+         @57   '01.01.01'                   /*PROMPT TIME*/
+         @65   'INIT'                       /*UPDATE SOURCE*/
+         @70   "&DATEYY1"                   /*UPDATE DATE*/
+         @74   '-'
+         @75   "&DATEMM1"
+         @77   '-'
+         @78   "&DATEDD1"
+         @80   '01.01.01'                   /*UPDATE TIME*/
+         @88   'INIT'                       /*UPDATE OPERATOR*/
+         @96   'INIT'                       /*APPLICATION CODE*/
+         @101  'INIT'                       /*APPLICATION NO  */
+         ;
+  RETURN;
+  RUN;
+

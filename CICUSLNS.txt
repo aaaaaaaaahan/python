@@ -1,0 +1,66 @@
+//CICUSLNS JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0033762
+//*--------------------------------------------------------------------
+//* ESMR 2024-00003454 AUTOMATE THE INTEREST / PROFIT ADVICE TO
+//* CORPORATE BANKING3S CUSTOMERS - TO FINETUNE THE CUSTOMER S NAME FOR
+//* FOR JOINT BORROWERS
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.LOANS.CUST.PRIMARY,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.LOANS.CUST.SCNDARY,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CUSTFILE DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY
+//OUTFILE  DD DSN=RBP2.B033.LOANS.CUST.PRIMARY,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=400,BLKSIZE=0,RECFM=FB)
+//OUTFIL1  DD DSN=RBP2.B033.LOANS.CUST.SCNDARY,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=400,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+
+DATA CUS1 CUS2;
+   KEEP CUSTNO ACCTNOC CUSTNAME ACCTCODE DOBDOR LONGNAME INDORG PRIMSEC;
+   SET CUSTFILE.CUSTDLY;
+   IF CUSTNAME EQ '' THEN DELETE;
+   IF PRISEC = 901 THEN PRIMSEC = 'P';
+   IF PRISEC = 902 THEN PRIMSEC = 'S';
+   IF ACCTCODE IN ('LN') AND PRIMSEC = 'P' THEN OUTPUT CUS1;
+   IF ACCTCODE IN ('LN') AND PRIMSEC = 'S' THEN OUTPUT CUS2;
+RUN;
+PROC SORT  DATA=CUS1 ; BY CUSTNO;RUN;
+PROC PRINT DATA=CUS1(OBS=10);TITLE 'LOANS CUST PRIM';RUN;
+PROC SORT  DATA=CUS2 ; BY CUSTNO;RUN;
+PROC PRINT DATA=CUS2(OBS=10);TITLE 'LOANS CUST SEC';RUN;
+
+ DATA OUT1;
+ FILE OUTFILE;
+   SET CUS1;
+       PUT @001     CUSTNO              $20.
+           @022     ACCTNOC             $20.
+           @052     DOBDOR              $10.
+           @063     LONGNAME            $150.
+           @220     INDORG              $1.
+           @222     PRIMSEC             $1.
+           ;
+ RUN;
+
+ DATA OUT2;
+ FILE OUTFIL1;
+   SET CUS2;
+       PUT @001     CUSTNO              $20.
+           @022     ACCTNOC             $20.
+           @052     DOBDOR              $10.
+           @063     LONGNAME            $150.
+           @220     INDORG              $1.
+           @222     PRIMSEC             $1.
+           ;
+ RUN;
+
+
