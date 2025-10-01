@@ -1,199 +1,128 @@
-"""
-convert_cisrmrk_to_parquet.py
-
-Usage:
-  - Edit the parquet input paths below.
-  - Run: python convert_cisrmrk_to_parquet.py
-"""
-
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
-import os
-from datetime import datetime
 
-# ---------- CONFIG: edit these ----------
-RMK_PARQUET   = "RMKFILE.parquet"      # RMKFILE
-PRIM_PARQUET  = "LNSPRIM.parquet"      # LNSPRIM
-SECD_PARQUET  = "LNSSECD.parquet"      # LNSSECD
-OUT_PARQUET   = "OUT1.parquet"         # final parquet output
-OUT_TEXT      = "OUT1.txt"             # fixed-width text output
-DEDUP_KEEP_LAST = True                 # emulate ICETOOL LASTDUP (keep last by CUSTNO)
-# ---------------------------------------
+# =========================
+# Connect DuckDB
+# =========================
+con = duckdb.connect()
 
-con = duckdb.connect(database=':memory:')
-
-# Register parquet files as DuckDB tables
-con.execute(f"CREATE VIEW rmk AS SELECT * FROM parquet_scan('{RMK_PARQUET}')")
-con.execute(f"CREATE VIEW prim AS SELECT * FROM parquet_scan('{PRIM_PARQUET}')")
-con.execute(f"CREATE VIEW secd AS SELECT * FROM parquet_scan('{SECD_PARQUET}')")
-
-# If your parquet column names differ (e.g. CUSTNO1, LONGNAME1), normalize them in SQL below.
-# Step 1: Create MATCH1 (joint customers) and XMATCH (single)
-# Equivalent SAS logic:
-#   MERGE PRIM(IN=A) SECD(IN=B); BY ACCTNOC;
-#   IF A AND NOT B THEN JOINT='N' -> XMATCH
-#   IF A AND B THEN JOINT='Y' and LONGNAME = LONGNAME || ' & ' || LONGNAME1 -> MATCH1
-
-# Normalize columns: assume secd may have different column names like CUSTNO1, DOBDOR1, LONGNAME1
-# We'll alias them for convenience
-sql_match = """
--- Create match1: joint accounts
-CREATE TEMP TABLE match1 AS
-SELECT
-    p.CUSTNO AS CUSTNO,
-    p.ACCTNOC AS ACCTNOC,
-    p.DOBDOR AS DOBDOR,
-    TRIM(p.LONGNAME) || ' & ' || TRIM(s.LONGNAME1) AS LONGNAME,
-    p.INDORG AS INDORG,
-    'Y' AS JOINT
-FROM prim p
-JOIN secd s USING (ACCTNOC)
-;
-
--- Create xmatch: primary only (no secondary)
-CREATE TEMP TABLE xmatch AS
-SELECT
-    p.CUSTNO AS CUSTNO,
-    p.ACCTNOC AS ACCTNOC,
-    p.DOBDOR AS DOBDOR,
-    p.LONGNAME AS LONGNAME,
-    p.INDORG AS INDORG,
-    'N' AS JOINT
-FROM prim p
-LEFT JOIN secd s USING (ACCTNOC)
-WHERE s.ACCTNOC IS NULL
-;
-"""
-con.execute(sql_match)
-
-# Step 2: MATCH2 = RMK + MATCH1 (keep those in MATCH1)
-#         MATCH3 = RMK + XMATCH (keep those in XMATCH)
-sql_match2_3 = """
-CREATE TEMP TABLE match2 AS
-SELECT m.CUSTNO,
-       m.ACCTNOC,
-       r.REMARKS,
-       m.DOBDOR,
-       m.LONGNAME,
-       m.INDORG,
-       m.JOINT
-FROM match1 m
-LEFT JOIN rmk r ON r.CUSTNO = m.CUSTNO
-WHERE m.CUSTNO IS NOT NULL
-;
-
-CREATE TEMP TABLE match3 AS
-SELECT x.CUSTNO,
-       x.ACCTNOC,
-       r.REMARKS,
-       x.DOBDOR,
-       x.LONGNAME,
-       x.INDORG,
-       x.JOINT
-FROM xmatch x
-LEFT JOIN rmk r ON r.CUSTNO = x.CUSTNO
-WHERE x.CUSTNO IS NOT NULL
-;
-"""
-con.execute(sql_match2_3)
-
-# Step 3: Concatenate MATCH2 and MATCH3 -> OUT1
+# =========================
+# Register parquet inputs
+# =========================
 con.execute("""
-CREATE TEMP TABLE out_all AS
-SELECT * FROM match2
-UNION ALL
-SELECT * FROM match3
-;
+    CREATE OR REPLACE TABLE RMK AS 
+    SELECT CUSTNO, REMARKS
+    FROM parquet_scan('rmk.parquet')
 """)
 
-# Optional: emulate ICETOOL LASTDUP ON(1,20,CH) to get last row per CUSTNO (CUSTNO occupies 1..20)
-if DEDUP_KEEP_LAST:
-    # We'll keep the last row by ordering on a synthetic row_number or existing timestamp if present.
-    # DuckDB doesn't preserve file order; to mimic 'last occurrence' from the file, we need an ordering column.
-    # If original data has no ordering column, we'll assume the last by insertion order; as a fallback, use ROW_NUMBER over
-    # an arbitrary ordering (this is the best-effort equivalent).
-    con.execute("""
-    CREATE TEMP TABLE out_ranked AS
-    SELECT *, ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) as rn
-    FROM out_all
-    """)
-    # Keep rn = max (since we used trivial ORDER BY, rn=1; but we want last -> choose last rn via grouping)
-    # Better approach: pick the last by using MAX(rowid) if we had it; we'll just deduplicate keeping the last row produced:
-    # We'll compute a rowid by duckdb's internal ROW_NUMBER() over a dummy ordering of ACCTNOC desc to choose 'last'
-    con.execute("""
-    CREATE TEMP TABLE out_dedup AS
-    SELECT t.*
+con.execute("""
+    CREATE OR REPLACE TABLE PRIM AS
+    SELECT 
+        CUSTNO,
+        ACCTNOC,
+        DOBDOR,
+        LONGNAME,
+        INDORG,
+        PRIMSEC
+    FROM parquet_scan('prim.parquet')
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE SECD AS
+    SELECT 
+        CUSTNO AS CUSTNO1,
+        ACCTNOC,
+        DOBDOR AS DOBDOR1,
+        LONGNAME AS LONGNAME1,
+        INDORG AS INDORG1,
+        PRIMSEC AS PRIMSEC1
+    FROM parquet_scan('secd.parquet')
+""")
+
+# =========================
+# Match Logic (PRIM vs SECD)
+# =========================
+con.execute("""
+    CREATE OR REPLACE TABLE MATCH1 AS
+    SELECT 
+        P.CUSTNO,
+        P.ACCTNOC,
+        P.DOBDOR,
+        TRIM(P.LONGNAME) || ' & ' || TRIM(S.LONGNAME1) AS LONGNAME,
+        P.INDORG,
+        'Y' AS JOINT
+    FROM PRIM P
+    JOIN SECD S USING (ACCTNOC)
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE XMATCH AS
+    SELECT 
+        P.CUSTNO,
+        P.ACCTNOC,
+        P.DOBDOR,
+        P.LONGNAME,
+        P.INDORG,
+        'N' AS JOINT
+    FROM PRIM P
+    LEFT JOIN SECD S USING (ACCTNOC)
+    WHERE S.ACCTNOC IS NULL
+""")
+
+# =========================
+# Merge with RMK (EMAIL)
+# =========================
+con.execute("""
+    CREATE OR REPLACE TABLE MATCH2 AS
+    SELECT R.CUSTNO, M.*
+    FROM RMK R
+    JOIN MATCH1 M USING (CUSTNO)
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE MATCH3 AS
+    SELECT R.CUSTNO, X.*
+    FROM RMK R
+    JOIN XMATCH X USING (CUSTNO)
+""")
+
+# =========================
+# Final Output
+# =========================
+con.execute("""
+    CREATE OR REPLACE TABLE OUT1 AS
+    SELECT 
+        M.CUSTNO,
+        M.ACCTNOC,
+        R.REMARKS,
+        M.DOBDOR,
+        M.LONGNAME,
+        M.INDORG,
+        M.JOINT
     FROM (
-        SELECT *,
-               ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY ACCTNOC DESC) AS keep_rn
-        FROM out_all
-    ) t
-    WHERE t.keep_rn = 1
-    """)
-    final_table = "out_dedup"
-else:
-    final_table = "out_all"
+        SELECT * FROM MATCH2
+        UNION ALL
+        SELECT * FROM MATCH3
+    ) M
+    JOIN RMK R USING (CUSTNO)
+""")
 
-# Export final_table to Parquet using duckdb's parquet writer via pyarrow
-# Pull DuckDB result into PyArrow Table
-res = con.execute(f"SELECT CUSTNO, ACCTNOC, REMARKS, DOBDOR, LONGNAME, INDORG, JOINT FROM {final_table}").fetch_arrow_table()
+# =========================
+# Save FULL OUTPUT
+# =========================
+out1 = con.execute("SELECT * FROM OUT1").arrow()
+pq.write_table(out1, "email_dup.parquet")
 
-# Write parquet
-pq.write_table(res, OUT_PARQUET)
-print(f"Wrote parquet -> {OUT_PARQUET} ({res.num_rows} rows)")
+# =========================
+# Save LAST RECORD only
+# =========================
+last_row = con.execute("""
+    SELECT *
+    FROM OUT1
+    QUALIFY ROW_NUMBER() OVER (ORDER BY CUSTNO DESC) = 1
+""").arrow()
 
-# Also write fixed-width text file emulating the PUT positions from your SAS:
-# SAS PUT layout:
-# @001 CUSTNO $20.
-# @022 ACCTNOC $20.
-# @042 REMARKS $60.
-# @143 DOBDOR $10.
-# @160 LONGNAME $200.
-# @400 INDORG $1.
-# @402 JOINT $1.
-# We'll pad/truncate fields to match these widths.
+pq.write_table(last_row, "email.parquet")
 
-def pad_trunc(s, width):
-    if s is None:
-        s = ""
-    s = str(s)
-    if len(s) > width:
-        return s[:width]
-    return s.ljust(width)
-
-with open(OUT_TEXT, "w", encoding="utf-8") as f:
-    for row in res.to_pydict()['CUSTNO'] if res.num_rows>0 else []:
-        # We'll iterate row-by-row using pyarrow table conversion
-        pass
-
-# Better: iterate via rows from the Arrow table
-with open(OUT_TEXT, "w", encoding="utf-8", newline='') as f:
-    cols = res.to_pydict()
-    n = res.num_rows
-    for i in range(n):
-        CUSTNO = cols.get('CUSTNO', ['']*n)[i]
-        ACCTNOC = cols.get('ACCTNOC', ['']*n)[i]
-        REMARKS = cols.get('REMARKS', ['']*n)[i]
-        DOBDOR = cols.get('DOBDOR', ['']*n)[i]
-        LONGNAME = cols.get('LONGNAME', ['']*n)[i]
-        INDORG = cols.get('INDORG', ['']*n)[i]
-        JOINT = cols.get('JOINT', ['']*n)[i]
-
-        line = (
-            pad_trunc(CUSTNO, 20) +
-            pad_trunc(ACCTNOC, 20) +
-            pad_trunc(REMARKS, 60) +
-            pad_trunc(DOBDOR, 10) +
-            pad_trunc(LONGNAME, 200) +
-            pad_trunc(INDORG, 1) +
-            pad_trunc(JOINT, 1)
-        )
-        # Ensure the record matches LRECL ~ 600 (as in your original job) by padding/truncating further if needed
-        if len(line) < 600:
-            line = line + " " * (600 - len(line))
-        elif len(line) > 600:
-            line = line[:600]
-        f.write(line + "\n")
-
-print(f"Wrote fixed-width text -> {OUT_TEXT}")
+print("✅ Processing complete: email_dup.parquet & email.parquet written")
