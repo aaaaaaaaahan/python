@@ -1,0 +1,346 @@
+//CIAMLHRC JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID
+//*---------------------------------------------------------------------
+//* ESMR2024-1681
+//* -MASS CLOSE ODD ALERTS GENERATED ON CIS WITH HRC 002 AND 011 ONLY
+//*
+//*
+//* NOTE !!!  OUTPUT  TO 'CISU' IF FOR UAT
+//* NOTE !!!  OUTPUT  TO 'CIS' IF FOR PRODUCTION
+//*
+//*--------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.AMLHRC.EXTRACT.MASSCLS,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.AMLHRC.EXTRACT.VERIFY,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL3     DD DSN=RBP2.B033.AMLHRC.EXTRACT.MASSCLS.BNKSTFF,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*
+//GETCHG   EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CUSTFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.ALLCUST.FB
+//CTRLDATE DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//CUSTCLS  DD DSN=RBP2.B033.AMLHRC.EXTRACT.MASSCLS,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(30,30),RLSE),
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//CUSTVRY  DD DSN=RBP2.B033.AMLHRC.EXTRACT.VERIFY,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(30,30),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//CUSTBNK  DD DSN=RBP2.B033.AMLHRC.EXTRACT.MASSCLS.BNKSTFF,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(30,30),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTION NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*    SET DATES                                                   */
+ /*----------------------------------------------------------------*/
+    DATA SRSDATE;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
+
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('DATE1',PUT(TODAYSAS,8.));
+          CALL SYMPUT('YEAR' ,PUT(SRSYY,Z4.));
+          CALL SYMPUT('MONTH',PUT(SRSMM,Z2.));
+          CALL SYMPUT('DAY'  ,PUT(SRSDD,Z2.));
+          CALL SYMPUT('TDATE',PUT(TODAYSAS,YYMMDDN8.));
+    RUN;
+   PROC PRINT;RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    CUSTOMER FILE                                               */
+ /*----------------------------------------------------------------*/
+DATA CUSTOUT;
+   FORMAT HRC002  $01. HRC011 $01. HRC999  $01.;
+  INFILE CUSTFILE;
+  INPUT  @003  BANKNO            PD2.
+         @005  CUSTNO           $11.
+         @025  PROCESSTIME       $8.
+         @033  GENDER            $1.
+         @034  CUSTSTAT          $1.
+         @035  TAXCODE           $1.
+         @036  TAXID             $9.
+         @045  CUSTBRCH         PD4.
+         @049  COSTCTR          PD4.
+         @053  CUSTLASTDATECC   $2.
+         @055  CUSTLASTDATEYY   $2.
+         @058  CUSTLASTDATEMM   $2.
+         @061  CUSTLASTDATEDD   $2.
+         @063  CUSTLASTOPER     $8.
+         @077  PRIM_OFF         PD3.
+         @080  SEC_OFF          PD3.
+         @083  PRIM_LN_OFF      PD3.
+         @086  SEC_LN_OFF       PD3.
+         @095  RESIDENCY        $3.         /* CI-CUST-RESTRICT-CD */
+         @108  RACE             $1.
+         @109  CITIZENSHIP      $2.
+         @112  CUSTSINCEDATE    PD6.
+         @119  CUSTOPENDATE     PD6.
+         @132  HRC01            PD2.
+         @134  HRC02            PD2.
+         @136  HRC03            PD2.
+         @138  HRC04            PD2.
+         @140  HRC05            PD2.
+         @142  HRC06            PD2.
+         @144  HRC07            PD2.
+         @146  HRC08            PD2.
+         @148  HRC09            PD2.
+         @150  HRC10            PD2.
+         @152  HRC11            PD2.
+         @154  HRC12            PD2.
+         @156  HRC13            PD2.
+         @158  HRC14            PD2.
+         @160  HRC15            PD2.
+         @162  HRC16            PD2.
+         @164  HRC17            PD2.
+         @166  HRC18            PD2.
+         @168  HRC19            PD2.
+         @170  HRC20            PD2.
+         @172  EXPERIENCE       $3.     /*  MISC-DEMO-1  */
+         @182  HOBBIES          $3.     /*  MISC-DEMO-2  */
+         @192  RELIGION         $3.     /*  MISC-DEMO-3  */
+         @202  LANGUAGE         $3.     /*  MISC-DEMO-4  */
+         @212  INST_SEC         $3.     /*  MISC-DEMO-5  */
+         @222  CUST_CODE        $3.     /*  MISC-DEMO-6  */
+         @232  CUSTCONSENT      $3.     /*  MISC-DEMO-7  */
+         @242  BASICGRPCODE     $3.     /*  MISC-DEMO-8  */
+         @252  MSICCODE         $5.     /*  MISC-DEMO-9  */
+         @262  MASCO2008        $5.  ;  /*  MISC-DEMO-10 */
+         CUSTMNTDATE=COMPRESS(CUSTLASTDATECC||CUSTLASTDATEYY
+                            ||CUSTLASTDATEMM||CUSTLASTDATEDD);
+
+
+      IF HRC01 =  002 OR HRC02 =  002 OR HRC03 =  002
+      OR HRC04 =  002 OR HRC05 =  002 OR HRC06 =  002
+      OR HRC07 =  002 OR HRC08 =  002 OR HRC09 =  002
+      OR HRC10 =  002 OR HRC11 =  002 OR HRC12 =  002
+      OR HRC13 =  002 OR HRC14 =  002 OR HRC15 =  002
+      THEN HRC002 = 'Y';
+
+      IF HRC01 =  011 OR HRC02 =  011 OR HRC03 =  011
+      OR HRC04 =  011 OR HRC05 =  011 OR HRC06 =  011
+      OR HRC07 =  011 OR HRC08 =  011 OR HRC09 =  011
+      OR HRC10 =  011 OR HRC11 =  011 OR HRC12 =  011
+      OR HRC13 =  011 OR HRC14 =  011 OR HRC15 =  011
+      THEN HRC011 = 'Y';
+
+
+      IF HRC01 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC02 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC03 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC04 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC05 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC06 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC07 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC08 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC09 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC10 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC11 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC12 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC13 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC14 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC15 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC16 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC17 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC18 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC19 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      IF HRC20 NOT IN ('000','002','011')
+      THEN HRC999 = 'Y';
+
+      /* 2024-1251 CUST HAVING CODE 002 ONLY */
+
+      IF HRC01 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC02 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC03 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC04 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC05 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC06 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC07 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC08 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC09 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC10 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC11 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC12 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC13 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC14 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC15 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC16 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC17 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC18 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC19 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      IF HRC20 NOT IN ('000','002')
+      THEN HRC002O = 'Y';
+
+      /* 2024-1251 ENDS */
+
+PROC SORT  DATA=CUSTOUT; BY CUSTNO ;RUN;
+PROC PRINT DATA=CUSTOUT (OBS=5);TITLE 'CUST';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* OUTPUT FILE FOR MASS CLOSE                                     */
+ /*                                                                */
+ /* NOTE !!!  OUTPUT  TO 'CISU' IF FOR UAT                         */
+ /*       PUT @01  'CISU'                                          */
+ /*           @05  CUSTNO         $11.                             */
+ /*                                                                */
+ /* NOTE !!!  OUTPUT  TO 'CIS' IF FOR PRODUCTION                   */
+ /*       PUT @01  'CIS'                                           */
+ /*           @04  CUSTNO         $11.                             */
+ /*----------------------------------------------------------------*/
+
+ DATA _NULL_;
+   FILE CUSTCLS;
+   SET CUSTOUT;
+
+
+       IF ((HRC002 EQ 'Y'  AND
+            HRC011 EQ 'Y') AND
+            HRC999 EQ ' ')  THEN DO;
+
+
+          PUT @01  'CIS'
+              @04  CUSTNO         $11.
+              ;
+       END;
+ RUN;
+
+ /*----------------------------------------------------------------*/
+ /* 2024-1251 MASSCLOSE FOR CUST WITH ONLY HAS CODE 002 BANK STAFF */
+ /*----------------------------------------------------------------*/
+
+ DATA _NULL_;
+   FILE CUSTBNK;
+   SET CUSTOUT;
+
+
+       IF  (HRC002  EQ 'Y'   AND
+            HRC002O EQ ' ')  THEN DO;
+
+
+          PUT @01  'CIS'
+              @04  CUSTNO         $11.
+              ;
+       END;
+ RUN;
+
+ /*----------------------------------------------------------------*/
+ /* OUTPUT FILE FOR VERIFICATION                                   */
+ /*----------------------------------------------------------------*/
+ DATA _NULL_;
+   FILE CUSTVRY;
+   SET CUSTOUT;
+
+     PUT @001  CUSTNO           $11.
+         @013  HRC01             Z3.
+         @016  HRC02             Z3.
+         @019  HRC03             Z3.
+         @022  HRC04             Z3.
+         @025  HRC05             Z3.
+         @028  HRC06             Z3.
+         @031  HRC07             Z3.
+         @034  HRC08             Z3.
+         @037  HRC08             Z3.
+         @040  HRC10             Z3.
+         @043  HRC11             Z3.
+         @046  HRC12             Z3.
+         @049  HRC13             Z3.
+         @052  HRC14             Z3.
+         @055  HRC15             Z3.
+         @058  HRC16             Z3.
+         @061  HRC17             Z3.
+         @064  HRC18             Z3.
+         @067  HRC19             Z3.
+         @070  HRC20             Z3.
+         @073  HRC002            $1.
+         @074  HRC011            $1.
+         @075  HRC999            $1.
+         @076  HRC002O           $1.
+           ;
+ RUN;
+
+
