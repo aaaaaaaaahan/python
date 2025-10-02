@@ -1,24 +1,59 @@
-cust = con.execute(f"""
-    SELECT *,
-           LPAD(CAST(CAST(HRC01 AS INTEGER) AS VARCHAR), 3, '0') AS HRC01,
-           LPAD(CAST(CAST(HRC02 AS INTEGER) AS VARCHAR), 3, '0') AS HRC02,
-           LPAD(CAST(CAST(HRC03 AS INTEGER) AS VARCHAR), 3, '0') AS HRC03,
-           LPAD(CAST(CAST(HRC04 AS INTEGER) AS VARCHAR), 3, '0') AS HRC04,
-           LPAD(CAST(CAST(HRC05 AS INTEGER) AS VARCHAR), 3, '0') AS HRC05,
-           LPAD(CAST(CAST(HRC06 AS INTEGER) AS VARCHAR), 3, '0') AS HRC06,
-           LPAD(CAST(CAST(HRC07 AS INTEGER) AS VARCHAR), 3, '0') AS HRC07,
-           LPAD(CAST(CAST(HRC08 AS INTEGER) AS VARCHAR), 3, '0') AS HRC08,
-           LPAD(CAST(CAST(HRC09 AS INTEGER) AS VARCHAR), 3, '0') AS HRC09,
-           LPAD(CAST(CAST(HRC10 AS INTEGER) AS VARCHAR), 3, '0') AS HRC10,
-           LPAD(CAST(CAST(HRC11 AS INTEGER) AS VARCHAR), 3, '0') AS HRC11,
-           LPAD(CAST(CAST(HRC12 AS INTEGER) AS VARCHAR), 3, '0') AS HRC12,
-           LPAD(CAST(CAST(HRC13 AS INTEGER) AS VARCHAR), 3, '0') AS HRC13,
-           LPAD(CAST(CAST(HRC14 AS INTEGER) AS VARCHAR), 3, '0') AS HRC14,
-           LPAD(CAST(CAST(HRC15 AS INTEGER) AS VARCHAR), 3, '0') AS HRC15,
-           LPAD(CAST(CAST(HRC16 AS INTEGER) AS VARCHAR), 3, '0') AS HRC16,
-           LPAD(CAST(CAST(HRC17 AS INTEGER) AS VARCHAR), 3, '0') AS HRC17,
-           LPAD(CAST(CAST(HRC18 AS INTEGER) AS VARCHAR), 3, '0') AS HRC18,
-           LPAD(CAST(CAST(HRC19 AS INTEGER) AS VARCHAR), 3, '0') AS HRC19,
-           LPAD(CAST(CAST(HRC20 AS INTEGER) AS VARCHAR), 3, '0') AS HRC20
-    FROM read_parquet('{custfile_path}')
-""").arrow()
+import duckdb
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import pyarrow.compute as pc
+
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+
+# ==================================
+# CONNECT TO DUCKDB
+# ==================================
+con = duckdb.connect()
+
+# ====================================
+# STEP 1 - Load and filter CUST File
+# ====================================
+con.execute(f"""
+    CREATE OR REPLACE TABLE CIS AS
+    SELECT 
+        ALIASKEY,
+        ALIAS,   
+        CUSTNAME,
+        CUSTNO,  
+        CUSTBRCH
+    FROM cis
+    WHERE CUSTNAME <> ''
+      AND ALIASKEY = 'IC'
+      AND INDORG = 'I'
+      AND CITIZENSHIP = 'MY'
+      AND RACE = 'O'
+""")
+
+# ==================================
+# STEP 2 - REMOVE DUPLICATES (BY CUSTNO)
+# ==================================
+out1 = CIS.drop_duplicates(subset=["CUSTNO"])
+
+# ==================================
+# STEP 4 - PRINT SAMPLE (OBS=5)
+# ==================================
+queries = {
+    "CIS_RACE"            : out1
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
