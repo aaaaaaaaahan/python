@@ -1,0 +1,56 @@
+//CMCBMPUF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB84625
+//*---------------------------------------------------------------------
+//* ESMR 2024-4449 HOUSEKEEP CBM RECORD MORE THAN 1 YEAR
+//*---------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//CBMFILE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CMCBMTXT.FB
+//OUTFILE  DD DSN=RBP2.B033.CBM.PURGE.MORE1Y(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTIONS NOCENTER;
+
+DATA REPTDATE;
+   PURDTE = TODAY()-365;
+   PURDTE8=PUT(PURDTE,YYMMDDN8.);
+   CALL SYMPUT('PURGEDTE',PURDTE8);
+   RUN;
+PROC PRINT;RUN;
+
+DATA CBMTXT;
+   INFILE CBMFILE;
+   INPUT  @0001   CBM_LOAD_DATE                 $8.
+          @0009   CBM_RUN_NO                    $8.
+          @0387   REG_IDNO                      $20.
+          @2087   LAST_UPDATE                   $10.
+          @2087   LAST_UPDATE_DD                $2.
+          @2090   LAST_UPDATE_MM                $2.
+          @2093   LAST_UPDATE_YY                $4.
+          @7467   REG_NEW_IDNO                  $20.
+          ;
+
+          IF LAST_UPDATE = "-         " THEN DELETE;
+          LASTDATE=LAST_UPDATE_YY||LAST_UPDATE_MM||LAST_UPDATE_DD;
+RUN;
+PROC SORT  DATA=CBMTXT; BY CBM_LOAD_DATE; RUN;
+PROC PRINT DATA=CBMTXT(OBS=10);TITLE 'CMCBMTXT';RUN;
+
+DATA TOPURGE;
+  SET CBMTXT;
+   IF LASTDATE < &PURGEDTE;
+   RUN;
+PROC PRINT DATA=TOPURGE(OBS=10);TITLE 'PURGE MORE THAN 1 YEAR';RUN;
+
+DATA OUT;
+   SET TOPURGE;
+   FILE OUTFILE;
+     PUT @0001   CBM_LOAD_DATE                 $8.
+         @0009   CBM_RUN_NO                    $8.
+         @0017   REG_IDNO                      $20.
+         @0037   REG_NEW_IDNO                  $20.
+         @0057   LAST_UPDATE                   $10.
+         ;
+RUN;
+

@@ -1,0 +1,69 @@
+//CISVSIGN JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB57241
+//*---------------------------------------------------------------------
+//* ESMR 2011-2388 INTEGRATED MANAGEMENT INFORMATION SYSTEMS
+//*                (SIGNATORY MANAGEMENT SYSTEM)
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DLT1     DD DSN=RBP2.B033.SNGLVIEW.SIGN,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* EXTRACTING ALL SIGNATORIES/NOMINEES
+//*---------------------------------------------------------------------
+//SIGNATOR EXEC SAS609
+//IEFRDER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SIGNATOR  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CISIGNAT.FB
+//OUTFILE   DD DSN=RBP2.B033.SNGLVIEW.SIGN,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(500,300),RLSE),
+//             DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*    SIGNATORY DECLARATION                                       */
+ /*----------------------------------------------------------------*/
+   DATA SIGNATORY;
+     INFILE SIGNATOR;
+         INPUT @01  BANKNO         $3.
+               @04  ACCTNO         $11.     /*UNIQUE KEY: ACCT+SEQNO */
+               @15  SEQNO          $5.
+               @20  NAME           $40.
+               @60  ID             $15.
+               @75  SIGNATORY      $1.
+               @76  MANDATEE       $1.
+               @77  NOMINEE        $1.
+               @78  STATUS         $1.
+               @79  BRANCHNO        5.
+               @84  BRANCHX        $5.;
+  RUN;
+ PROC SORT DATA=SIGNATORY; BY ACCTNO SEQNO; RUN;
+ PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAILS                                               */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT;
+  SET SIGNATORY;
+  FILE OUTFILE;
+     NAME=TRANWRD(NAME,'\','\\');    /* 2011-2834 */
+     PUT @1    '"'
+         @02   BANKNO         $03.  @5     '","'
+         @08   ACCTNO         $11.  @19    '","'
+         @22   SEQNO          $05.  @27    '","'
+         @30   NAME           $40.  @70    '","'
+         @73   ID             $15.  @88    '","'
+         @91   SIGNATORY      $01.  @92    '","'
+         @95   MANDATEE       $01.  @96    '","'
+         @99   NOMINEE        $01.  @100   '","'
+         @103  STATUS         $01.  @104   '","'
+         @107  BRANCHNO       Z05.  @112   '","'
+         @115  BRANCHX        $05.  @120   '", '
+         @123  '\N' ;
+
+  RUN;
+
