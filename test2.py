@@ -1,15 +1,9 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.csv as csv
-import pyarrow.parquet as pq
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+import datetime
 
-from pathlib import Path
-
-# ================================
-# CONFIG PATHS
-# ================================
-input_parquet = "UNLOAD_CISIGNAT_FB.parquet"   # converted CISIGNAT file
-output_file = "SNGLVIEW_SIGN.csv"              # output like SNGLVIEW.SIGN
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 # ================================
 # CONNECT TO DUCKDB
@@ -33,7 +27,7 @@ con.execute(f"""
         STATUS,
         BRANCHNO,
         BRANCHX
-    FROM read_parquet('{input_parquet}')
+    FROM read_parquet('{host_parquet_path("UNLOAD_CISIGNAT_FB.parquet")}')
 """)
 
 # ================================
@@ -46,7 +40,7 @@ con.execute("""
     ORDER BY ACCTNO, SEQNO
 """)
 
-# Optional: Preview like PROC PRINT OBS=10
+# Preview
 preview = con.execute("SELECT * FROM SIGNATORY_SORTED LIMIT 10").fetchdf()
 print("Preview of SIGNATORY:")
 print(preview)
@@ -54,8 +48,7 @@ print(preview)
 # ================================
 # STEP 3 - Format Output
 # ================================
-# Rebuild SAS PUT formatting into a CSV-style export
-con.execute("""
+con.execute(f"""
     CREATE OR REPLACE TABLE TEMPOUT AS
     SELECT 
         '"' || BANKNO      || '","'
@@ -68,21 +61,31 @@ con.execute("""
             || NOMINEE     || '","'
             || STATUS      || '","'
             || LPAD(CAST(BRANCHNO AS VARCHAR), 5, '0') || '","'
-            || BRANCHX     || '", \N' AS RECORD_LINE
+            || BRANCHX     || '"' AS RECORD_LINE,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
     FROM SIGNATORY_SORTED
 """)
-
-# Fetch as Arrow table
-arrow_tbl = con.execute("SELECT RECORD_LINE FROM TEMPOUT").fetch_arrow_table()
 
 # ================================
 # STEP 4 - Save Output
 # ================================
-# Convert to string column
-lines = arrow_tbl.to_pandas()["RECORD_LINE"].tolist()
+query = "SELECT * FROM TEMPOUT"
 
-with open(output_file, "w", encoding="utf-8") as f:
-    for line in lines:
-        f.write(line + "\n")
+parquet_path = parquet_output_path("SNGLVIEW_SIGN")
+csv_path = csv_output_path("SNGLVIEW_SIGN")
 
-print(f"✅ Output written to {output_file}")
+con.execute(f"""
+COPY ({query})
+TO '{parquet_path}'
+(FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+""")
+
+con.execute(f"""
+COPY ({query})
+TO '{csv_path}'
+(FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+""")
+
+print("✅ Output written:", parquet_path, "and", csv_path)
