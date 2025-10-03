@@ -1,11 +1,7 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
 import datetime
-import os
 
-# ================================
-# BATCH DATE
-# ================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
@@ -17,8 +13,6 @@ con = duckdb.connect()
 # ================================
 # STEP 1 - Load SIGNATOR file
 # ================================
-input_file = host_parquet_path("UNLOAD_CISIGNAT_FB.parquet")
-
 con.execute(f"""
     CREATE OR REPLACE TABLE SIGNATORY AS
     SELECT 
@@ -33,11 +27,8 @@ con.execute(f"""
         STATUS,
         BRANCHNO,
         BRANCHX
-    FROM read_parquet('{input_file}')
+    FROM '{host_parquet_path("UNLOAD_CISIGNAT_FB.parquet")}'
 """)
-
-print("✅ Loaded SIGNATORY, row count:",
-      con.execute("SELECT COUNT(*) FROM SIGNATORY").fetchone()[0])
 
 # ================================
 # STEP 2 - Sort by ACCTNO + SEQNO
@@ -49,16 +40,16 @@ con.execute("""
     ORDER BY ACCTNO, SEQNO
 """)
 
-print("✅ SIGNATORY_SORTED row count:",
-      con.execute("SELECT COUNT(*) FROM SIGNATORY_SORTED").fetchone()[0])
-
-# Preview
-print(con.execute("SELECT * FROM SIGNATORY_SORTED LIMIT 5").fetchdf())
+# Optional: Preview like PROC PRINT OBS=10
+preview = con.execute("SELECT * FROM SIGNATORY_SORTED LIMIT 10").fetchdf()
+print("Preview of SIGNATORY:")
+print(preview)
 
 # ================================
 # STEP 3 - Format Output
 # ================================
-con.execute(f"""
+# Rebuild SAS PUT formatting into a CSV-style export
+con.execute("""
     CREATE OR REPLACE TABLE TEMPOUT AS
     SELECT 
         '"' || BANKNO      || '","'
@@ -71,41 +62,40 @@ con.execute(f"""
             || NOMINEE     || '","'
             || STATUS      || '","'
             || LPAD(CAST(BRANCHNO AS VARCHAR), 5, '0') || '","'
-            || BRANCHX     || '"' AS RECORD_LINE,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
+            || BRANCHX     || '","'
+            || {year} AS year     || '","'
+            || {month} AS month     || '","'
+            || {day} AS day     
     FROM SIGNATORY_SORTED
 """)
 
-print("✅ TEMPOUT row count:",
-      con.execute("SELECT COUNT(*) FROM TEMPOUT").fetchone()[0])
-print(con.execute("SELECT * FROM TEMPOUT LIMIT 3").fetchdf())
+# Fetch as Arrow table
+#arrow_tbl = con.execute("SELECT RECORD_LINE FROM TEMPOUT").fetch_arrow_table()
 
 # ================================
 # STEP 4 - Save Output
 # ================================
-parquet_path = parquet_output_path("SNGLVIEW_SIGN")
-csv_dir = csv_output_path("SNGLVIEW_SIGN")
+out1 = """
+    SELECT *
+    FROM TEMPOUT
+""".format(year=year,month=month,day=day)
 
-# Ensure CSV dir exists
-os.makedirs(csv_dir, exist_ok=True)
-csv_file = os.path.join(csv_dir, "SNGLVIEW_SIGN.csv")
+queries = {
+    "SNGLVIEW_SIGN"            : out1
+}
 
-# ---- Parquet (partitioned) ----
-con.execute(f"""
-COPY (SELECT * FROM TEMPOUT)
-TO '{parquet_path}'
-(FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
-""")
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-# ---- CSV (single file, flat) ----
-con.execute(f"""
-COPY (SELECT * FROM TEMPOUT)
-TO '{csv_file}'
-(FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);
-""")
-
-print("✅ Output written:")
-print("   Parquet ->", parquet_path)
-print("   CSV     ->", csv_file)
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
