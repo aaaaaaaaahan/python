@@ -1,0 +1,102 @@
+//CIPEPNEW JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB63171
+//*-------------------------------------------------------------------
+//*-EMSR 2017-2329: EXTRACT NEWLY IDENTIFIED PEP/RCA/LPLA
+//*-FROM PREV MONTH
+//*-------------------------------------------------------------------
+//*- FILTER NEWLY IDENTIFIED RECORDS ONLY (MONTHLY)
+//*-------------------------------------------------------------------
+//REPORT    EXEC SAS609
+//RPTLMTH   DD DISP=SHR,DSN=RBP2.B033.CIS.PEPRCA.RLENOCC(-1)
+//RPTCMTH   DD DISP=SHR,DSN=RBP2.B033.CIS.PEPRCA.RLENOCC(0)
+//NEWFILE   DD DSN=RBP2.B033.CIS.PEPRCA.NEWREC(+1),
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(100,100),RLSE),
+//             DCB=(LRECL=350,BLKSIZE=350,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+ /*----------------------------------------------------------------*/
+ /*    GET NEW MONTHLY RECORDS ONLY                                */
+ /*----------------------------------------------------------------*/
+   DATA LSTREC;
+      INFILE RPTLMTH FIRSTOBS=2 MISSOVER;
+       INPUT  @001   MATCHBY           $5.
+              @012   OUTBRANCH          5.
+              @019   CUSTNAME          $40.
+              @061   CUSTNO            $11.
+              @074   ALIAS             $20.
+              @096   PEPRCA            $6.
+              @104   CITIZENSHIP       $2.
+              @116   OCCUP             $3.
+              @127   HRCCODE           $64.
+              @192   CUSTNO2           $11.
+              @216   CUSTNAME2         $40.
+              @257   DESC2             $15.;
+   RUN;
+   PROC SORT  DATA=LSTREC;BY CUSTNO;RUN;
+   PROC PRINT DATA=LSTREC(OBS=05);TITLE 'PREVREC';RUN;
+
+   DATA CURREC;
+      INFILE RPTCMTH FIRSTOBS=2 MISSOVER;
+       INPUT  @001   MATCHBY           $5.
+              @012   OUTBRANCH          5.
+              @019   CUSTNAME          $40.
+              @061   CUSTNO            $11.
+              @074   ALIAS             $20.
+              @096   PEPRCA            $6.
+              @104   CITIZENSHIP       $2.
+              @116   OCCUP             $3.
+              @127   HRCCODE           $64.
+              @192   CUSTNO2           $11.
+              @216   CUSTNAME2         $40.
+              @257   DESC2             $15.;
+   RUN;
+   PROC SORT  DATA=CURREC;BY CUSTNO;RUN;
+   PROC PRINT DATA=CURREC(OBS=05);TITLE 'CURREC';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* MERGE TO GET NEW MONTHLY RECORDS ONLY                          */
+ /*----------------------------------------------------------------*/
+   DATA NEWREC;
+       MERGE LSTREC(IN=Y) CURREC(IN=Z);
+       BY CUSTNO;
+       IF Z AND NOT Y;
+   RUN;
+   PROC SORT DATA=NEWREC;BY CUSTNO;RUN;
+   PROC PRINT DATA=NEWREC(OBS=05);TITLE 'NEWREC';RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    REPORT 2                                                   */
+ /*----------------------------------------------------------------*/
+   DATA NEWLIST;
+       FILE NEWFILE;
+       SET NEWREC;
+          IF _N_ = 1 THEN DO;
+          PUT  @1  'MATCH TYPE' ';'
+                 'BRANCH' ';'
+                 'CUSTOMER NAME' ';'
+                 'CUSTOMER NO' ';'
+                 'IDENTIFICATION NO' ';'
+                 'PEP/RCA' ';'
+                 'NATIONALITY' ';'
+                 'OCCUPATION' ';'
+                 'CUSTOMER CODE'  ';'
+                 'PRIMARY CUSTOMER CIS NO'  ';'
+                 'PRIMARY CUSTOMER' ';'
+                 'RELATIONSHIP' ';'
+               ;
+            END;
+          PUT  @1   MATCHBY  ';'
+                  OUTBRANCH  ';'
+                  CUSTNAME ';'
+                  CUSTNO  ';'
+                  ALIAS ';'
+                  PEPRCA  ';'
+                  CITIZENSHIP  ';'
+                  OCCUP  ';'
+                  HRCCODE  ';'
+                  CUSTNO2  ';'
+                  CUSTNAME2 ';'
+                  DESC2 ';'
+                  ;
+   RUN;
+
