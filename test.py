@@ -3,67 +3,55 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CISVSIGN JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB57241
-//DELETE   EXEC PGM=IEFBR14
-//DLT1     DD DSN=SNGLVIEW.SIGN,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* EXTRACTING ALL SIGNATORIES/NOMINEES
-//*---------------------------------------------------------------------
-//SIGNATOR EXEC SAS609
-//IEFRDER   DD DUMMY
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SIGNATOR  DD DISP=SHR,DSN=UNLOAD.CISIGNAT.FB
-//OUTFILE   DD DSN=SNGLVIEW.SIGN,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(500,300),RLSE),
-//             DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- /*----------------------------------------------------------------*/
- /*    SIGNATORY DECLARATION                                       */
- /*----------------------------------------------------------------*/
-   DATA SIGNATORY;
-     INFILE SIGNATOR;
-         INPUT @01  BANKNO         $3.
-               @04  ACCTNO         $11.     /*UNIQUE KEY: ACCT+SEQNO */
-               @15  SEQNO          $5.
-               @20  NAME           $40.
-               @60  ID             $15.
-               @75  SIGNATORY      $1.
-               @76  MANDATEE       $1.
-               @77  NOMINEE        $1.
-               @78  STATUS         $1.
-               @79  BRANCHNO        5.
-               @84  BRANCHX        $5.;
-  RUN;
- PROC SORT DATA=SIGNATORY; BY ACCTNO SEQNO; RUN;
- PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;
- /*----------------------------------------------------------------*/
- /*   OUTPUT DETAILS                                               */
- /*----------------------------------------------------------------*/
-DATA TEMPOUT;
-  SET SIGNATORY;
-  FILE OUTFILE;
-     NAME=TRANWRD(NAME,'\','\\');    /* 2011-2834 */
-     PUT @1    '"'
-         @02   BANKNO         $03.  @5     '","'
-         @08   ACCTNO         $11.  @19    '","'
-         @22   SEQNO          $05.  @27    '","'
-         @30   NAME           $40.  @70    '","'
-         @73   ID             $15.  @88    '","'
-         @91   SIGNATORY      $01.  @92    '","'
-         @95   MANDATEE       $01.  @96    '","'
-         @99   NOMINEE        $01.  @100   '","'
-         @103  STATUS         $01.  @104   '","'
-         @107  BRANCHNO       Z05.  @112   '","'
-         @115  BRANCHX        $05.  @120   '", '
-         @123  '\N' ;
+//CMCBMPUF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB84625
+//STATS#01 EXEC SAS609
+//CBMFILE  DD DISP=SHR,DSN=UNLOAD.CMCBMTXT.FB
+//OUTFILE  DD DSN=CBM.PURGE.MORE1Y(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTIONS NOCENTER;
 
-  RUN;
+DATA REPTDATE;
+   PURDTE = TODAY()-365;
+   PURDTE8=PUT(PURDTE,YYMMDDN8.);
+   CALL SYMPUT('PURGEDTE',PURDTE8);
+   RUN;
+PROC PRINT;RUN;
+
+DATA CBMTXT;
+   INFILE CBMFILE;
+   INPUT  @0001   CBM_LOAD_DATE                 $8.
+          @0009   CBM_RUN_NO                    $8.
+          @0387   REG_IDNO                      $20.
+          @2087   LAST_UPDATE                   $10.
+          @2087   LAST_UPDATE_DD                $2.
+          @2090   LAST_UPDATE_MM                $2.
+          @2093   LAST_UPDATE_YY                $4.
+          @7467   REG_NEW_IDNO                  $20.
+          ;
+
+          IF LAST_UPDATE = "-         " THEN DELETE;
+          LASTDATE=LAST_UPDATE_YY||LAST_UPDATE_MM||LAST_UPDATE_DD;
+RUN;
+PROC SORT  DATA=CBMTXT; BY CBM_LOAD_DATE; RUN;
+PROC PRINT DATA=CBMTXT(OBS=10);TITLE 'CMCBMTXT';RUN;
+
+DATA TOPURGE;
+  SET CBMTXT;
+   IF LASTDATE < &PURGEDTE;
+   RUN;
+PROC PRINT DATA=TOPURGE(OBS=10);TITLE 'PURGE MORE THAN 1 YEAR';RUN;
+
+DATA OUT;
+   SET TOPURGE;
+   FILE OUTFILE;
+     PUT @0001   CBM_LOAD_DATE                 $8.
+         @0009   CBM_RUN_NO                    $8.
+         @0017   REG_IDNO                      $20.
+         @0037   REG_NEW_IDNO                  $20.
+         @0057   LAST_UPDATE                   $10.
+         ;
+RUN;
