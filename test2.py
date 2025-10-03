@@ -1,101 +1,98 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pyarrow.csv as csv
 import datetime
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
-# ================================
-# BATCH DATE
-# ================================
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
+# ========================================
+# STEP 1: Setup Purge Date (Today - 365 days)
+# ========================================
+purge_date = (datetime.date.today() - datetime.timedelta(days=365))
+purge_date_str = purge_date.strftime("%Y%m%d")  # SAS used YYMMDDN8.
 
-# ================================
-# CONNECT TO DUCKDB
-# ================================
+# ========================================
+# STEP 2: Connect to DuckDB
+# ========================================
 con = duckdb.connect()
 
-# ================================
-# STEP 1 - Load SIGNATOR file
-# ================================
+# ========================================
+# STEP 3: Read Input Parquet (CBMFILE)
+# ========================================
+input_path = f"{host_parquet_path}/UNLOAD_CMCBMTXT_FB.parquet"
+
 con.execute(f"""
-    CREATE OR REPLACE TABLE SIGNATORY AS
+    CREATE OR REPLACE TABLE CBMTXT AS
     SELECT 
-        BANKNO,
-        ACCTNO,
-        SEQNO,
-        REPLACE(NAME, '\\\\', '\\\\\\\\') AS NAME,  -- escape backslash
-        ID,
-        SIGNATORY,
-        MANDATEE,
-        NOMINEE,
-        STATUS,
-        BRANCHNO,
-        BRANCHX
-    FROM '{host_parquet_path("UNLOAD_CISIGNAT_FB.parquet")}'
+        CBM_LOAD_DATE,
+        CBM_RUN_NO,
+        REG_IDNO,
+        LAST_UPDATE,
+        LAST_UPDATE_DD,
+        LAST_UPDATE_MM,
+        LAST_UPDATE_YY,
+        REG_NEW_IDNO
+    FROM read_parquet('{input_path}')
 """)
 
-# ================================
-# STEP 2 - Sort by ACCTNO + SEQNO
-# ================================
+# ========================================
+# STEP 4: Clean Data (Remove blank LAST_UPDATE, Build LASTDATE)
+# ========================================
 con.execute("""
-    CREATE OR REPLACE TABLE SIGNATORY_SORTED AS
-    SELECT * 
-    FROM SIGNATORY
-    ORDER BY ACCTNO, SEQNO
+    CREATE OR REPLACE TABLE CBMTXT_CLEAN AS
+    SELECT *,
+           CASE WHEN LAST_UPDATE = '-         ' THEN NULL ELSE LAST_UPDATE END AS CLEAN_LAST_UPDATE,
+           (LAST_UPDATE_YY || LAST_UPDATE_MM || LAST_UPDATE_DD) AS LASTDATE
+    FROM CBMTXT
+    WHERE LAST_UPDATE IS NOT NULL AND LAST_UPDATE <> '-         '
 """)
 
-# Preview
-preview = con.execute("SELECT * FROM SIGNATORY_SORTED LIMIT 10").fetchdf()
-print("Preview of SIGNATORY:")
-print(preview)
+# ========================================
+# STEP 5: Sort by CBM_LOAD_DATE
+# ========================================
+con.execute("""
+    CREATE OR REPLACE TABLE CBMTXT_SORTED AS
+    SELECT *
+    FROM CBMTXT_CLEAN
+    ORDER BY CBM_LOAD_DATE
+""")
 
-# ================================
-# STEP 3 - Build Output Table
-# ================================
+# ========================================
+# STEP 6: Filter for purge condition (LASTDATE < purge_date)
+# ========================================
 con.execute(f"""
-    CREATE OR REPLACE TABLE TEMPOUT AS
-    SELECT 
-        BANKNO,
-        ACCTNO,
-        SEQNO,
-        NAME,
-        ID,
-        SIGNATORY,
-        MANDATEE,
-        NOMINEE,
-        STATUS,
-        LPAD(CAST(BRANCHNO AS VARCHAR), 5, '0') AS BRANCHNO,
-        BRANCHX,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM SIGNATORY_SORTED
+    CREATE OR REPLACE TABLE TOPURGE AS
+    SELECT *
+    FROM CBMTXT_SORTED
+    WHERE LASTDATE < '{purge_date_str}'
 """)
 
-# ================================
-# STEP 4 - Save Output
-# ================================
-out1 = "SELECT * FROM TEMPOUT"
+# ========================================
+# STEP 7: Final Output (same layout as SAS PUT)
+# ========================================
+con.execute("""
+    CREATE OR REPLACE TABLE OUT AS
+    SELECT 
+        CBM_LOAD_DATE,
+        CBM_RUN_NO,
+        REG_IDNO,
+        REG_NEW_IDNO,
+        CLEAN_LAST_UPDATE AS LAST_UPDATE
+    FROM TOPURGE
+""")
 
-queries = {
-    "SNGLVIEW_SIGN": out1
-}
+# Fetch as Arrow Table
+out_arrow = con.execute("SELECT * FROM OUT").fetch_arrow_table()
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
+# ========================================
+# STEP 8: Write to Parquet and CSV
+# ========================================
+pq_output = f"{parquet_output_path}/CBM_PURGE_MORE1Y.parquet"
+csv_output = f"{csv_output_path}/CBM_PURGE_MORE1Y.csv"
 
-    # Save parquet (partitioned by year, month, day)
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-    """)
+pq.write_table(out_arrow, pq_output)
+csv.write_csv(out_arrow, csv_output)
 
-    # Save CSV (all columns as separate CSV fields)
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-    """)
-
-print("✅ Export completed")
+print("✅ Job completed. Output saved:")
+print(f"   Parquet: {pq_output}")
+print(f"   CSV    : {csv_output}")
