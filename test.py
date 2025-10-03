@@ -3,124 +3,104 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CICCRIS1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB54848
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL2     DD DSN=IS.CCRIS.ERROR,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//UNQACCT  DD DISP=SHR,DSN=ACTIVE.ACCOUNT.UNIQUE
+//CCRRMK3B JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB56238
+//*---------------------------------------------------------------------
+//* COMPILE REMARK FILE WITH CUST DAILY TO GET CIS NO AND PRISEC IND
+//*---------------------------------------------------------------------
+//CIRMKCA  EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //CISFILE  DD DISP=SHR,DSN=CIS.CUST.DAILY
-//ERRFILE  DD DSN=CIS.CCRIS.ERROR,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(200,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//RMKCAFLE DD DISP=SHR,DSN=CCRIS.CISRMRK.ACC
+//ENHFILE  DD DSN=CCRIS.CISRMRK.ACC.ENH,                      00170000
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,                       00170000
+//            SPACE=(CYL,(2000,2000),RLSE),                             00170000
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)                        00170000
 //SASLIST  DD SYSOUT=X
-//SYSIN    DD *
+//SYSIN    DD *                                                         00170000
 
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- DATA ACCT;
-    INFILE UNQACCT;
-    INPUT @1    CUSTNO        $11.
-          @12   ACCTCODE      $5.
-          @17   ACCTNOC       $11.
-          @37   NOTENO        $5.
-          @42   ALIASKEY      $3.
-          @45   ALIAS         $15.
-          @60   CUSTNAME      $40.
-          @100  BRANCH        $5.
-          @106  OPENDATE      $8.
-          @115  OPENIND       $1.;
- PROC SORT  DATA=ACCT; BY CUSTNO ACCTNOC;
- PROC PRINT DATA=ACCT(OBS=5);TITLE 'UNIQUE ACCOUNT';RUN;
+DATA CIS;
+   SET CISFILE.CUSTDLY;
+   KEEP CUSTNO ACCTNOC ACCTCODE PRISEC
+   ;
+   IF ACCTNO   > 1000000000;                  /* UAT A LOT JUNK */
 
- DATA CIS OUT1 OUT2 OUT3 OUT4 OUT5 ;
-    FORMAT FIELDTYPE $20. FIELDVALUE  $30. REMARKS $40. ERRORCODE $3.;
-    SET CISFILE.CUSTDLY;
-    IF CUSTNAME = '' THEN DELETE;
-    IF ACCTCODE IN ('DP','LN');
+   RUN ;
+PROC SORT  DATA=CIS NODUPKEY; BY ACCTCODE ACCTNOC ;RUN;
+PROC PRINT DATA=CIS(OBS=20);TITLE 'CIS';RUN;
 
-    /* ERRORCODE 001 - CHECK FOR EMPTY CITIZENSHIP */
-    IF CITIZENSHIP IN ('OT','','99') THEN DO;
-       FIELDTYPE = 'CITIZENSHIP';
-       FIELDVALUE = CITIZENSHIP;
-       IF CITIZENSHIP EQ ''   THEN FIELDVALUE = 'BLANK CITIZENSHIP';
-       IF CITIZENSHIP EQ 'OT' THEN FIELDVALUE = 'OTHER CITIZENSHIP';
-       IF CITIZENSHIP EQ '99' THEN FIELDVALUE = 'UNKNOWN CITZNSHIP';
-       REMARKS = 'PLS MAINTAIN CITIZENSHIP';
-       ERRORCODE = '001';
-       OUTPUT OUT1;
-    END;
+DATA RMK_CA;
+   INFILE RMKCAFLE;
+   INPUT @001     BANKNO                      $03.
+         @004     ACCTCODE                    $05.
+         @009     ACCTNOC                     $20.
+         @029     EFF_DATE                    $15.
+         @044     RMK_KEYWORD                 $08.
+         @052     RMK_LINE_1                  $60.
+         @112     RMK_LINE_2                  $60.
+         @172     RMK_LINE_3                  $60.
+         @232     RMK_LINE_4                  $60.
+         @292     RMK_LINE_5                  $60.
+         @352     RMK_OPERATOR                $08.
+         @360     EXPIRE_DATE                 $10.
+         @370     LAST_MNT_DATE               $10. ;
+   KEYWORD  = UPCASE(KEYWORD);
+RUN;
+PROC SORT  DATA=RMK_CA ; BY ACCTCODE ACCTNOC ;RUN;
+PROC PRINT DATA=RMK_CA(OBS=20);TITLE 'REMARK CA';RUN;
 
-    /* ERRORCODE 002 - CHECK FOR EMPTY INDIVIDUAL ID */
-    IF INDORG = 'I' AND
-       ALIASKEY NOT IN ('IC','PP','ML','PL','BC') THEN DO;
-       FIELDTYPE = 'ALIAS TYPE ';
-       FIELDVALUE = ALIASKEY||ALIAS;
-       IF ALIASKEY EQ '' THEN FIELDVALUE = 'BLANK ID (INDV CUST)';
-       REMARKS = 'PLS MAINTAIN INDIVIDUAL ID';
-       ERRORCODE = '002';
-       OUTPUT OUT2;
-    END;
+DATA ENH_RMRK;
+MERGE RMK_CA(IN=A) CIS(IN=B);
+BY ACCTCODE ACCTNOC;
+IF A;
+RUN;
 
-    /* ERRORCODE 003 - CHECK FOR EMPTY ORGANISATION ID */
-    IF INDORG = 'O' AND
-       ALIASKEY NOT IN ('BR','CI','PC','SA') THEN DO;
-       FIELDTYPE = 'ALIAS TYPE ';
-       FIELDVALUE = ALIASKEY||ALIAS;
-       IF ALIASKEY EQ '' THEN FIELDVALUE = 'BLANK ID (ORG CUST)';
-       REMARKS = 'PLS MAINTAIN ORGANISATION ID';
-       ERRORCODE = '003';
-       OUTPUT OUT3;
-    END;
-
-    /* ERRORCODE 004 - CHECK FOR EMPTY DATE OF BIRTH INDIVIDUAL */
-    IF DOBCC = '' AND INDORG = 'I' THEN DO;
-       FIELDTYPE = 'DATE OF BIRTH';
-       FIELDVALUE = 'BLANK DOB';
-       REMARKS = 'PLS MAINTAIN DATE OF BIRTH';
-       ERRORCODE = '004';
-       OUTPUT OUT4;
-    END;
-
-    /* ERRORCODE 005 -CHECK FOR EMPTY DATE OF REGISTER ORGANISATION */
-    IF DOBCC = '' AND INDORG = 'O' THEN DO;
-       FIELDTYPE = 'BUS. SINCE ';
-       FIELDVALUE = 'BLANK DOR';
-       REMARKS = 'PLS MAINTAIN BUS. SINCE DATE';
-       ERRORCODE = '005';
-       OUTPUT OUT5;
-    END;
- RUN ; /* END OF READING CIS CUST DAILY FILE */
-
- PROC PRINT DATA=CIS(OBS=5);TITLE 'CIS';RUN;
-
- DATA ERROREC;
-      SET OUT1 OUT2 OUT3 OUT4 OUT5 ;
- RUN;
- PROC SORT  DATA=ERROREC; BY CUSTNO ACCTNOC;
-
- DATA MERGE;
-      MERGE ERROREC(IN=A) ACCT(IN=B); BY CUSTNO ACCTNOC;
-      IF A AND B;
- RUN;
-
-DATA _NULL_;
-  SET MERGE;
-  FILE ERRFILE;
-     IF PRISEC = 901 THEN PRIMSEC = 'P';
-     IF PRISEC = 902 THEN PRIMSEC = 'S';
-     PUT @01   BRANCH            $5.
-         @06   ACCTCODE          $5.
-         @11   ACCTNOC           $20.
-         @31   PRIMSEC           $1.
-         @32   CUSTNO            $11.
-         @43   ERRORCODE         $03.
-         @46   FIELDTYPE         $20.
-         @66   FIELDVALUE        $30.
-         @96   REMARKS           $40.;
-  RETURN;
-  RUN;
+DATA OUT_ENH_RMRK;
+SET ENH_RMRK;
+FILE ENHFILE;
+     PUT @001     BANKNO                      $03.
+         @004     ACCTCODE                    $05.
+         @009     ACCTNOC                     $20.
+         @029     EFF_DATE                    $15.
+         @044     RMK_KEYWORD                 $08.
+         @052     RMK_LINE_1                  $60.
+         @112     RMK_LINE_2                  $60.
+         @172     RMK_LINE_3                  $60.
+         @232     RMK_LINE_4                  $60.
+         @292     RMK_LINE_5                  $60.
+         @352     RMK_OPERATOR                $08.
+         @360     EXPIRE_DATE                 $10.
+         @370     LAST_MNT_DATE               $10.
+         @380     CUSTNO                      $20.
+         @400     PRISEC                      PD2.
+         ;
+RUN;
+//**********************************************************************
+//*  TO SEGREGATE A FILE FOR R&R ISLAMIC FINANCE
+//*  KEYWORD - "RRICUST "
+//**********************************************************************
+//RRICUST  EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=CCRIS.CISRMRK.ACC.ENH
+//OUTDD01  DD DSN=CCRIS.CISRMRK.ACC.RRICUST,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,                       00170000
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB),                       00170000
+//            SPACE=(CYL,(200,100),RLSE)                                00170000
+//CPYACNTL DD *
+ SORT FIELDS=(4,5,CH,A,9,20,CH,A,29,9,CH,D)
+ INCLUDE COND=(44,8,CH,EQ,C'RRICUST ')
+//TOOLIN   DD *
+  SORT FROM(INDD01) TO(OUTDD01) USING(CPYA)
+//**********************************************************************
+//* GET DUPLICATE REMARKS
+//**********************************************************************
+//DUPRMKT  EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=CCRIS.CISRMRK.ACC.ENH
+//OUTDD01  DD DSN=CCRIS.CISRMRK.ACC.DUP,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB),
+//            SPACE=(CYL,(200,100),RLSE)
+//TOOLIN   DD *
+   SELECT FROM(INDD01) TO(OUTDD01) ON(1,25,CH) ON(44,308,CH) ALLDUPS
