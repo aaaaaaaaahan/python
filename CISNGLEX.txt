@@ -1,0 +1,159 @@
+//CISNGLEX JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
+//*---------------------------------------------------------------------
+//* ESMR 2022-1496
+//* SYSTEM ENHANCEMENT OF CUSTOMER SCREENING AGAINST UNITED NATIONS
+//* SECURITY COUNCIL LIST FOR EXISTING CUSTOMERS
+//*
+//* LOAD ONLY IMIS FILE. OTHER FILE NO NEED
+//*
+//*---------------------------------------------------------------------
+//* ESMR2024-3708
+//*-NOMINEES SCREENING AGAINST UN AND MDL
+//* - UPDATE FIELD LENGTH OF NAME FROM 100 TO 40
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.SNGLVIEW.IMIS.EXTRACT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//MOVEDATA EXEC SAS609
+//IEFRDER   DD DUMMY
+//SNGLVIEW  DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP01
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP03
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP04
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP05
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP06
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.DEPOSIT.DP07
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP01
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP03
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP04
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP05
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP06
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP07
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.LOANS.LN02
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.LOANS.LN08
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.LOANS.LN02
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.LOANS.LN08
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.PBCS
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.PMMD
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.COMCARD
+//*         DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.PRIME
+//          DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.SDBX
+//*         DD DISP=SHR,DSN=RBP2.B033.SNGLVIEW.SIPS
+//CISIGNAT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CISIGNAT.FB
+//RLEN#CC   DD DISP=SHR,DSN=RBP2.B033.CCRIS.CC.RLNSHIP.SRCH
+//OUTFILE   DD DSN=RBP2.B033.SNGLVIEW.IMIS.EXTRACT,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(200,200),RLSE),
+//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+TITLE;
+
+ /*----------------------------------------------------------------*/
+ /*    SIGNATORY DECLARATION                                       */
+ /*----------------------------------------------------------------*/
+   DATA SIGNATORY;
+     INFILE CISIGNAT;
+         INPUT @01  BANKNO         $3.
+               @04  ACCTNOX        $11.     /*UNIQUE KEY: ACCT+SEQNO */
+               @15  SEQNO          $5.
+               @20  NAME           $40.
+               @60  ALIAS          $15.
+               @75  SIGNATORY      $1.
+               @76  MANDATEE       $1.
+               @77  NOMINEE        $1.
+               @78  STATUS         $1.
+               @79  BRANCHNOX       5.
+               @84  BRANCHNO       $5.;
+               ACCTNO = PUT(ACCTNOX,$20.);
+
+      /*  SOURCE_TYPE = 'S'; */
+
+  RUN;
+  PROC SORT DATA=SIGNATORY NODUPKEY; BY ACCTNO ALIAS; RUN;
+  PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;
+
+  /*PROC SORT DATA=SIGNATORY; BY ACCTNO; RUN;
+   PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;  */
+
+ /*-----------------------------*/
+ /*  DECLARE CC RELATIONSHIP    */
+ /*-----------------------------*/
+ DATA CCRLEN;
+    INFILE RLEN#CC;
+    INPUT @01   CUSTNO            $11.
+          @95   NAME              $40.
+          @135  ALIASKEY          $03.
+          @138  ALIAS             $17.;
+
+      /*  SOURCE_TYPE = 'C';  */
+
+
+    RUN;
+
+
+ PROC SORT  DATA=CCRLEN NODUPKEY;BY CUSTNO;RUN;
+ PROC PRINT DATA=CCRLEN (OBS=5);TITLE 'CCRLEN FILE';RUN;
+
+ /*----------------------------------------------------------------*/
+ /*  IMIS SINGLE VIEW FILES                                        */
+ /*----------------------------------------------------------------*/
+ DATA IMIS;
+    FORMAT NAME $100.;
+    INFILE SNGLVIEW;
+    INPUT      @08   CUSTNO         $11.
+               @22   INDORG         $1.
+               @26   NAME1          $40.
+               @69   ALIASKEY       $03.
+               @75   ALIAS          $20.
+               @192  ACCTBRABBR     $07.
+               @202  BRANCHNO        $5.
+               @210  ACCTCODE       $05.
+               @218  ACCTNO         $20.
+               @241  NOTENO         $05.
+               @253  PRIMSEC        $01.
+               @281  ACCTSTATUS     $25.
+               @309  DATEOPEN    YYMMDD8.
+               @322  DATECLSE    YYMMDD8.
+               @339  BAL1INDC       $05.
+               @350  BAL1           13.2
+               @394  AMT1INDC       $05.
+               @402  AMT1           13.2
+               @605  DOBDOR         $8.  ;
+
+       /* SOURCE_TYPE = 'I'; */
+
+           NAME = TRANSLATE(NAME1,' ','	');
+
+ RUN;
+ /*PROC SORT  DATA=IMIS NODUPKEY;BY CUSTNO ALIAS ACCTNO;RUN;  */
+ PROC SORT  DATA=IMIS NODUPKEY;BY CUSTNO ALIAS ;RUN;
+ PROC PRINT DATA=IMIS  (OBS=05);TITLE 'IMIS'; RUN;
+
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL                                                */
+ /*----------------------------------------------------------------*/
+
+  /*DATA _NULL_;  */
+   DATA TEMPOUT;
+  /* SET IMIS  SIGNATORY  CCRLEN;    ONLY IMIS FILE USED FOR COMPARE*/
+  SET IMIS;
+  FILE OUTFILE;
+
+   IF NAME = ' ' AND
+      ALIAS = ' '  THEN DELETE;
+
+
+   PUT   @001   CUSTNO             $20.
+         @021   ACCTNO             $20.
+         @041   NOTENO             $10.
+         @051   ALIASKEY           $03.
+         @054   ALIAS              $20.
+         @075   PRIMSEC            $01.
+         @076   NAME               $40.       /*243708*/
+     /*  @178   SOURCE_TYPE        $01.    */
+         ;
+  RUN;
+
+
