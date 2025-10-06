@@ -2,107 +2,151 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
+SNGLVIEW is using the concat to process all input file
 
-//CISNGHOE JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
-//**************************************************************        00040000
-//*  DELETE OLD DATA FILE                                      *        00050000
-//**************************************************************        00060000
-//DELETE   EXEC PGM=IEFBR14                                             00070000
-//DD1      DD DSN=SNGLVIEW.RHOLD.EXTRACT,                     00080007
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,0)
-//*
-//MATCH#1  EXEC SAS609
-//RHOLD    DD DISP=SHR,DSN=RHOLD.FULL.LIST
-//OUTPUT   DD DSN=SNGLVIEW.RHOLD.EXTRACT,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=979,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SYSIN    DD *
- /*----------------------------------------------------------------*/
- /*    RHOLD FULL FILE                                             */
- /*----------------------------------------------------------------*/
-DATA RHOLDFULL;
-   FORMAT DOBDOR $8. CRTDATE $8.;
-   INFILE RHOLD;
-   INPUT @001     CLASS_CODE             $10.
-         @011     CLASS_DESC             $150.
-         @161     NATURE_CODE            $10.
-         @171     NATURE_DESC            $150.
-         @321     DEPT_CODE              $10.
-         @331     DEPT_DESC              $150.
-         @481     GUIDE_CODE             $10.
-         @491     CLASS_ID               $10.
-         @501     INDORG                 $01.
-         @505     NAME                   $40.
-         @545     ID1                    $20.
-         @565     ID2                    $20.
-         @585     DTL_REMARK1            $40.
-         @625     DTL_REMARK2            $40.
-         @665     DTL_REMARK3            $40.
-         @705     DTL_REMARK4            $40.
-         @745     DTL_REMARK5            $40.
-         @785     DTL_CRT_DATE           $10.
-         @795     DTL_CRT_TIME           $08.
-         @805     DTL_LASTOPERATOR       $08.
-         @815     DTL_LASTMNT_DATE       $10.
-         @825     DTL_LASTMNT_TIME       $08.
-         @835     CONTACT1               $50.
-         @885     CONTACT2               $50.
-         @935     CONTACT3               $50.
-          ;
-
-         LEN1=LENGTH(NAME);
-         NAME_FIRST_CHAR = SUBSTR(NAME,1,1);
-
-         IF (CLASS_CODE  = 'CLS0000004' AND
-             NATURE_CODE = 'NAT0000045');
-
-RUN;
-PROC SORT DATA=RHOLDFULL; BY CLASS_ID ; RUN;
-PROC PRINT DATA=RHOLDFULL(OBS=10);TITLE 'RHOLDFULL';
+//CISNGLEX JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=SNGLVIEW.IMIS.EXTRACT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//MOVEDATA EXEC SAS609
+//IEFRDER   DD DUMMY
+//SNGLVIEW  DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP01
+//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP03
+//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP04
+//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP05
+//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP06
+//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP07
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP01
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP03
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP04
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP05
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP06
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP07
+//          DD DISP=SHR,DSN=SNGLVIEW.LOANS.LN02
+//          DD DISP=SHR,DSN=SNGLVIEW.LOANS.LN08
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.LOANS.LN02
+//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.LOANS.LN08
+//          DD DISP=SHR,DSN=SNGLVIEW.PBCS
+//          DD DISP=SHR,DSN=SNGLVIEW.PMMD
+//          DD DISP=SHR,DSN=SNGLVIEW.COMCARD
+//*         DD DISP=SHR,DSN=SNGLVIEW.PRIME
+//          DD DISP=SHR,DSN=SNGLVIEW.SDBX
+//*         DD DISP=SHR,DSN=SNGLVIEW.SIPS
+//CISIGNAT  DD DISP=SHR,DSN=UNLOAD.CISIGNAT.FB
+//RLEN#CC   DD DISP=SHR,DSN=CCRIS.CC.RLNSHIP.SRCH
+//OUTFILE   DD DSN=SNGLVIEW.IMIS.EXTRACT,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(200,200),RLSE),
+//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+TITLE;
 
  /*----------------------------------------------------------------*/
- /*    WRITE OUTPUT AND INSERT INTO NEW TABLE CISNGRHT             */
+ /*    SIGNATORY DECLARATION                                       */
  /*----------------------------------------------------------------*/
+   DATA SIGNATORY;
+     INFILE CISIGNAT;
+         INPUT @01  BANKNO         $3.
+               @04  ACCTNOX        $11.     /*UNIQUE KEY: ACCT+SEQNO */
+               @15  SEQNO          $5.
+               @20  NAME           $40.
+               @60  ALIAS          $15.
+               @75  SIGNATORY      $1.
+               @76  MANDATEE       $1.
+               @77  NOMINEE        $1.
+               @78  STATUS         $1.
+               @79  BRANCHNOX       5.
+               @84  BRANCHNO       $5.;
+               ACCTNO = PUT(ACCTNOX,$20.);
 
-  DATA OUTPUT;
-   SET RHOLDFULL;
-   FILE OUTPUT;
-   BY CLASS_ID;
+      /*  SOURCE_TYPE = 'S'; */
 
-     PUT @001     CLASS_ID               $10.
-         @011     INDORG                 $01.
-         @012     NAME                   $40.
-         @052     ID1                    $20.
-         @072     ID2                    $20.
-         @092     CLASS_CODE             $10.
-         @102     CLASS_DESC             $150.
-         @252     NATURE_CODE            $10.
-         @262     NATURE_DESC            $150.
-         @412     DEPT_CODE              $10.
-         @422     DEPT_DESC              $150.
-         @572     GUIDE_CODE             $10.
-         @582     DTL_REMARK1            $40.
-         @622     DTL_REMARK2            $40.
-         @662     DTL_REMARK3            $40.
-         @702     DTL_REMARK4            $40.
-         @742     DTL_REMARK5            $40.
-         @782     DTL_CRT_DATE           $10.
-         @792     DTL_CRT_TIME           $08.
-         @800     DTL_LASTOPERATOR       $08.
-         @808     DTL_LASTMNT_DATE       $10.
-         @818     DTL_LASTMNT_TIME       $08.
-         @826     CONTACT1               $50.
-         @876     CONTACT2               $50.
-         @926     CONTACT3               $50.
-         @976     NAME_FIRST_CHAR        $01.
-         @977     LEN1                   Z03.
-         ;
+  RUN;
+  PROC SORT DATA=SIGNATORY NODUPKEY; BY ACCTNO ALIAS; RUN;
+  PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;
+
+  /*PROC SORT DATA=SIGNATORY; BY ACCTNO; RUN;
+   PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;  */
+
+ /*-----------------------------*/
+ /*  DECLARE CC RELATIONSHIP    */
+ /*-----------------------------*/
+ DATA CCRLEN;
+    INFILE RLEN#CC;
+    INPUT @01   CUSTNO            $11.
+          @95   NAME              $40.
+          @135  ALIASKEY          $03.
+          @138  ALIAS             $17.;
+
+      /*  SOURCE_TYPE = 'C';  */
+
+
+    RUN;
+
+
+ PROC SORT  DATA=CCRLEN NODUPKEY;BY CUSTNO;RUN;
+ PROC PRINT DATA=CCRLEN (OBS=5);TITLE 'CCRLEN FILE';RUN;
+
+ /*----------------------------------------------------------------*/
+ /*  IMIS SINGLE VIEW FILES                                        */
+ /*----------------------------------------------------------------*/
+ DATA IMIS;
+    FORMAT NAME $100.;
+    INFILE SNGLVIEW;
+    INPUT      @08   CUSTNO         $11.
+               @22   INDORG         $1.
+               @26   NAME1          $40.
+               @69   ALIASKEY       $03.
+               @75   ALIAS          $20.
+               @192  ACCTBRABBR     $07.
+               @202  BRANCHNO        $5.
+               @210  ACCTCODE       $05.
+               @218  ACCTNO         $20.
+               @241  NOTENO         $05.
+               @253  PRIMSEC        $01.
+               @281  ACCTSTATUS     $25.
+               @309  DATEOPEN    YYMMDD8.
+               @322  DATECLSE    YYMMDD8.
+               @339  BAL1INDC       $05.
+               @350  BAL1           13.2
+               @394  AMT1INDC       $05.
+               @402  AMT1           13.2
+               @605  DOBDOR         $8.  ;
+
+       /* SOURCE_TYPE = 'I'; */
+
+           NAME = TRANSLATE(NAME1,' ','	');
+
  RUN;
+ /*PROC SORT  DATA=IMIS NODUPKEY;BY CUSTNO ALIAS ACCTNO;RUN;  */
+ PROC SORT  DATA=IMIS NODUPKEY;BY CUSTNO ALIAS ;RUN;
+ PROC PRINT DATA=IMIS  (OBS=05);TITLE 'IMIS'; RUN;
 
-  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL                                                */
+ /*----------------------------------------------------------------*/
+
+  /*DATA _NULL_;  */
+   DATA TEMPOUT;
+  /* SET IMIS  SIGNATORY  CCRLEN;    ONLY IMIS FILE USED FOR COMPARE*/
+  SET IMIS;
+  FILE OUTFILE;
+
+   IF NAME = ' ' AND
+      ALIAS = ' '  THEN DELETE;
+
+
+   PUT   @001   CUSTNO             $20.
+         @021   ACCTNO             $20.
+         @041   NOTENO             $10.
+         @051   ALIASKEY           $03.
+         @054   ALIAS              $20.
+         @075   PRIMSEC            $01.
+         @076   NAME               $40.       /*243708*/
+     /*  @178   SOURCE_TYPE        $01.    */
+         ;
+  RUN;
