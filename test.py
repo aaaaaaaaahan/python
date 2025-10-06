@@ -3,55 +3,106 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CMCBMPUF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB84625
-//STATS#01 EXEC SAS609
-//CBMFILE  DD DISP=SHR,DSN=UNLOAD.CMCBMTXT.FB
-//OUTFILE  DD DSN=CBM.PURGE.MORE1Y(+1),
+//CISNGHOE JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
+//**************************************************************        00040000
+//*  DELETE OLD DATA FILE                                      *        00050000
+//**************************************************************        00060000
+//DELETE   EXEC PGM=IEFBR14                                             00070000
+//DD1      DD DSN=SNGLVIEW.RHOLD.EXTRACT,                     00080007
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,0)
+//*
+//MATCH#1  EXEC SAS609
+//RHOLD    DD DISP=SHR,DSN=RHOLD.FULL.LIST
+//OUTPUT   DD DSN=SNGLVIEW.RHOLD.EXTRACT,
 //            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=979,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SYSIN    DD *
-OPTIONS NOCENTER;
-
-DATA REPTDATE;
-   PURDTE = TODAY()-365;
-   PURDTE8=PUT(PURDTE,YYMMDDN8.);
-   CALL SYMPUT('PURGEDTE',PURDTE8);
-   RUN;
-PROC PRINT;RUN;
-
-DATA CBMTXT;
-   INFILE CBMFILE;
-   INPUT  @0001   CBM_LOAD_DATE                 $8.
-          @0009   CBM_RUN_NO                    $8.
-          @0387   REG_IDNO                      $20.
-          @2087   LAST_UPDATE                   $10.
-          @2087   LAST_UPDATE_DD                $2.
-          @2090   LAST_UPDATE_MM                $2.
-          @2093   LAST_UPDATE_YY                $4.
-          @7467   REG_NEW_IDNO                  $20.
+ /*----------------------------------------------------------------*/
+ /*    RHOLD FULL FILE                                             */
+ /*----------------------------------------------------------------*/
+DATA RHOLDFULL;
+   FORMAT DOBDOR $8. CRTDATE $8.;
+   INFILE RHOLD;
+   INPUT @001     CLASS_CODE             $10.
+         @011     CLASS_DESC             $150.
+         @161     NATURE_CODE            $10.
+         @171     NATURE_DESC            $150.
+         @321     DEPT_CODE              $10.
+         @331     DEPT_DESC              $150.
+         @481     GUIDE_CODE             $10.
+         @491     CLASS_ID               $10.
+         @501     INDORG                 $01.
+         @505     NAME                   $40.
+         @545     ID1                    $20.
+         @565     ID2                    $20.
+         @585     DTL_REMARK1            $40.
+         @625     DTL_REMARK2            $40.
+         @665     DTL_REMARK3            $40.
+         @705     DTL_REMARK4            $40.
+         @745     DTL_REMARK5            $40.
+         @785     DTL_CRT_DATE           $10.
+         @795     DTL_CRT_TIME           $08.
+         @805     DTL_LASTOPERATOR       $08.
+         @815     DTL_LASTMNT_DATE       $10.
+         @825     DTL_LASTMNT_TIME       $08.
+         @835     CONTACT1               $50.
+         @885     CONTACT2               $50.
+         @935     CONTACT3               $50.
           ;
 
-          IF LAST_UPDATE = "-         " THEN DELETE;
-          LASTDATE=LAST_UPDATE_YY||LAST_UPDATE_MM||LAST_UPDATE_DD;
+         LEN1=LENGTH(NAME);
+         NAME_FIRST_CHAR = SUBSTR(NAME,1,1);
+
+         IF (CLASS_CODE  = 'CLS0000004' AND
+             NATURE_CODE = 'NAT0000045');
+
 RUN;
-PROC SORT  DATA=CBMTXT; BY CBM_LOAD_DATE; RUN;
-PROC PRINT DATA=CBMTXT(OBS=10);TITLE 'CMCBMTXT';RUN;
+PROC SORT DATA=RHOLDFULL; BY CLASS_ID ; RUN;
+PROC PRINT DATA=RHOLDFULL(OBS=10);TITLE 'RHOLDFULL';
 
-DATA TOPURGE;
-  SET CBMTXT;
-   IF LASTDATE < &PURGEDTE;
-   RUN;
-PROC PRINT DATA=TOPURGE(OBS=10);TITLE 'PURGE MORE THAN 1 YEAR';RUN;
+ /*----------------------------------------------------------------*/
+ /*    WRITE OUTPUT AND INSERT INTO NEW TABLE CISNGRHT             */
+ /*----------------------------------------------------------------*/
 
-DATA OUT;
-   SET TOPURGE;
-   FILE OUTFILE;
-     PUT @0001   CBM_LOAD_DATE                 $8.
-         @0009   CBM_RUN_NO                    $8.
-         @0017   REG_IDNO                      $20.
-         @0037   REG_NEW_IDNO                  $20.
-         @0057   LAST_UPDATE                   $10.
+  DATA OUTPUT;
+   SET RHOLDFULL;
+   FILE OUTPUT;
+   BY CLASS_ID;
+
+     PUT @001     CLASS_ID               $10.
+         @011     INDORG                 $01.
+         @012     NAME                   $40.
+         @052     ID1                    $20.
+         @072     ID2                    $20.
+         @092     CLASS_CODE             $10.
+         @102     CLASS_DESC             $150.
+         @252     NATURE_CODE            $10.
+         @262     NATURE_DESC            $150.
+         @412     DEPT_CODE              $10.
+         @422     DEPT_DESC              $150.
+         @572     GUIDE_CODE             $10.
+         @582     DTL_REMARK1            $40.
+         @622     DTL_REMARK2            $40.
+         @662     DTL_REMARK3            $40.
+         @702     DTL_REMARK4            $40.
+         @742     DTL_REMARK5            $40.
+         @782     DTL_CRT_DATE           $10.
+         @792     DTL_CRT_TIME           $08.
+         @800     DTL_LASTOPERATOR       $08.
+         @808     DTL_LASTMNT_DATE       $10.
+         @818     DTL_LASTMNT_TIME       $08.
+         @826     CONTACT1               $50.
+         @876     CONTACT2               $50.
+         @926     CONTACT3               $50.
+         @976     NAME_FIRST_CHAR        $01.
+         @977     LEN1                   Z03.
          ;
-RUN;
+ RUN;
+
+  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
