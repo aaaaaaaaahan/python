@@ -23,20 +23,20 @@ CIS, year, month, day = get_hive_parquet('AMLHRC_EXTRACT_MASSCLS')
 # ============================================================
 con.execute(f"""
     CREATE OR REPLACE TABLE CIS AS
-    SELECT *
-    FROM read_parquet('{CIS}')
-""")
+    SELECT *,
+         {year1}  AS year,
+         {month1} AS month,
+         {day1}   AS day
+    FROM read_parquet(?)
+""",[CIS])
 
 # ============================================================
 # STEP 2 - QUERY DEFINITIONS
 # ============================================================
 out1 = """
-    SELECT *,
-         {year1}  AS year,
-         {month1} AS month,
-         {day1}   AS day
+    SELECT *
     FROM CIS
-""".format(year=year,month=month,day=day)
+"""
 
 queries = {
     "test_jkh": out1
@@ -62,11 +62,3 @@ for name, query in queries.items():
         TO '{csv_path}'
         (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);
     """)
-
-# ============================================================
-# STEP 4 - CHECK SAMPLE
-# ============================================================
-print("✅ Export complete.")
-print(f"Batch Date: {year}-{month:02d}-{day:02d}")
-print(f"Parquet Output: {parquet_output_path('test_jkh')}")
-print(f"CSV Output: {csv_output_path('test_jkh')}")
