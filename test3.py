@@ -1,13 +1,18 @@
-
 import os
 import re
+from typing import List, Tuple
 
+# ============================================================
+# PATH CONFIGURATION
+# ============================================================
 host_input = '/host/cis/parquet/sas_parquet'
 python_hive = '/host/cis/parquet'
 csv_output = '/host/cis/output'
 
-#for input
-##data from host
+
+# ============================================================
+# FUNCTION: host_parquet_path
+# ============================================================
 def host_parquet_path(filename: str) -> str:
     """
     If filename has no date, resolve to the latest dated file.
@@ -23,7 +28,7 @@ def host_parquet_path(filename: str) -> str:
 
     # try to resolve latest date
     base, ext = os.path.splitext(filename)
-    pattern = re.compile(rf"^{base}_(\d{{8}}){ext}$")
+    pattern = re.compile(rf"^{re.escape(base)}_(\d{{8}}){re.escape(ext)}$")
 
     candidates = []
     for f in os.listdir(host_input):
@@ -32,34 +37,40 @@ def host_parquet_path(filename: str) -> str:
             candidates.append((match.group(1), f))
 
     if not candidates:
-        raise FileNotFoundError(f"No file found for base {base} in {host_input}")
+        raise FileNotFoundError(f"No file found for base '{base}' in {host_input}")
 
     # pick latest by date
     latest_file = max(candidates, key=lambda x: x[0])[1]
     return os.path.join(host_input, latest_file)
 
-#old
-#def host_parquet_path(filename: str) -> str:
-#    return f"{host_input}/{filename}"
 
-##data from python hive-partition
+# ============================================================
+# FUNCTION: python_input_path
+# ============================================================
 def python_input_path(filename: str) -> str:
     return f"{python_hive}/{filename}"
 
 
-#for output
-##save as parquet hive-partition
+# ============================================================
+# FUNCTION: parquet_output_path
+# ============================================================
 def parquet_output_path(name: str) -> str:
     return f"{python_hive}/{name}"
 
-##save as csv
+
+# ============================================================
+# FUNCTION: csv_output_path
+# ============================================================
 def csv_output_path(name: str) -> str:
     return f"{csv_output}/{name}.csv"
 
 
-def hive_latest_path(table: str) -> str:
+# ============================================================
+# FUNCTION: hive_latest_path
+# ============================================================
+def hive_latest_path(table: str, debug: bool = False) -> str:
     """
-    Find the latest partition folder for a hive-partitioned table.
+    Find the latest partition folder for a Hive-partitioned table.
     Partition format: year=YYYY/month=MM/day=DD/data_*.parquet
 
     Returns full path to the folder containing parquet files.
@@ -95,7 +106,12 @@ def hive_latest_path(table: str) -> str:
     if not months:
         raise FileNotFoundError(f"No month=MM partitions in {year_path}")
     latest_month = max(months)
-    month_path = os.path.join(year_path, f"month={latest_month:02d}")
+
+    # Handle possible zero-padding mismatch
+    month_folder = f"month={latest_month:02d}"
+    if not os.path.exists(os.path.join(year_path, month_folder)):
+        month_folder = f"month={latest_month}"
+    month_path = os.path.join(year_path, month_folder)
 
     # --- find latest day ---
     days = []
@@ -108,14 +124,24 @@ def hive_latest_path(table: str) -> str:
     if not days:
         raise FileNotFoundError(f"No day=DD partitions in {month_path}")
     latest_day = max(days)
-    day_path = os.path.join(month_path, f"day={latest_day:02d}")
+
+    # Handle possible zero-padding mismatch
+    day_folder = f"day={latest_day:02d}"
+    if not os.path.exists(os.path.join(month_path, day_folder)):
+        day_folder = f"day={latest_day}"
+    day_path = os.path.join(month_path, day_folder)
+
+    if debug:
+        print(f"[DEBUG] Latest Hive Path: year={latest_year}, month={latest_month}, day={latest_day}")
+        print(f"[DEBUG] Full Path: {day_path}")
 
     return day_path
 
+
 # ============================================================
-# FUNCTION: get_latest_hive_parquet_path
+# FUNCTION: get_hive_parquet
 # ============================================================
-def get_hive_parquet(base_folder: str) -> tuple[list[str], int, int, int]:
+def get_hive_parquet(base_folder: str, debug: bool = False) -> Tuple[List[str], int, int, int]:
     """
     Detect the latest Hive-style partition folder (year=YYYY/month=MM/day=DD)
     and return all .parquet files (e.g. data_0.parquet) from that folder,
@@ -150,7 +176,11 @@ def get_hive_parquet(base_folder: str) -> tuple[list[str], int, int, int]:
     if not months:
         raise FileNotFoundError(f"No month=MM partitions under {year_path}")
     latest_month = max(months)
-    month_path = os.path.join(year_path, f"month={latest_month:02d}")
+
+    month_folder = f"month={latest_month:02d}"
+    if not os.path.exists(os.path.join(year_path, month_folder)):
+        month_folder = f"month={latest_month}"
+    month_path = os.path.join(year_path, month_folder)
 
     # --- Find latest day ---
     days = []
@@ -163,16 +193,25 @@ def get_hive_parquet(base_folder: str) -> tuple[list[str], int, int, int]:
     if not days:
         raise FileNotFoundError(f"No day=DD partitions under {month_path}")
     latest_day = max(days)
-    day_path = os.path.join(month_path, f"day={latest_day:02d}")
 
-    # --- Collect parquet files like data_0.parquet ---
+    day_folder = f"day={latest_day:02d}"
+    if not os.path.exists(os.path.join(month_path, day_folder)):
+        day_folder = f"day={latest_day}"
+    day_path = os.path.join(month_path, day_folder)
+
+    # --- Collect parquet files ---
     parquet_files = [
         os.path.join(day_path, f)
         for f in os.listdir(day_path)
-        if f.endswith(".parquet")
+        if f.endswith(".parquet") or re.match(r"data_\d+$", f)
     ]
 
     if not parquet_files:
         raise FileNotFoundError(f"No parquet files found in {day_path}")
+
+    if debug:
+        print(f"[DEBUG] Found {len(parquet_files)} parquet files in {day_path}")
+        for p in parquet_files:
+            print(f"  -> {p}")
 
     return parquet_files, latest_year, latest_month, latest_day
