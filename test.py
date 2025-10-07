@@ -2,151 +2,192 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
-SNGLVIEW is using the concat to process all input file
 
-//CISNGLEX JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
+//CISCLNID JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0065051
 //*---------------------------------------------------------------------
 //DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=SNGLVIEW.IMIS.EXTRACT,
+//DEL1     DD DSN=SCEL.LOAN.IDS,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//*-EXTRACT LOAN & COLLATERAL ACCOUNT NUMBER TOGETHER WITH ALIAS
 //*---------------------------------------------------------------------
 //MOVEDATA EXEC SAS609
 //IEFRDER   DD DUMMY
-//SNGLVIEW  DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP01
-//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP03
-//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP04
-//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP05
-//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP06
-//          DD DISP=SHR,DSN=SNGLVIEW.DEPOSIT.DP07
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP01
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP03
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP04
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP05
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP06
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.DEPOSIT.DP07
-//          DD DISP=SHR,DSN=SNGLVIEW.LOANS.LN02
-//          DD DISP=SHR,DSN=SNGLVIEW.LOANS.LN08
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.LOANS.LN02
-//          DD DISP=SHR,DSN=RBP2.B051.SNGLVIEW.LOANS.LN08
-//          DD DISP=SHR,DSN=SNGLVIEW.PBCS
-//          DD DISP=SHR,DSN=SNGLVIEW.PMMD
-//          DD DISP=SHR,DSN=SNGLVIEW.COMCARD
-//*         DD DISP=SHR,DSN=SNGLVIEW.PRIME
-//          DD DISP=SHR,DSN=SNGLVIEW.SDBX
-//*         DD DISP=SHR,DSN=SNGLVIEW.SIPS
-//CISIGNAT  DD DISP=SHR,DSN=UNLOAD.CISIGNAT.FB
-//RLEN#CC   DD DISP=SHR,DSN=CCRIS.CC.RLNSHIP.SRCH
-//OUTFILE   DD DSN=SNGLVIEW.IMIS.EXTRACT,
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//CISFILE   DD DISP=SHR,DSN=CIS.CUST.DAILY
+//IDFILE    DD DISP=SHR,DSN=CIS.CUST.DAILY.IDS
+//CCFILE    DD DISP=SHR,DSN=CCRIS.CC.RLNSHIP.SRCH
+//OUTFILE   DD DSN=SCEL.LOAN.IDS,
 //             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(200,200),RLSE),
+//             UNIT=SYSDA,SPACE=(CYL,(1000,1000),RLSE),
 //             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
 //SASLIST   DD SYSOUT=X
 //SYSIN     DD *
-TITLE;
+OPTIONS NOCENTER;
 
- /*----------------------------------------------------------------*/
- /*    SIGNATORY DECLARATION                                       */
- /*----------------------------------------------------------------*/
-   DATA SIGNATORY;
-     INFILE CISIGNAT;
-         INPUT @01  BANKNO         $3.
-               @04  ACCTNOX        $11.     /*UNIQUE KEY: ACCT+SEQNO */
-               @15  SEQNO          $5.
-               @20  NAME           $40.
-               @60  ALIAS          $15.
-               @75  SIGNATORY      $1.
-               @76  MANDATEE       $1.
-               @77  NOMINEE        $1.
-               @78  STATUS         $1.
-               @79  BRANCHNOX       5.
-               @84  BRANCHNO       $5.;
-               ACCTNO = PUT(ACCTNOX,$20.);
+ DATA CCPARTNER;
+ KEEP CUSTNO PARTNER_INDC CODE DESC ;
+ INFILE CCFILE;
+    INPUT @01   CUSTNO            $11.      /* CUST1 - CIS#          */
+          @15   INDORG             $1.      /* CUST1 - CUST TYPE     */
+          @20   CODE               $3.      /* CUST1 - RLEN CODE     */
+          @25   DESC              $15. ;    /* CUST1 - RLEN DESC     */
+    IF CODE = '050';
+    PARTNER_INDC = 'Y';
+ RUN;
+ PROC SORT  DATA=CCPARTNER NODUPKEY; BY CUSTNO ;RUN;
+ PROC PRINT DATA=CCPARTNER (OBS=10);TITLE 'CCPARTNER  ';RUN;
 
-      /*  SOURCE_TYPE = 'S'; */
+ DATA RLEN017 RLEN020;
+ KEEP ACCTNO CUSTNO BASICGRPCODE;
+    SET CISFILE.CUSTDLY;
+    IF ACCTCODE IN ('LN','DP');
+    IF 1000000000 < ACCTNO < 1999999999
+    OR 2000000000 < ACCTNO < 2999999999
+    OR 3000000000 < ACCTNO < 3999999999
+    OR 4000000000 < ACCTNO < 4999999999
+    OR 5000000000 < ACCTNO < 5999999999     /*194587*/
+    OR 6000000000 < ACCTNO < 6999999999
+    OR 7000000000 < ACCTNO < 7999999999
+    OR 8000000000 < ACCTNO < 8999999999 ;
+    IF ACCTNO EQ '  ' THEN DELETE;
 
-  RUN;
-  PROC SORT DATA=SIGNATORY NODUPKEY; BY ACCTNO ALIAS; RUN;
-  PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;
+    IF RLENCODE = 017 THEN DO;     /* GUARANTOR              */
+       OUTPUT RLEN017;
+    END;
 
-  /*PROC SORT DATA=SIGNATORY; BY ACCTNO; RUN;
-   PROC PRINT DATA=SIGNATORY(OBS=10); TITLE 'SIGNATORY'; RUN;  */
+    IF RLENCODE = 020 THEN DO;     /* BORROWER /HIRER        */
+       OUTPUT RLEN020;
+    END;
+ RUN;
 
- /*-----------------------------*/
- /*  DECLARE CC RELATIONSHIP    */
- /*-----------------------------*/
- DATA CCRLEN;
-    INFILE RLEN#CC;
-    INPUT @01   CUSTNO            $11.
-          @95   NAME              $40.
-          @135  ALIASKEY          $03.
-          @138  ALIAS             $17.;
+ DATA RLEN017;
+     SET RLEN017;
+     GTOR_INDC = 'Y';
+ RUN;
 
-      /*  SOURCE_TYPE = 'C';  */
+ DATA RLEN020;
+     SET RLEN020;
+     BORROWER_INDC = 'Y';
+ RUN;
+ PROC SORT  DATA=RLEN017  ; BY ACCTNO  CUSTNO ;RUN;
+ PROC SORT  DATA=RLEN020  ; BY ACCTNO  CUSTNO ;RUN;
+ PROC PRINT DATA=RLEN017 (OBS=10);TITLE 'RLEN017    ';RUN;
+ PROC PRINT DATA=RLEN020 (OBS=10);TITLE 'RLEN020    ';RUN;
 
+ DATA MERGE_RLEN;
+   MERGE RLEN017(IN=A) RLEN020(IN=B);
+         BY ACCTNO  CUSTNO;
+   IF GTOR_INDC     = ' ' THEN GTOR_INDC     = 'N';
+   IF BORROWER_INDC = ' ' THEN BORROWER_INDC = 'N';
+ RUN;
+ PROC SORT  DATA=MERGE_RLEN NODUPKEY  ; BY CUSTNO ACCTNO  ;RUN;
+ PROC PRINT DATA=MERGE_RLEN (OBS=10)  ;TITLE 'MERGE_RLEN ';RUN;
 
-    RUN;
+ DATA LNCUST;
+   SET CISFILE.CUSTDLY;
+   KEEP CUSTNO ACCTNO ACCTNOC PRISEC TAXID
+   RLENCODE RELATIONDESC ACCTCODE BASICGRPCODE;
 
-
- PROC SORT  DATA=CCRLEN NODUPKEY;BY CUSTNO;RUN;
- PROC PRINT DATA=CCRLEN (OBS=5);TITLE 'CCRLEN FILE';RUN;
-
- /*----------------------------------------------------------------*/
- /*  IMIS SINGLE VIEW FILES                                        */
- /*----------------------------------------------------------------*/
- DATA IMIS;
-    FORMAT NAME $100.;
-    INFILE SNGLVIEW;
-    INPUT      @08   CUSTNO         $11.
-               @22   INDORG         $1.
-               @26   NAME1          $40.
-               @69   ALIASKEY       $03.
-               @75   ALIAS          $20.
-               @192  ACCTBRABBR     $07.
-               @202  BRANCHNO        $5.
-               @210  ACCTCODE       $05.
-               @218  ACCTNO         $20.
-               @241  NOTENO         $05.
-               @253  PRIMSEC        $01.
-               @281  ACCTSTATUS     $25.
-               @309  DATEOPEN    YYMMDD8.
-               @322  DATECLSE    YYMMDD8.
-               @339  BAL1INDC       $05.
-               @350  BAL1           13.2
-               @394  AMT1INDC       $05.
-               @402  AMT1           13.2
-               @605  DOBDOR         $8.  ;
-
-       /* SOURCE_TYPE = 'I'; */
-
-           NAME = TRANSLATE(NAME1,' ','	');
+   IF ACCTCODE IN ('LN','DP');
+   IF 1000000000 < ACCTNO < 1999999999
+   OR 2000000000 < ACCTNO < 2999999999
+   OR 3000000000 < ACCTNO < 3999999999
+   OR 4000000000 < ACCTNO < 4999999999
+   OR 5000000000 < ACCTNO < 5999999999      /*194587*/
+   OR 6000000000 < ACCTNO < 6999999999
+   OR 7000000000 < ACCTNO < 7999999999
+   OR 8000000000 < ACCTNO < 8999999999 ;
+   IF ACCTNO EQ '  ' THEN DELETE;
 
  RUN;
- /*PROC SORT  DATA=IMIS NODUPKEY;BY CUSTNO ALIAS ACCTNO;RUN;  */
- PROC SORT  DATA=IMIS NODUPKEY;BY CUSTNO ALIAS ;RUN;
- PROC PRINT DATA=IMIS  (OBS=05);TITLE 'IMIS'; RUN;
+ PROC SORT DATA=LNCUST; BY CUSTNO ACCTNO;RUN;
+ PROC PRINT DATA=LNCUST(OBS=10); TITLE'LNCUST';RUN;
 
+ DATA MERGE_GTOR;
+   MERGE LNCUST(IN=C) MERGE_RLEN(IN=D);
+         BY CUSTNO ACCTNO;
+   IF C;
+ RUN;
+ PROC SORT  DATA=MERGE_GTOR NODUPKEY  ; BY CUSTNO ACCTNO ;RUN;
+ PROC PRINT DATA=MERGE_GTOR   (OBS=10);TITLE 'MERGE_GTOR ';RUN;
 
- /*----------------------------------------------------------------*/
- /*   OUTPUT DETAIL                                                */
- /*----------------------------------------------------------------*/
+ DATA MERGE_PARTNER;
+   MERGE MERGE_GTOR(IN=F) CCPARTNER(IN=G);
+         BY CUSTNO;
+   IF F;
+ RUN;
+ PROC SORT  DATA=MERGE_PARTNER ; BY CUSTNO ACCTNO ;RUN;
+ PROC PRINT DATA=MERGE_PARTNER(OBS=10);TITLE 'MERGE_PARTNER ';RUN;
 
-  /*DATA _NULL_;  */
-   DATA TEMPOUT;
-  /* SET IMIS  SIGNATORY  CCRLEN;    ONLY IMIS FILE USED FOR COMPARE*/
-  SET IMIS;
-  FILE OUTFILE;
+ DATA IDS;
+    SET IDFILE.CUSTIDS;
+        KEEP CUSTNO ALIASKEY ALIAS;
+        IF ALIASKEY IN ('IC','BC','PP','ML','PL',
+                        'BR','CI','PC','SA','GB','LP');
+ RUN;
+ PROC SORT DATA=IDS;BY CUSTNO;RUN;
+ PROC PRINT DATA=IDS (OBS=10);TITLE 'CUST IDS FILE';RUN;
 
-   IF NAME = ' ' AND
-      ALIAS = ' '  THEN DELETE;
+ PROC SQL;
+ CREATE TABLE LNDETL AS
+   SELECT MERGE_PARTNER.CUSTNO
+         ,MERGE_PARTNER.ACCTNOC
+         ,MERGE_PARTNER.TAXID
+         ,MERGE_PARTNER.PRISEC
+         ,MERGE_PARTNER.BORROWER_INDC
+         ,MERGE_PARTNER.GTOR_INDC
+         ,MERGE_PARTNER.PARTNER_INDC
+         ,MERGE_PARTNER.BASICGRPCODE
+         ,IDS.ALIASKEY
+         ,IDS.ALIAS
+     FROM  MERGE_PARTNER,IDS
+     WHERE MERGE_PARTNER.CUSTNO = IDS.CUSTNO;
+ QUIT;
 
+ PROC SORT DATA=LNDETL;BY ACCTNOC CUSTNO;RUN;
+ PROC PRINT DATA=LNDETL(OBS=10);TITLE'LNDETL';RUN;
 
-   PUT   @001   CUSTNO             $20.
-         @021   ACCTNO             $20.
-         @041   NOTENO             $10.
-         @051   ALIASKEY           $03.
-         @054   ALIAS              $20.
-         @075   PRIMSEC            $01.
-         @076   NAME               $40.       /*243708*/
-     /*  @178   SOURCE_TYPE        $01.    */
-         ;
-  RUN;
+ DATA NEWIC;
+      SET LNDETL;
+      CUSTID=ALIASKEY||ALIAS;
+      TAXID ='';
+
+ RUN;
+
+ DATA OLDIC;
+      SET LNDETL;
+      CUSTID='OC '||TAXID;
+      ALIASKEY='';
+      ALIAS='';
+      IF TAXID EQ '' THEN DELETE;
+      IF TAXID EQ '000000000' THEN DELETE;
+ RUN;
+ PROC SORT DATA=OLDIC NODUPKEY;BY CUSTNO ACCTNOC;RUN;
+
+ DATA CUSTIDS;
+      SET NEWIC OLDIC;
+ RUN;
+ PROC SORT DATA=CUSTIDS;BY CUSTNO ACCTNOC CUSTID;RUN;
+
+ DATA OUT;
+   SET CUSTIDS;
+   FILE OUTFILE;
+   IF PRISEC = 901 THEN PRIMSEC = 'P';
+   IF PRISEC = 902 THEN PRIMSEC = 'S';
+   IF GTOR_INDC     = ' ' THEN GTOR_INDC     = 'N';
+   IF BORROWER_INDC = ' ' THEN BORROWER_INDC = 'N';
+   IF PARTNER_INDC  = ' ' THEN PARTNER_INDC  = 'N';
+   PUT @001 ACCTNOC            $11.
+       @012 CUSTNO             $11.
+       @023 CUSTID             $30.
+       @054 PRIMSEC            $1.
+       @056 BORROWER_INDC      $1.     /* HIRER      CA 020*/
+       @058 GTOR_INDC          $1.     /* GUARANTOR  CA 017*/
+       @060 PARTNER_INDC       $1.     /* PARTNER    CC 050*/
+       @064 BASICGRPCODE       $5. ;
+ RUN;
