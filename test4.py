@@ -5,13 +5,6 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 batch_year, batch_month, batch_day = batch_date.year, batch_date.month, batch_date.day
 
-#---------------------------------------------------------------------#
-# Original Program: CCRSRACE                                          #
-#---------------------------------------------------------------------#
-# ESMR2015-707 CIS CUSTOMER DEMOGRAPHIC ETHNIC CODE                   #
-# INITIALIZE DATASETS *                                               #
-#---------------------------------------------------------------------#
-
 # ==================================
 # CONNECT TO DUCKDB
 # ==================================
@@ -46,7 +39,7 @@ for name, query in queries.items():
     con.execute(f"""
     COPY ({query})
     TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+    (FORMAT PARQUET, PARTITION_BY (batch_year, batch_month, batch_day), OVERWRITE_OR_IGNORE true);  
      """)
     
     con.execute(f"""
