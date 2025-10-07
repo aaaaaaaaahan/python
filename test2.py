@@ -1,128 +1,72 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
-import pyarrow.csv as csv
-from pyarrow import compute as pc
-import pyarrow.dataset as ds
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+from CIS_PY_READER_JKH import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
+import datetime
 
-# ================================================
-# SETUP
-# ================================================
+# ============================================================
+# BATCH DATE SETUP (use yesterday’s date)
+# ============================================================
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+# ============================================================
+# CONNECT TO DUCKDB
+# ============================================================
 con = duckdb.connect()
 
-# Input parquet paths (already converted from SAS datasets)
-snglview_files = [
-    "SNGLVIEW.DEPOSIT.DP01",
-    "SNGLVIEW.DEPOSIT.DP03",
-    "SNGLVIEW.DEPOSIT.DP04",
-    "SNGLVIEW.DEPOSIT.DP05",
-    "SNGLVIEW.DEPOSIT.DP06",
-    "SNGLVIEW.DEPOSIT.DP07",
-    "RBP2.B051.SNGLVIEW.DEPOSIT.DP01",
-    "RBP2.B051.SNGLVIEW.DEPOSIT.DP03",
-    "RBP2.B051.SNGLVIEW.DEPOSIT.DP04",
-    "RBP2.B051.SNGLVIEW.DEPOSIT.DP05",
-    "RBP2.B051.SNGLVIEW.DEPOSIT.DP06",
-    "RBP2.B051.SNGLVIEW.DEPOSIT.DP07",
-    "SNGLVIEW.LOANS.LN02",
-    "SNGLVIEW.LOANS.LN08",
-    "RBP2.B051.SNGLVIEW.LOANS.LN02",
-    "RBP2.B051.SNGLVIEW.LOANS.LN08",
-    "SNGLVIEW.PBCS",
-    "SNGLVIEW.PMMD",
-    "SNGLVIEW.COMCARD",
-    "SNGLVIEW.SDBX",
-]
+# ============================================================
+# LOAD HIVE PARQUET (returns path to latest Hive parquet)
+# ============================================================
+CIS_path, _, _, _ = get_hive_parquet('AMLHRC_EXTRACT_MASSCLS')
 
-cisignat_file = "UNLOAD.CISIGNAT.FB"
-ccrlens_file = "CCRIS.CC.RLNSHIP.SRCH"
-output_file = f"{parquet_output_path}/SNGLVIEW_IMIS_EXTRACT.parquet"
-csv_output = f"{csv_output_path}/SNGLVIEW_IMIS_EXTRACT.csv"
-
-# ================================================
-# 1. READ ALL SNGLVIEW FILES & CONCATENATE
-# ================================================
-print("Loading SNGLVIEW files...")
+# ============================================================
+# STEP 1 - LOAD CUST FILE INTO DUCKDB
+# ============================================================
 con.execute(f"""
-    CREATE OR REPLACE TABLE IMIS AS 
-    SELECT * FROM read_parquet([{','.join([f"'{host_parquet_path}/{f}.parquet'" for f in snglview_files])}])
+    CREATE OR REPLACE TABLE CIS AS
+    SELECT *, 
+           {year}  AS year,
+           {month} AS month,
+           {day}   AS day
+    FROM read_parquet('{CIS_path}')
 """)
 
-# ================================================
-# 2. LOAD SIGNATORY FILE
-# ================================================
-print("Loading SIGNATORY...")
-con.execute(f"""
-    CREATE OR REPLACE TABLE SIGNATORY AS
-    SELECT 
-        BANKNO,
-        ACCTNOX,
-        SEQNO,
-        NAME,
-        ALIAS,
-        SIGNATORY,
-        MANDATEE,
-        NOMINEE,
-        STATUS,
-        BRANCHNOX,
-        BRANCHNO,
-        CAST(ACCTNOX AS VARCHAR) AS ACCTNO
-    FROM read_parquet('{host_parquet_path}/{cisignat_file}.parquet')
-""")
+# ============================================================
+# STEP 2 - QUERY DEFINITIONS
+# ============================================================
+out1 = """
+    SELECT *
+    FROM CIS
+"""
 
-# Remove duplicates by (ACCTNO, ALIAS)
-con.execute("""
-    CREATE OR REPLACE TABLE SIGNATORY AS
-    SELECT DISTINCT ON (ACCTNO, ALIAS) * FROM SIGNATORY
-""")
+queries = {
+    "test_jkh": out1
+}
 
-# ================================================
-# 3. LOAD CCRLEN FILE
-# ================================================
-print("Loading CCRLEN...")
-con.execute(f"""
-    CREATE OR REPLACE TABLE CCRLEN AS
-    SELECT DISTINCT ON (CUSTNO)
-        CUSTNO, NAME, ALIASKEY, ALIAS
-    FROM read_parquet('{host_parquet_path}/{ccrlens_file}.parquet')
-""")
+# ============================================================
+# STEP 3 - EXPORT TO PARQUET + CSV
+# ============================================================
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-# ================================================
-# 4. CLEAN IMIS (REPLACE TABS WITH SPACES)
-# ================================================
-print("Cleaning IMIS data...")
-con.execute("""
-    CREATE OR REPLACE TABLE IMIS_CLEAN AS
-    SELECT DISTINCT CUSTNO, ALIAS, ACCTNO, NOTENO, ALIASKEY, PRIMSEC,
-           REPLACE(NAME1, '\t', ' ') AS NAME
-    FROM IMIS
-    WHERE COALESCE(NAME1, '') <> '' OR COALESCE(ALIAS, '') <> ''
-""")
+    # ---- Export Parquet ----
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    """)
 
-# ================================================
-# 5. OUTPUT FINAL DATA
-# ================================================
-print("Exporting IMIS Extract...")
-final_arrow = con.execute("""
-    SELECT 
-        CUSTNO,
-        ACCTNO,
-        NOTENO,
-        ALIASKEY,
-        ALIAS,
-        PRIMSEC,
-        NAME
-    FROM IMIS_CLEAN
-""").arrow()
+    # ---- Export CSV ----
+    con.execute(f"""
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);
+    """)
 
-# ================================================
-# 6. WRITE OUTPUT USING PYARROW
-# ================================================
-print("Writing to Parquet and CSV...")
-pq.write_table(final_arrow, output_file)
-csv.write_csv(final_arrow, csv_output)
-
-print("✅ Process completed successfully!")
-print(f"Output Parquet: {output_file}")
-print(f"Output CSV: {csv_output}")
+# ============================================================
+# STEP 4 - CHECK SAMPLE
+# ============================================================
+print("✅ Export complete.")
+print(f"Batch Date: {year}-{month:02d}-{day:02d}")
+print(f"Parquet Output: {parquet_output_path('test_jkh')}")
+print(f"CSV Output: {csv_output_path('test_jkh')}")
