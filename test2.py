@@ -6,7 +6,7 @@ import datetime
 # BATCH DATE SETUP (use yesterday’s date)
 # ============================================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
+year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
 # CONNECT TO DUCKDB
@@ -16,27 +16,27 @@ con = duckdb.connect()
 # ============================================================
 # LOAD HIVE PARQUET (returns path to latest Hive parquet)
 # ============================================================
-CIS_path, _, _, _ = get_hive_parquet('AMLHRC_EXTRACT_MASSCLS')
+CIS, year, month, day = get_hive_parquet('AMLHRC_EXTRACT_MASSCLS')
 
 # ============================================================
 # STEP 1 - LOAD CUST FILE INTO DUCKDB
 # ============================================================
 con.execute(f"""
     CREATE OR REPLACE TABLE CIS AS
-    SELECT *, 
-           {year}  AS year,
-           {month} AS month,
-           {day}   AS day
-    FROM read_parquet('{CIS_path}')
+    SELECT *
+    FROM read_parquet('{CIS}')
 """)
 
 # ============================================================
 # STEP 2 - QUERY DEFINITIONS
 # ============================================================
 out1 = """
-    SELECT *
+    SELECT *,
+         {year1}  AS year,
+         {month1} AS month,
+         {day1}   AS day
     FROM CIS
-"""
+""".format(year=year,month=month,day=day)
 
 queries = {
     "test_jkh": out1
