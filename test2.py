@@ -1,171 +1,227 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
-import datetime
+import pyarrow as pa
+import pyarrow.parquet as pq
+import os
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
+# ============================================================
+# PATH SETUP
+# ============================================================
+input_dir = "/host/cis/parquet/sas_parquet"    # assumed parquet input
+output_dir = "/host/cis/output"
+os.makedirs(output_dir, exist_ok=True)
 
-#---------------------------------------------------------------------#
-# Original Program: CIRMKLNS                                          #
-#---------------------------------------------------------------------#
-# ESMR 2023-00003043 AUTOMATE THE INTEREST / PROFIT ADVICE TO         #
-# CORPORATE BANKING3S CUSTOMERS [PART B]                              #
-# ESMR 2024-00003454 AUTOMATE THE INTEREST / PROFIT ADVICE TO         #
-# CORPORATE BANKING3S CUSTOMERS - TO FINETUNE THE CUSTOMERS NAME FOR  #
-# FOR JOINT BORROWERS                                                 #
-#---------------------------------------------------------------------#
+# Input parquet files (already converted)
+CISFILE = f"{input_dir}/CIS_CUST_DAILY.parquet"
+IDFILE  = f"{input_dir}/CIS_CUST_DAILY_IDS.parquet"
+CCFILE  = f"{input_dir}/CCRIS_CC_RLNSHIP_SRCH.parquet"
 
-# =========================
-# Connect DuckDB
-# =========================
+# Output file
+OUT_PARQUET = os.path.join(output_dir, "SCEL_LOAN_IDS.parquet")
+
+# ============================================================
+# CREATE DUCKDB CONNECTION
+# ============================================================
 con = duckdb.connect()
-prim, year, month, day = get_hive_parquet('LOANS_CUST_PRIMARY')
-secd, year, month, day = get_hive_parquet('LOANS_CUST_SCNDARY')
 
-# =========================
-# Register parquet inputs
-# =========================
-con.execute(f"""
-    CREATE OR REPLACE TABLE RMK AS 
-    SELECT 
-        CUSTNO, 
-        RMK_LINE_1 AS REMARKS
-    FROM '{host_parquet_path("CCRIS_CISRMRK_EMAIL_FIRST.parquet")}'
-""")
+# ============================================================
+# REGISTER INPUT FILES
+# ============================================================
+con.register("CISFILE", CISFILE)
+con.register("IDFILE", IDFILE)
+con.register("CCFILE", CCFILE)
 
+# ============================================================
+# 1. CCPARTNER: Extract relationship code '050'
+# ============================================================
 con.execute("""
-    CREATE OR REPLACE TABLE PRIM AS
+    CREATE OR REPLACE TABLE CCPARTNER AS
     SELECT 
         CUSTNO,
-        ACCTNOC,
-        DOBDOR,
-        LONGNAME,
-        INDORG,
-        PRIMSEC
-    FROM read_parquet(?)
-""", [prim])
-
-con.execute("""
-    CREATE OR REPLACE TABLE SECD AS
-    SELECT 
-        CUSTNO AS CUSTNO1,
-        ACCTNOC,
-        DOBDOR AS DOBDOR1,
-        LONGNAME AS LONGNAME1,
-        INDORG AS INDORG1,
-        PRIMSEC AS PRIMSEC1
-    FROM read_parquet(?)
-""", [secd])
-
-# =========================
-# Match Logic (PRIM vs SECD)
-# =========================
-con.execute("""
-    CREATE OR REPLACE TABLE MATCH1 AS
-    SELECT 
-        P.CUSTNO,
-        P.ACCTNOC,
-        P.DOBDOR,
-        TRIM(P.LONGNAME) || ' & ' || TRIM(S.LONGNAME1) AS LONGNAME,
-        P.INDORG,
-        'Y' AS JOINT
-    FROM PRIM P
-    JOIN SECD S USING (ACCTNOC)
+        'Y' AS PARTNER_INDC,
+        CODE,
+        DESC
+    FROM CCFILE
+    WHERE CODE = '050'
 """)
 
-con.execute("""
-    CREATE OR REPLACE TABLE XMATCH AS
-    SELECT 
-        P.CUSTNO,
-        P.ACCTNOC,
-        P.DOBDOR,
-        P.LONGNAME,
-        P.INDORG,
-        'N' AS JOINT
-    FROM PRIM P
-    LEFT JOIN SECD S USING (ACCTNOC)
-    WHERE S.ACCTNOC IS NULL
-""")
-
-# =========================
-# Merge with RMK (EMAIL)
-# =========================
-con.execute("""
-    CREATE OR REPLACE TABLE MATCH2 AS
-    SELECT R.CUSTNO, M.*
-    FROM RMK R
-    JOIN MATCH1 M USING (CUSTNO)
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE MATCH3 AS
-    SELECT R.CUSTNO, X.*
-    FROM RMK R
-    JOIN XMATCH X USING (CUSTNO)
-""")
-
-# =========================
-# Final Output
-# =========================
-con.execute("""
-    CREATE OR REPLACE TABLE OUT1 AS
-    SELECT 
-        M.CUSTNO,
-        M.ACCTNOC,
-        R.REMARKS,
-        M.DOBDOR,
-        M.LONGNAME,
-        M.INDORG,
-        M.JOINT
-    FROM (
-        SELECT * FROM MATCH2
-        UNION ALL
-        SELECT * FROM MATCH3
-    ) M
-    JOIN RMK R USING (CUSTNO)
-""")
-
-final = """
-    SELECT 
-        *
-        ,{year1} AS year
-        ,{month1} AS month
-        ,{day1} AS day
-    FROM OUT1
+# ============================================================
+# 2. RLEN017 and RLEN020: Filter by RLENCODE and ACCTCODE
+# ============================================================
+account_filter = """
+    ACCTCODE IN ('LN','DP')
+    AND (
+        (ACCTNO BETWEEN 1000000000 AND 1999999999) OR
+        (ACCTNO BETWEEN 2000000000 AND 2999999999) OR
+        (ACCTNO BETWEEN 3000000000 AND 3999999999) OR
+        (ACCTNO BETWEEN 4000000000 AND 4999999999) OR
+        (ACCTNO BETWEEN 5000000000 AND 5999999999) OR
+        (ACCTNO BETWEEN 6000000000 AND 6999999999) OR
+        (ACCTNO BETWEEN 7000000000 AND 7999999999) OR
+        (ACCTNO BETWEEN 8000000000 AND 8999999999)
+    )
 """
 
-# =========================
-# Save LAST RECORD only
-# =========================
-last_row = """
-    SELECT *
-        ,{year1} AS year
-        ,{month1} AS month
-        ,{day1} AS day
-    FROM OUT1
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO DESC) = 1
-"""
+con.execute(f"""
+    CREATE OR REPLACE TABLE RLEN017 AS
+    SELECT 
+        ACCTNO, CUSTNO, BASICGRPCODE,
+        'Y' AS GTOR_INDC
+    FROM CISFILE
+    WHERE {account_filter}
+      AND RLENCODE = 017
+""")
 
-# =========================
-# Save FULL OUTPUT
-# =========================
-queries = {
-    "LOANS_CISRMRK_EMAIL_DUP"            : final,
-    "LOANS_CISRMRK_EMAIL"                : last_row
-}
+con.execute(f"""
+    CREATE OR REPLACE TABLE RLEN020 AS
+    SELECT 
+        ACCTNO, CUSTNO, BASICGRPCODE,
+        'Y' AS BORROWER_INDC
+    FROM CISFILE
+    WHERE {account_filter}
+      AND RLENCODE = 020
+""")
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
+# ============================================================
+# 3. Merge RLEN017 and RLEN020
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE MERGE_RLEN AS
+    SELECT 
+        COALESCE(a.ACCTNO, b.ACCTNO) AS ACCTNO,
+        COALESCE(a.CUSTNO, b.CUSTNO) AS CUSTNO,
+        COALESCE(a.BASICGRPCODE, b.BASICGRPCODE) AS BASICGRPCODE,
+        COALESCE(GTOR_INDC, 'N') AS GTOR_INDC,
+        COALESCE(BORROWER_INDC, 'N') AS BORROWER_INDC
+    FROM RLEN017 a
+    FULL OUTER JOIN RLEN020 b
+      ON a.ACCTNO = b.ACCTNO AND a.CUSTNO = b.CUSTNO
+""")
 
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+# ============================================================
+# 4. LNCUST: Loan + Deposit customers
+# ============================================================
+con.execute(f"""
+    CREATE OR REPLACE TABLE LNCUST AS
+    SELECT 
+        CUSTNO, ACCTNO, ACCTNOC, PRISEC, TAXID,
+        RLENCODE, RELATIONDESC, ACCTCODE, BASICGRPCODE
+    FROM CISFILE
+    WHERE {account_filter}
+""")
+
+# ============================================================
+# 5. Merge LNCUST with MERGE_RLEN
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE MERGE_GTOR AS
+    SELECT 
+        l.*, 
+        r.BORROWER_INDC, 
+        r.GTOR_INDC
+    FROM LNCUST l
+    LEFT JOIN MERGE_RLEN r
+      ON l.CUSTNO = r.CUSTNO AND l.ACCTNO = r.ACCTNO
+""")
+
+# ============================================================
+# 6. Merge with CCPARTNER
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE MERGE_PARTNER AS
+    SELECT 
+        g.*, 
+        c.PARTNER_INDC
+    FROM MERGE_GTOR g
+    LEFT JOIN CCPARTNER c
+      ON g.CUSTNO = c.CUSTNO
+""")
+
+# ============================================================
+# 7. Customer IDs (Alias)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE IDS AS
+    SELECT 
+        CUSTNO, ALIASKEY, ALIAS
+    FROM IDFILE
+    WHERE ALIASKEY IN ('IC','BC','PP','ML','PL','BR','CI','PC','SA','GB','LP')
+""")
+
+# ============================================================
+# 8. Combine into LNDETL
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE LNDETL AS
+    SELECT 
+        m.CUSTNO,
+        m.ACCTNOC,
+        m.TAXID,
+        m.PRISEC,
+        COALESCE(m.BORROWER_INDC, 'N') AS BORROWER_INDC,
+        COALESCE(m.GTOR_INDC, 'N') AS GTOR_INDC,
+        COALESCE(m.PARTNER_INDC, 'N') AS PARTNER_INDC,
+        m.BASICGRPCODE,
+        i.ALIASKEY,
+        i.ALIAS
+    FROM MERGE_PARTNER m
+    JOIN IDS i
+      ON m.CUSTNO = i.CUSTNO
+""")
+
+# ============================================================
+# 9. NEWIC and OLDIC logic
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE NEWIC AS
+    SELECT 
+        *,
+        (ALIASKEY || ALIAS) AS CUSTID,
+        '' AS TAXID
+    FROM LNDETL
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE OLDIC AS
+    SELECT 
+        *,
+        ('OC ' || TAXID) AS CUSTID,
+        '' AS ALIASKEY,
+        '' AS ALIAS
+    FROM LNDETL
+    WHERE TAXID != '' AND TAXID != '000000000'
+""")
+
+# ============================================================
+# 10. Combine both sets
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE CUSTIDS AS
+    SELECT * FROM NEWIC
+    UNION ALL
+    SELECT * FROM OLDIC
+""")
+
+# ============================================================
+# 11. Final output dataset
+# ============================================================
+final_df = con.execute("""
+    SELECT 
+        ACCTNOC,
+        CUSTNO,
+        CUSTID,
+        CASE WHEN PRISEC = 901 THEN 'P'
+             WHEN PRISEC = 902 THEN 'S'
+             ELSE '' END AS PRIMSEC,
+        COALESCE(BORROWER_INDC, 'N') AS BORROWER_INDC,
+        COALESCE(GTOR_INDC, 'N') AS GTOR_INDC,
+        COALESCE(PARTNER_INDC, 'N') AS PARTNER_INDC,
+        BASICGRPCODE
+    FROM CUSTIDS
+""").arrow()
+
+# ============================================================
+# 12. SAVE USING PYARROW
+# ============================================================
+pq.write_table(final_df, OUT_PARQUET, compression='snappy')
+
+print(f"✅ Process completed. Output saved to: {OUT_PARQUET}")
