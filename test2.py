@@ -1,34 +1,22 @@
+duckdb.duckdb.BinderException: Binder Error: Cannot mix values of type VARCHAR and INTEGER_LITERAL in BETWEEN clause - an explicit cast is required
+
+LINE 10:         (ACCTNO BETWEEN 1000000000 AND 1999999999) OR
+                         ^
+
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
-import os
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
+import datetime
 
-# ============================================================
-# PATH SETUP
-# ============================================================
-input_dir = "/host/cis/parquet/sas_parquet"    # assumed parquet input
-output_dir = "/host/cis/output"
-os.makedirs(output_dir, exist_ok=True)
-
-# Input parquet files (already converted)
-CISFILE = f"{input_dir}/CIS_CUST_DAILY.parquet"
-IDFILE  = f"{input_dir}/CIS_CUST_DAILY_IDS.parquet"
-CCFILE  = f"{input_dir}/CCRIS_CC_RLNSHIP_SRCH.parquet"
-
-# Output file
-OUT_PARQUET = os.path.join(output_dir, "SCEL_LOAN_IDS.parquet")
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
 # CREATE DUCKDB CONNECTION
 # ============================================================
 con = duckdb.connect()
-
-# ============================================================
-# REGISTER INPUT FILES
-# ============================================================
-con.register("CISFILE", CISFILE)
-con.register("IDFILE", IDFILE)
-con.register("CCFILE", CCFILE)
+CISFILE, year, month, day = get_hive_parquet('CIS_CUST_DAILY')
+IDFILE, year, month, day = get_hive_parquet('CIS_CUST_DAILY_IDS')
+CCFILE, year, month, day = get_hive_parquet('CCRIS_CC_RLNSHIP_SRCH')
 
 # ============================================================
 # 1. CCPARTNER: Extract relationship code '050'
@@ -36,13 +24,16 @@ con.register("CCFILE", CCFILE)
 con.execute("""
     CREATE OR REPLACE TABLE CCPARTNER AS
     SELECT 
-        CUSTNO,
-        'Y' AS PARTNER_INDC,
-        CODE,
-        DESC
-    FROM CCFILE
-    WHERE CODE = '050'
-""")
+        CUSTNO1 AS CUSTNO,
+        INDORG1 AS INDORG,
+        CODE1 AS CODE,
+        DESC1 AS DESC,
+        CASE
+            WHEN CODE = '50' THEN 'Y'
+            ELSE 'N'
+        END AS PARTNER_INDC
+    FROM read_parquet(?)
+""", [CCFILE])
 
 # ============================================================
 # 2. RLEN017 and RLEN020: Filter by RLENCODE and ACCTCODE
@@ -66,20 +57,20 @@ con.execute(f"""
     SELECT 
         ACCTNO, CUSTNO, BASICGRPCODE,
         'Y' AS GTOR_INDC
-    FROM CISFILE
+    FROM read_parquet(?)
     WHERE {account_filter}
       AND RLENCODE = 017
-""")
+""", [CISFILE])
 
 con.execute(f"""
     CREATE OR REPLACE TABLE RLEN020 AS
     SELECT 
         ACCTNO, CUSTNO, BASICGRPCODE,
         'Y' AS BORROWER_INDC
-    FROM CISFILE
+    FROM read_parquet(?)
     WHERE {account_filter}
       AND RLENCODE = 020
-""")
+""", [CISFILE])
 
 # ============================================================
 # 3. Merge RLEN017 and RLEN020
@@ -105,9 +96,9 @@ con.execute(f"""
     SELECT 
         CUSTNO, ACCTNO, ACCTNOC, PRISEC, TAXID,
         RLENCODE, RELATIONDESC, ACCTCODE, BASICGRPCODE
-    FROM CISFILE
+    FROM read_parquet(?)
     WHERE {account_filter}
-""")
+""", [CISFILE])
 
 # ============================================================
 # 5. Merge LNCUST with MERGE_RLEN
@@ -143,9 +134,9 @@ con.execute("""
     CREATE OR REPLACE TABLE IDS AS
     SELECT 
         CUSTNO, ALIASKEY, ALIAS
-    FROM IDFILE
+    FROM read_parquet(?)
     WHERE ALIASKEY IN ('IC','BC','PP','ML','PL','BR','CI','PC','SA','GB','LP')
-""")
+""", [IDFILE])
 
 # ============================================================
 # 8. Combine into LNDETL
@@ -204,7 +195,7 @@ con.execute("""
 # ============================================================
 # 11. Final output dataset
 # ============================================================
-final_df = con.execute("""
+final_df = """
     SELECT 
         ACCTNOC,
         CUSTNO,
@@ -216,12 +207,31 @@ final_df = con.execute("""
         COALESCE(GTOR_INDC, 'N') AS GTOR_INDC,
         COALESCE(PARTNER_INDC, 'N') AS PARTNER_INDC,
         BASICGRPCODE
+        ,{year1} AS year
+        ,{month1} AS month
+        ,{day1} AS day
     FROM CUSTIDS
-""").arrow()
+""".format(year1=year1,month1=month1,day1=day1)
 
 # ============================================================
 # 12. SAVE USING PYARROW
 # ============================================================
-pq.write_table(final_df, OUT_PARQUET, compression='snappy')
+queries = {
+    "SCEL_LOAN_iDS"            : final_df
+}
 
-print(f"✅ Process completed. Output saved to: {OUT_PARQUET}")
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
