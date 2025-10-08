@@ -1,237 +1,230 @@
-duckdb.duckdb.BinderException: Binder Error: Cannot mix values of type VARCHAR and INTEGER_LITERAL in BETWEEN clause - an explicit cast is required
-
-LINE 10:         (ACCTNO BETWEEN 1000000000 AND 1999999999) OR
-                         ^
-
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
-import datetime
-
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
+import pyarrow as pa
+import pyarrow.parquet as pq
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path  # assume your helper
 
 # ============================================================
-# CREATE DUCKDB CONNECTION
+# SETUP
 # ============================================================
 con = duckdb.connect()
-CISFILE, year, month, day = get_hive_parquet('CIS_CUST_DAILY')
-IDFILE, year, month, day = get_hive_parquet('CIS_CUST_DAILY_IDS')
-CCFILE, year, month, day = get_hive_parquet('CCRIS_CC_RLNSHIP_SRCH')
+
+sccust = host_parquet_path("SCCUST.parquet")
+sccard = host_parquet_path("SCCARD.parquet")
+cisfile = host_parquet_path("CIS_CUST_DAILY.parquet")
 
 # ============================================================
-# 1. CCPARTNER: Extract relationship code '050'
+# STEP 1: PROCESS CUST FILE
 # ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE CCPARTNER AS
-    SELECT 
-        CUSTNO1 AS CUSTNO,
-        INDORG1 AS INDORG,
-        CODE1 AS CODE,
-        DESC1 AS DESC,
+con.execute(f"""
+    CREATE TABLE cust AS
+    SELECT
+        ALIASKEY,
+        ALIAS,
+        TAXID,
+        TAXNUM,
+        ACCTNAME,
+        TOTCOMBLIMIT,
+        CASE WHEN SIGN1 = '-' THEN OUTSTNDAMT * -1
+             WHEN SIGN1 = '+' THEN OUTSTNDAMT * 1 ELSE OUTSTNDAMT END AS OUTSTNDAMT,
+        CASE WHEN SIGN2 = '-' THEN TOTMIN * -1
+             WHEN SIGN2 = '+' THEN TOTMIN * 1 ELSE TOTMIN END AS TOTMIN,
+        CASE WHEN SIGN3 = '-' THEN OUTSTANDDUE * -1
+             WHEN SIGN3 = '+' THEN OUTSTANDDUE * 1 ELSE OUTSTANDDUE END AS OUTSTANDDUE
+    FROM read_parquet('{sccust}')
+    WHERE ALIAS IS NOT NULL AND ALIAS <> '' AND ALIASKEY <> 'CV '
+""")
+
+# ============================================================
+# STEP 2: PROCESS CARD FILE
+# ============================================================
+con.execute(f"""
+    CREATE TABLE card AS
+    SELECT
+        ALIASKEY,
+        ALIAS,
+        TAXID,
+        TAXNUM,
+        ACCTNOC,
+        OPENDATE,
+        STATUS,
+        CLOSEDATE,
+        MONITOR,
+        DUEDAY,
+        CASE WHEN SIGN4 = '-' THEN OVERDUEAMT * -1
+             WHEN SIGN4 = '+' THEN OVERDUEAMT * 1 ELSE OVERDUEAMT END AS OVERDUEAMT,
+        PRODTYPE AS ACCTCODE,
+        -- DATE LOGIC
         CASE
-            WHEN CODE = '50' THEN 'Y'
-            ELSE 'N'
-        END AS PARTNER_INDC
-    FROM read_parquet(?)
-""", [CCFILE])
-
-# ============================================================
-# 2. RLEN017 and RLEN020: Filter by RLENCODE and ACCTCODE
-# ============================================================
-account_filter = """
-    ACCTCODE IN ('LN','DP')
-    AND (
-        (ACCTNO BETWEEN 1000000000 AND 1999999999) OR
-        (ACCTNO BETWEEN 2000000000 AND 2999999999) OR
-        (ACCTNO BETWEEN 3000000000 AND 3999999999) OR
-        (ACCTNO BETWEEN 4000000000 AND 4999999999) OR
-        (ACCTNO BETWEEN 5000000000 AND 5999999999) OR
-        (ACCTNO BETWEEN 6000000000 AND 6999999999) OR
-        (ACCTNO BETWEEN 7000000000 AND 7999999999) OR
-        (ACCTNO BETWEEN 8000000000 AND 8999999999)
-    )
-"""
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE RLEN017 AS
-    SELECT 
-        ACCTNO, CUSTNO, BASICGRPCODE,
-        'Y' AS GTOR_INDC
-    FROM read_parquet(?)
-    WHERE {account_filter}
-      AND RLENCODE = 017
-""", [CISFILE])
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE RLEN020 AS
-    SELECT 
-        ACCTNO, CUSTNO, BASICGRPCODE,
-        'Y' AS BORROWER_INDC
-    FROM read_parquet(?)
-    WHERE {account_filter}
-      AND RLENCODE = 020
-""", [CISFILE])
-
-# ============================================================
-# 3. Merge RLEN017 and RLEN020
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE MERGE_RLEN AS
-    SELECT 
-        COALESCE(a.ACCTNO, b.ACCTNO) AS ACCTNO,
-        COALESCE(a.CUSTNO, b.CUSTNO) AS CUSTNO,
-        COALESCE(a.BASICGRPCODE, b.BASICGRPCODE) AS BASICGRPCODE,
-        COALESCE(GTOR_INDC, 'N') AS GTOR_INDC,
-        COALESCE(BORROWER_INDC, 'N') AS BORROWER_INDC
-    FROM RLEN017 a
-    FULL OUTER JOIN RLEN020 b
-      ON a.ACCTNO = b.ACCTNO AND a.CUSTNO = b.CUSTNO
+            WHEN length(OPENDATE)=8 THEN substr(OPENDATE,1,4)||'-'||substr(OPENDATE,5,2)||'-'||substr(OPENDATE,7,2)
+            ELSE '9999-01-01'
+        END AS DATEOPEN,
+        CASE
+            WHEN length(CLOSEDATE)=8 THEN substr(CLOSEDATE,1,4)||'-'||substr(CLOSEDATE,5,2)||'-'||substr(CLOSEDATE,7,2)
+            ELSE '9999-01-01'
+        END AS DATECLOSE
+    FROM read_parquet('{sccard}')
+    WHERE ALIAS IS NOT NULL AND ALIAS <> '' AND ALIASKEY <> 'CV '
 """)
 
 # ============================================================
-# 4. LNCUST: Loan + Deposit customers
-# ============================================================
-con.execute(f"""
-    CREATE OR REPLACE TABLE LNCUST AS
-    SELECT 
-        CUSTNO, ACCTNO, ACCTNOC, PRISEC, TAXID,
-        RLENCODE, RELATIONDESC, ACCTCODE, BASICGRPCODE
-    FROM read_parquet(?)
-    WHERE {account_filter}
-""", [CISFILE])
-
-# ============================================================
-# 5. Merge LNCUST with MERGE_RLEN
+# STEP 3: MERGE CUST + CARD
 # ============================================================
 con.execute("""
-    CREATE OR REPLACE TABLE MERGE_GTOR AS
-    SELECT 
-        l.*, 
-        r.BORROWER_INDC, 
-        r.GTOR_INDC
-    FROM LNCUST l
-    LEFT JOIN MERGE_RLEN r
-      ON l.CUSTNO = r.CUSTNO AND l.ACCTNO = r.ACCTNO
+    CREATE TABLE cardcust AS
+    SELECT *
+    FROM cust
+    JOIN card USING (ALIAS, TAXID)
 """)
 
 # ============================================================
-# 6. Merge with CCPARTNER
+# STEP 4: CREATE NEWIC / OLDIC VERSIONS
 # ============================================================
 con.execute("""
-    CREATE OR REPLACE TABLE MERGE_PARTNER AS
-    SELECT 
-        g.*, 
-        c.PARTNER_INDC
-    FROM MERGE_GTOR g
-    LEFT JOIN CCPARTNER c
-      ON g.CUSTNO = c.CUSTNO
-""")
-
-# ============================================================
-# 7. Customer IDs (Alias)
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE IDS AS
-    SELECT 
-        CUSTNO, ALIASKEY, ALIAS
-    FROM read_parquet(?)
-    WHERE ALIASKEY IN ('IC','BC','PP','ML','PL','BR','CI','PC','SA','GB','LP')
-""", [IDFILE])
-
-# ============================================================
-# 8. Combine into LNDETL
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE LNDETL AS
-    SELECT 
-        m.CUSTNO,
-        m.ACCTNOC,
-        m.TAXID,
-        m.PRISEC,
-        COALESCE(m.BORROWER_INDC, 'N') AS BORROWER_INDC,
-        COALESCE(m.GTOR_INDC, 'N') AS GTOR_INDC,
-        COALESCE(m.PARTNER_INDC, 'N') AS PARTNER_INDC,
-        m.BASICGRPCODE,
-        i.ALIASKEY,
-        i.ALIAS
-    FROM MERGE_PARTNER m
-    JOIN IDS i
-      ON m.CUSTNO = i.CUSTNO
-""")
-
-# ============================================================
-# 9. NEWIC and OLDIC logic
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE NEWIC AS
-    SELECT 
-        *,
-        (ALIASKEY || ALIAS) AS CUSTID,
-        '' AS TAXID
-    FROM LNDETL
+    CREATE TABLE card_newic AS
+    SELECT *, ALIASKEY || ALIAS AS CUSTID, '' AS TAXID, '' AS TAXNUM
+    FROM cardcust
 """)
 
 con.execute("""
-    CREATE OR REPLACE TABLE OLDIC AS
-    SELECT 
-        *,
-        ('OC ' || TAXID) AS CUSTID,
-        '' AS ALIASKEY,
-        '' AS ALIAS
-    FROM LNDETL
-    WHERE TAXID != '' AND TAXID != '000000000'
+    CREATE TABLE card_oldic AS
+    SELECT *, TAXID || TAXNUM AS CUSTID, '' AS ALIASKEY, '' AS ALIAS
+    FROM cardcust
 """)
 
-# ============================================================
-# 10. Combine both sets
-# ============================================================
 con.execute("""
-    CREATE OR REPLACE TABLE CUSTIDS AS
-    SELECT * FROM NEWIC
+    CREATE TABLE card_custids AS
+    SELECT * FROM card_newic
     UNION ALL
-    SELECT * FROM OLDIC
+    SELECT * FROM card_oldic
+    WHERE CUSTID <> ''
 """)
 
 # ============================================================
-# 11. Final output dataset
+# STEP 5: PROCESS CIS FILE
 # ============================================================
-final_df = """
-    SELECT 
+con.execute(f"""
+    CREATE TABLE cis AS
+    SELECT
+        ALIAS,
+        RLENCODE,
+        printf('%03d', RLENCODE) AS RLENCD,
         ACCTNOC,
         CUSTNO,
+        TAXID,
+        ALIASKEY,
+        CUSTNAME,
+        CASE WHEN PRISEC = '901' THEN 'P' ELSE 'S' END AS PRIMSEC,
+        RLENCATEGORY,
+        RELATIONDESC,
+        JOINTACC,
+        ACCTCODE
+    FROM read_parquet('{cisfile}')
+    WHERE ACCTCODE NOT IN ('DP','LN','EQC')
+      AND CUSTNO <> ''
+      AND ACCTNOC <> ''
+""")
+
+# ============================================================
+# STEP 6: CIS NEWIC / OLDIC / COMBINED
+# ============================================================
+con.execute("""
+    CREATE TABLE cis_newic AS
+    SELECT *, ALIASKEY || ALIAS AS CUSTID, '' AS TAXID
+    FROM cis
+    WHERE ALIAS <> ''
+""")
+
+con.execute("""
+    CREATE TABLE cis_oldic AS
+    SELECT *, 'OC' || TAXID AS CUSTID, '' AS ALIASKEY, '' AS ALIAS
+    FROM cis
+    WHERE TAXID <> ''
+""")
+
+con.execute("""
+    CREATE TABLE cis_custids AS
+    SELECT * FROM cis_newic
+    UNION ALL
+    SELECT * FROM cis_oldic
+""")
+
+# ============================================================
+# STEP 7: MERGE MATCHED & UNMATCHED
+# ============================================================
+con.execute("""
+    CREATE TABLE matched_rec AS
+    SELECT a.*, b.CUSTNO, b.CUSTNAME, b.PRIMSEC, b.JOINTACC, b.RLENCD, b.RELATIONDESC
+    FROM card_custids a
+    JOIN cis_custids b USING (CUSTID, ACCTNOC)
+""")
+
+con.execute("""
+    CREATE TABLE un_matched_rec AS
+    SELECT a.*, a.ACCTNOC AS CUSTNO, a.ACCTNAME AS CUSTNAME
+    FROM card_custids a
+    WHERE NOT EXISTS (
+        SELECT 1 FROM cis_custids b
+        WHERE a.CUSTID = b.CUSTID AND a.ACCTNOC = b.ACCTNOC
+    )
+""")
+
+# ============================================================
+# STEP 8: FINAL OUTPUT
+# ============================================================
+con.execute("""
+    CREATE TABLE final AS
+    SELECT
         CUSTID,
-        CASE WHEN PRISEC = 901 THEN 'P'
-             WHEN PRISEC = 902 THEN 'S'
-             ELSE '' END AS PRIMSEC,
-        COALESCE(BORROWER_INDC, 'N') AS BORROWER_INDC,
-        COALESCE(GTOR_INDC, 'N') AS GTOR_INDC,
-        COALESCE(PARTNER_INDC, 'N') AS PARTNER_INDC,
-        BASICGRPCODE
-        ,{year1} AS year
-        ,{month1} AS month
-        ,{day1} AS day
-    FROM CUSTIDS
-""".format(year1=year1,month1=month1,day1=day1)
+        CUSTNO,
+        'PBB' AS SOURCE,
+        '001' AS BRANCHNO,
+        'HOE' AS BRCABBRV,
+        COALESCE(CUSTNAME, ACCTNAME) AS CUSTNAME,
+        ACCTCODE,
+        ACCTNOC,
+        PRIMSEC,
+        JOINTACC,
+        RLENCD,
+        RELATIONDESC,
+        STATUS,
+        MONITOR,
+        DUEDAY,
+        DATEOPEN,
+        DATECLOSE,
+        OVERDUEAMT,
+        TOTMIN,
+        TOTCOMBLIMIT
+    FROM matched_rec
+    UNION ALL
+    SELECT
+        CUSTID,
+        CUSTNO,
+        'PBB',
+        '001',
+        'HOE',
+        CUSTNAME,
+        ACCTCODE,
+        ACCTNOC,
+        PRIMSEC,
+        JOINTACC,
+        RLENCD,
+        RELATIONDESC,
+        STATUS,
+        MONITOR,
+        DUEDAY,
+        DATEOPEN,
+        DATECLOSE,
+        OVERDUEAMT,
+        TOTMIN,
+        TOTCOMBLIMIT
+    FROM un_matched_rec
+""")
 
 # ============================================================
-# 12. SAVE USING PYARROW
+# STEP 9: SAVE OUTPUT USING PYARROW
 # ============================================================
-queries = {
-    "SCEL_LOAN_iDS"            : final_df
-}
+table = con.execute("SELECT * FROM final").arrow()
+output_path = parquet_output_path("CISCCARD_output.parquet")
+pq.write_table(table, output_path)
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
-
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+print(f"✅ Output written to: {output_path}")
