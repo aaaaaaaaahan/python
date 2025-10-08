@@ -1,34 +1,23 @@
-con.execute("""
-    CREATE OR REPLACE TABLE NEWIC AS
-    SELECT 
-        CUSTNO,
-        ACCTNOC,
-        TAXID,
-        PRISEC,
-        BORROWER_INDC,
-        GTOR_INDC,
-        PARTNER_INDC,
-        BASICGRPCODE,
-        ALIASKEY,
-        ALIAS,
-        (ALIASKEY || ALIAS) AS CUSTID
-    FROM LNDETL
-""")
+duckdb.duckdb.BinderException: Binder Error: No function matches the given name and argument types '*(VARCHAR, INTEGER_LITERAL)'. You might need to add explicit type casts.
+        Candidate functions:
+        *(TINYINT, TINYINT) -> TINYINT
+        *(SMALLINT, SMALLINT) -> SMALLINT
+        *(INTEGER, INTEGER) -> INTEGER
+        *(BIGINT, BIGINT) -> BIGINT
+        *(HUGEINT, HUGEINT) -> HUGEINT
+        *(FLOAT, FLOAT) -> FLOAT
+        *(DOUBLE, DOUBLE) -> DOUBLE
+        *(DECIMAL, DECIMAL) -> DECIMAL
+        *(UTINYINT, UTINYINT) -> UTINYINT
+        *(USMALLINT, USMALLINT) -> USMALLINT
+        *(UINTEGER, UINTEGER) -> UINTEGER
+        *(UBIGINT, UBIGINT) -> UBIGINT
+        *(UHUGEINT, UHUGEINT) -> UHUGEINT
+        *(INTERVAL, DOUBLE) -> INTERVAL
+        *(DOUBLE, INTERVAL) -> INTERVAL
+        *(BIGINT, INTERVAL) -> INTERVAL
+        *(INTERVAL, BIGINT) -> INTERVAL
 
-con.execute("""
-    CREATE OR REPLACE TABLE OLDIC AS
-    SELECT 
-        CUSTNO,
-        ACCTNOC,
-        TAXID,
-        PRISEC,
-        BORROWER_INDC,
-        GTOR_INDC,
-        PARTNER_INDC,
-        BASICGRPCODE,
-        '' AS ALIASKEY,
-        '' AS ALIAS,
-        ('OC ' || TAXID) AS CUSTID
-    FROM LNDETL
-    WHERE TAXID != '' AND TAXID != '000000000'
-""")
+
+LINE 10:         CASE WHEN SIGN1 = '-' THEN OUTSTNDAMT * -1
+                                                       ^
