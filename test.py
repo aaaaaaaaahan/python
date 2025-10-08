@@ -3,191 +3,224 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CISCLNID JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0065051
+//CISCCARD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID     JOB35832
 //*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=SCEL.LOAN.IDS,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//*-EXTRACT LOAN & COLLATERAL ACCOUNT NUMBER TOGETHER WITH ALIAS
-//*---------------------------------------------------------------------
-//MOVEDATA EXEC SAS609
-//IEFRDER   DD DUMMY
+//MOVEDATA EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
 //SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
 //SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
 //SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
 //SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
 //SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SCCARD    DD DISP=SHR,DSN=SCEL.CARD.CARD
+//SCCUST    DD DISP=SHR,DSN=SCEL.CARD.CUST
 //CISFILE   DD DISP=SHR,DSN=CIS.CUST.DAILY
-//IDFILE    DD DISP=SHR,DSN=CIS.CUST.DAILY.IDS
-//CCFILE    DD DISP=SHR,DSN=CCRIS.CC.RLNSHIP.SRCH
-//OUTFILE   DD DSN=SCEL.LOAN.IDS,
+//OUTFILE   DD DSN=SCEL.CARD.ACCT,
 //             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(1000,1000),RLSE),
-//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//             UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
+//             DCB=(LRECL=800,BLKSIZE=0,RECFM=FB)
 //SASLIST   DD SYSOUT=X
 //SYSIN     DD *
-OPTIONS NOCENTER;
-
- DATA CCPARTNER;
- KEEP CUSTNO PARTNER_INDC CODE DESC ;
- INFILE CCFILE;
-    INPUT @01   CUSTNO            $11.      /* CUST1 - CIS#          */
-          @15   INDORG             $1.      /* CUST1 - CUST TYPE     */
-          @20   CODE               $3.      /* CUST1 - RLEN CODE     */
-          @25   DESC              $15. ;    /* CUST1 - RLEN DESC     */
-    IF CODE = '050';
-    PARTNER_INDC = 'Y';
- RUN;
- PROC SORT  DATA=CCPARTNER NODUPKEY; BY CUSTNO ;RUN;
- PROC PRINT DATA=CCPARTNER (OBS=10);TITLE 'CCPARTNER  ';RUN;
-
- DATA RLEN017 RLEN020;
- KEEP ACCTNO CUSTNO BASICGRPCODE;
-    SET CISFILE.CUSTDLY;
-    IF ACCTCODE IN ('LN','DP');
-    IF 1000000000 < ACCTNO < 1999999999
-    OR 2000000000 < ACCTNO < 2999999999
-    OR 3000000000 < ACCTNO < 3999999999
-    OR 4000000000 < ACCTNO < 4999999999
-    OR 5000000000 < ACCTNO < 5999999999     /*194587*/
-    OR 6000000000 < ACCTNO < 6999999999
-    OR 7000000000 < ACCTNO < 7999999999
-    OR 8000000000 < ACCTNO < 8999999999 ;
-    IF ACCTNO EQ '  ' THEN DELETE;
-
-    IF RLENCODE = 017 THEN DO;     /* GUARANTOR              */
-       OUTPUT RLEN017;
-    END;
-
-    IF RLENCODE = 020 THEN DO;     /* BORROWER /HIRER        */
-       OUTPUT RLEN020;
-    END;
- RUN;
-
- DATA RLEN017;
-     SET RLEN017;
-     GTOR_INDC = 'Y';
- RUN;
-
- DATA RLEN020;
-     SET RLEN020;
-     BORROWER_INDC = 'Y';
- RUN;
- PROC SORT  DATA=RLEN017  ; BY ACCTNO  CUSTNO ;RUN;
- PROC SORT  DATA=RLEN020  ; BY ACCTNO  CUSTNO ;RUN;
- PROC PRINT DATA=RLEN017 (OBS=10);TITLE 'RLEN017    ';RUN;
- PROC PRINT DATA=RLEN020 (OBS=10);TITLE 'RLEN020    ';RUN;
-
- DATA MERGE_RLEN;
-   MERGE RLEN017(IN=A) RLEN020(IN=B);
-         BY ACCTNO  CUSTNO;
-   IF GTOR_INDC     = ' ' THEN GTOR_INDC     = 'N';
-   IF BORROWER_INDC = ' ' THEN BORROWER_INDC = 'N';
- RUN;
- PROC SORT  DATA=MERGE_RLEN NODUPKEY  ; BY CUSTNO ACCTNO  ;RUN;
- PROC PRINT DATA=MERGE_RLEN (OBS=10)  ;TITLE 'MERGE_RLEN ';RUN;
-
- DATA LNCUST;
-   SET CISFILE.CUSTDLY;
-   KEEP CUSTNO ACCTNO ACCTNOC PRISEC TAXID
-   RLENCODE RELATIONDESC ACCTCODE BASICGRPCODE;
-
-   IF ACCTCODE IN ('LN','DP');
-   IF 1000000000 < ACCTNO < 1999999999
-   OR 2000000000 < ACCTNO < 2999999999
-   OR 3000000000 < ACCTNO < 3999999999
-   OR 4000000000 < ACCTNO < 4999999999
-   OR 5000000000 < ACCTNO < 5999999999      /*194587*/
-   OR 6000000000 < ACCTNO < 6999999999
-   OR 7000000000 < ACCTNO < 7999999999
-   OR 8000000000 < ACCTNO < 8999999999 ;
-   IF ACCTNO EQ '  ' THEN DELETE;
+ /*----------------------------------------------------------------*/
+ /*    PROCESS CREDIT CARD FILE
+ /*----------------------------------------------------------------*/
+ DATA CUST;
+   INFILE SCCUST;
+   INPUT @001 ALIASKEY       $3.
+         @004 ALIAS          $12.
+         @016 TAXID          $3.                /* OLDIC IND */
+         @019 TAXNUM         $12.               /* OLDIC */
+         @031 ACCTNAME       $40.
+         @071 TOTCOMBLIMIT   6.
+         @077 OUTSTNDAMT     10.2
+         @087 SIGN1          $1.
+         @088 TOTMIN         10.2
+         @098 SIGN2          $1.
+         @099 OUTSTANDDUE    10.2
+         @109 SIGN3          $1.;
+         IF ALIAS EQ '' THEN DELETE;
+         IF ALIASKEY ='CV ' THEN DELETE;
+         IF SIGN1 = '-' THEN OUTSTNDAMT =OUTSTNDAMT *(-1);
+         IF SIGN1 = '+' THEN OUTSTNDAMT =OUTSTNDAMT *(+1);
+         IF SIGN2 = '-' THEN TOTMIN     =TOTMIN     *(-1);
+         IF SIGN2 = '+' THEN TOTMIN     =TOTMIN     *(+1);
+         IF SIGN3 = '-' THEN OUTSTANDDUE=OUTSTANDDUE*(-1);
+         IF SIGN3 = '+' THEN OUTSTANDDUE=OUTSTANDDUE*(+1);
 
  RUN;
- PROC SORT DATA=LNCUST; BY CUSTNO ACCTNO;RUN;
- PROC PRINT DATA=LNCUST(OBS=10); TITLE'LNCUST';RUN;
+ PROC SORT DATA=CUST;BY ALIAS TAXID;RUN;
+ PROC PRINT DATA=CUST(OBS=10);TITLE 'CUST';RUN;
 
- DATA MERGE_GTOR;
-   MERGE LNCUST(IN=C) MERGE_RLEN(IN=D);
-         BY CUSTNO ACCTNO;
-   IF C;
+ DATA CARD;
+   FORMAT DATEOPEN $10. DATECLOSE $10. OPENMM $2. OPENYY $4. OPENDD $2.
+          CLOSEMM $2. CLOSEYY $4. CLOSEDD $2.;
+   INFILE SCCARD;
+   INPUT @001 ALIASKEY       $3.
+         @004 ALIAS          $12.
+         @016 TAXID          $3.                /* OLDIC IND*/
+         @019 TAXNUM         $12.               /* OLDIC */
+         @031 ACCTNOC        $16.
+         @047 OPENDATE       $8. /*YYYYMMDD*/
+         @055 STATUS         $1.
+         @056 CLOSEDATE      $8. /*YYYYMMDD*/
+         @064 MONITOR        $1.
+         @065 DUEDAY         $3.
+         @068 OVERDUEAMT     10.2
+         @078 SIGN4          $1.
+         @079 PRODTYPE       $5.;
+         ACCTCODE = PRODTYPE;
+         IF SIGN4 = '-' THEN OVERDUEAMT =OVERDUEAMT *(-1);
+         IF SIGN4 = '+' THEN OVERDUEAMT =OVERDUEAMT *(+1);
+
+         IF ALIAS EQ '' THEN DELETE;
+         IF ALIASKEY ='CV ' THEN DELETE;
+         OPENYY=SUBSTR(OPENDATE,1,4);
+         OPENMM=SUBSTR(OPENDATE,5,2);
+         OPENDD=SUBSTR(OPENDATE,7,2);
+         IF OPENYY NE '' AND OPENDD NE '' AND OPENMM NE '' THEN
+            DATEOPEN=OPENYY||'-'||OPENMM||'-'||OPENDD;
+         ELSE DATEOPEN='9999-01-01';
+
+         CLOSEYY=SUBSTR(CLOSEDATE,1,4);
+         CLOSEMM=SUBSTR(CLOSEDATE,5,2);
+         CLOSEDD=SUBSTR(CLOSEDATE,7,2);
+         IF CLOSEYY NE '' AND CLOSEDD NE '' AND CLOSEMM NE '' THEN
+            DATECLOSE=CLOSEYY||'-'||CLOSEMM||'-'||CLOSEDD;
+         ELSE DATECLOSE='9999-01-01';
  RUN;
- PROC SORT  DATA=MERGE_GTOR NODUPKEY  ; BY CUSTNO ACCTNO ;RUN;
- PROC PRINT DATA=MERGE_GTOR   (OBS=10);TITLE 'MERGE_GTOR ';RUN;
+ PROC SORT DATA=CARD;BY ALIAS TAXID;RUN;
+ PROC PRINT DATA=CARD(OBS=10);TITLE 'CARD';RUN;
 
- DATA MERGE_PARTNER;
-   MERGE MERGE_GTOR(IN=F) CCPARTNER(IN=G);
-         BY CUSTNO;
-   IF F;
+ DATA CARDCUST;
+    MERGE CUST(IN=A) CARD(IN=B);BY ALIAS TAXID;
  RUN;
- PROC SORT  DATA=MERGE_PARTNER ; BY CUSTNO ACCTNO ;RUN;
- PROC PRINT DATA=MERGE_PARTNER(OBS=10);TITLE 'MERGE_PARTNER ';RUN;
+ PROC SORT DATA=CARDCUST;BY ALIASKEY ALIAS ACCTNOC;RUN;
+ PROC PRINT DATA=CARDCUST(OBS=10);TITLE'CARD + CUST';RUN;
 
- DATA IDS;
-    SET IDFILE.CUSTIDS;
-        KEEP CUSTNO ALIASKEY ALIAS;
-        IF ALIASKEY IN ('IC','BC','PP','ML','PL',
-                        'BR','CI','PC','SA','GB','LP');
- RUN;
- PROC SORT DATA=IDS;BY CUSTNO;RUN;
- PROC PRINT DATA=IDS (OBS=10);TITLE 'CUST IDS FILE';RUN;
-
- PROC SQL;
- CREATE TABLE LNDETL AS
-   SELECT MERGE_PARTNER.CUSTNO
-         ,MERGE_PARTNER.ACCTNOC
-         ,MERGE_PARTNER.TAXID
-         ,MERGE_PARTNER.PRISEC
-         ,MERGE_PARTNER.BORROWER_INDC
-         ,MERGE_PARTNER.GTOR_INDC
-         ,MERGE_PARTNER.PARTNER_INDC
-         ,MERGE_PARTNER.BASICGRPCODE
-         ,IDS.ALIASKEY
-         ,IDS.ALIAS
-     FROM  MERGE_PARTNER,IDS
-     WHERE MERGE_PARTNER.CUSTNO = IDS.CUSTNO;
- QUIT;
-
- PROC SORT DATA=LNDETL;BY ACCTNOC CUSTNO;RUN;
- PROC PRINT DATA=LNDETL(OBS=10);TITLE'LNDETL';RUN;
-
- DATA NEWIC;
-      SET LNDETL;
+ DATA CARD_NEWIC;
+      SET CARDCUST;
       CUSTID=ALIASKEY||ALIAS;
       TAXID ='';
-
+      TAXNUM='';
  RUN;
 
- DATA OLDIC;
-      SET LNDETL;
-      CUSTID='OC '||TAXID;
+ DATA CARD_OLDIC;
+      SET CARDCUST;
+      CUSTID=TAXID||TAXNUM;
       ALIASKEY='';
       ALIAS='';
-      IF TAXID EQ '' THEN DELETE;
-      IF TAXID EQ '000000000' THEN DELETE;
  RUN;
- PROC SORT DATA=OLDIC NODUPKEY;BY CUSTNO ACCTNOC;RUN;
 
- DATA CUSTIDS;
-      SET NEWIC OLDIC;
+ DATA CARD_CUSTIDS;
+      SET CARD_NEWIC CARD_OLDIC;
+      IF CUSTID = '' THEN DELETE;
  RUN;
- PROC SORT DATA=CUSTIDS;BY CUSTNO ACCTNOC CUSTID;RUN;
+ PROC SORT DATA=CARD_CUSTIDS; BY CUSTID ACCTNOC;RUN;
 
- DATA OUT;
-   SET CUSTIDS;
-   FILE OUTFILE;
-   IF PRISEC = 901 THEN PRIMSEC = 'P';
-   IF PRISEC = 902 THEN PRIMSEC = 'S';
-   IF GTOR_INDC     = ' ' THEN GTOR_INDC     = 'N';
-   IF BORROWER_INDC = ' ' THEN BORROWER_INDC = 'N';
-   IF PARTNER_INDC  = ' ' THEN PARTNER_INDC  = 'N';
-   PUT @001 ACCTNOC            $11.
-       @012 CUSTNO             $11.
-       @023 CUSTID             $30.
-       @054 PRIMSEC            $1.
-       @056 BORROWER_INDC      $1.     /* HIRER      CA 020*/
-       @058 GTOR_INDC          $1.     /* GUARANTOR  CA 017*/
-       @060 PARTNER_INDC       $1.     /* PARTNER    CC 050*/
-       @064 BASICGRPCODE       $5. ;
+ DATA CIS;
+    FORMAT ALIAS $12. RLENCD $3. ACCTNOC $16. TAXID $12. CUSTNO $20.;
+    SET CISFILE.CUSTDLY;
+    KEEP ACCTNOC CUSTNO ALIAS TAXID ALIASKEY
+         CUSTNAME PRIMSEC RLENCATEGORY RLENCD RELATIONDESC JOINTACC;
+    IF ACCTCODE NOT IN ('DP','LN','EQC');
+    IF CUSTNO  EQ ' ' THEN DELETE;
+    IF ACCTNOC EQ ' ' THEN DELETE;
+    IF PRISEC  EQ '901' THEN PRIMSEC = 'P';
+    ELSE PRIMSEC = 'S';
+    RLENCD   = PUT(RLENCODE,Z3.);
  RUN;
+ PROC SORT  DATA=CIS;BY ALIASKEY ALIAS ACCTNOC;RUN;
+ PROC PRINT DATA=CIS (OBS=05);TITLE 'CIS DAILY';RUN;
+
+ DATA CIS_NEWIC;
+     SET CIS;
+     IF ALIAS ='' THEN DELETE;
+     CUSTID=ALIASKEY||ALIAS;
+     TAXID='';
+ RUN;
+
+ DATA CIS_OLDIC;
+     SET CIS;
+     IF TAXID ='' THEN DELETE;
+     CUSTID='OC'||TAXID;
+     ALIASKEY='';
+     ALIAS='';
+ RUN;
+
+ DATA CIS_CUSTIDS;
+     SET CIS_NEWIC CIS_OLDIC;
+ RUN;
+ PROC SORT DATA=CIS_CUSTIDS; BY CUSTID ACCTNOC;RUN;
+
+ DATA MATCHED_REC UN_MATCHED_REC;
+     MERGE CARD_CUSTIDS(IN=A) CIS_CUSTIDS(IN=B);BY CUSTID ACCTNOC;
+     IF A AND B THEN DO ;
+          OUTPUT MATCHED_REC;
+     END;
+     IF A AND NOT B THEN DO;
+          CUSTNO=ACCTNOC;
+          CUSTNAME=ACCTNAME;
+          OUTPUT UN_MATCHED_REC;
+     END;
+ RUN;
+
+ DATA FINAL;
+    SET MATCHED_REC  UN_MATCHED_REC;
+    FILE OUTFILE;
+    BRANCHNO='001';
+    BRCABBRV='HOE';
+    BANKINDC='';
+       PUT @001 CUSTID         $20.      /*ID-NO              */
+           @021 CUSTNO         $20.      /*CUST-NO            */
+           @041 SORTKEY        $5.       /*SRT-KEY            */
+           @046 'PBB'                    /*SOURCE             */
+           @051 BANKINDC       $5.       /*BANK-INDC          */
+           @056 CUSTNAME       $100.     /*CUST-NAME          */
+           @156 ACCTCODE       $5.       /*APPL-CODE          */
+           @161 ACCTNOC        $20.      /*ACCT-NO            */
+           @181 ''                       /*NOTE-NO            */
+           @186 MULTINOTEIND   $1.       /*MULTI-NOTE-IND     */
+           @187 ''                       /*REF-KEY-1          */
+           @192 ''                       /*REF1               */
+           @212 ''                       /*REF-KEY-2          */
+           @217 ''                       /*REF2               */
+           @237 PRIMSEC        $1.       /*PRISEC             */
+           @238 JOINTACC       $1.       /*JOINT-INDC         */
+           @239 RLENCD         $3.       /*RLENCODE           */
+           @242 RELATIONDESC   $30.      /*RLENDESC           */
+           @272 BRANCHNO       $5.       /*ACCT-BRANCH-NO     */
+           @277 BRCABBRV       $8.       /*ACCT-BRANCH-ABBRV  */
+           @285 ACCTNAME       $100.     /*ACCT-NAME          */
+           @385 STATUS         $1.       /*ACCT-STATUS        */
+           @386 ''                       /*ACCT-STATUS1       */
+           @387 MONITOR        $5.       /*DELQ-REASON        */
+           @392 'MYR'                    /*ACCT-CURR-CODE     */
+           @395 'MYR'                    /*ACCT-CURR-BASE     */
+           @398 PRODTYPE       $5.       /*ACCT-PROD-TYPE     */
+           @403 X              PD7.2     /*CUR-BAL            */
+           @410 X              PD7.2     /*INSTALL-AMT        */
+           @417 X              PD7.2     /*OUTSTAND-AMT       */
+           @424 X              PD7.2     /*APPRV-LIMIT        */
+           @431 X              PD7.2     /*OVERALL-LIMIT      */
+           @438 X              PD7.2     /*FACILITY-LIMIT     */
+           @445 OVERDUEAMT     PD7.2     /*OVERDUE-AMT        */
+           @452 TOTMIN         PD7.2     /*MINDUE-AMT         */
+           @459 TOTCOMBLIMIT   PD7.2     /*COMBINE-LIMIT      */
+           @466 X              PD7.2     /*CUST-LIMIT         */
+           @473 X              PD7.2     /*BILL-NOT-PAID      */
+           @480 '0001-01-01'             /*BILL-DUE-DATE      */
+           @490 DATEOPEN       $10.      /*ACCT-OPEN-DATE     */
+           @500 DATECLOSE      $10.      /*ACCT-CLSE-DATE     */
+           @510 '0001-01-01'             /*ISSUE-DATE         */
+           @520 '0001-01-01'             /*MATURE-DATE        */
+           @530 X              PD2.      /*TERM                 */
+           @532 X              PD3.2     /*RATE-OVER            */
+           @535 X              PD3.2     /*MARGIN-POINT         */
+           @538 X              PD6.      /*MARKET-VALUE         */
+           @544 ''                       /*INDEX                */
+           @547 ''                       /*INTEREST-TYPE        */
+           @548 ''                       /*COLL-DESC            */
+           @618 DUEDAY         $3.       /*TIMES-LATE15-OVERDUE */
+           @621 ''                       /*TIMES-LATE30         */
+           @624 ''                       /*TIMES-LATE60         */
+           @627 ''                   ;   /*TIMES-LATE90         */
+    RUN;
