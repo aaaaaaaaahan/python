@@ -1,50 +1,48 @@
 con.execute("""
-    CREATE TABLE cis_newic AS
+    CREATE TABLE final AS
     SELECT
-        ALIAS,
-        TAXID,
-        ALIASKEY,
-        ACCTNOC,
+        CUSTID,
         CUSTNO,
-        CUSTNAME,
-        PRIMSEC,
-        RLENTYPE,
-        RLENDESC,
-        JOINTACC,
+        'PBB' AS SOURCE,
+        '001' AS BRANCHNO,
+        'HOE' AS BRCABBRV,
+        COALESCE(b.CUSTNAME, a.ACCTNAME) AS CUSTNAME,
         ACCTCODE,
-        RLENCODE,
-        RLENCD,
-        'NEWIC' AS TYPE,
-        ALIASKEY || ALIAS AS CUSTID
-    FROM cis
-    WHERE ALIAS <> ''
-""")
-
-con.execute("""
-    CREATE TABLE cis_oldic AS
-    SELECT
-        ALIAS,
-        TAXID,
-        ALIASKEY,
         ACCTNOC,
-        CUSTNO,
-        CUSTNAME,
         PRIMSEC,
-        RLENTYPE,
-        RLENDESC,
         JOINTACC,
-        ACCTCODE,
-        RLENCODE,
         RLENCD,
-        'OLDIC' AS TYPE,
-        'OC' || TAXID AS CUSTID
-    FROM cis
-    WHERE TAXID <> ''
-""")
-
-con.execute("""
-    CREATE TABLE cis_custids AS
-    SELECT * FROM cis_newic
+        RELATIONDESC,
+        STATUS,
+        MONITOR,
+        DUEDAY,
+        DATEOPEN,
+        DATECLOSE,
+        OVERDUEAMT,
+        TOTMIN,
+        TOTCOMBLIMIT
+    FROM matched_rec a
     UNION ALL
-    SELECT * FROM cis_oldic
+    SELECT
+        CUSTID,
+        CUSTNO,
+        'PBB' AS SOURCE,
+        '001' AS BRANCHNO,
+        'HOE' AS BRCABBRV,
+        CUSTNAME,
+        ACCTCODE,
+        ACCTNOC,
+        '' AS PRIMSEC,
+        '' AS JOINTACC,
+        '' AS RLENCD,
+        '' AS RELATIONDESC,
+        STATUS,
+        MONITOR,
+        DUEDAY,
+        DATEOPEN,
+        DATECLOSE,
+        OVERDUEAMT,
+        TOTMIN,
+        TOTCOMBLIMIT
+    FROM un_matched_rec
 """)
