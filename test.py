@@ -3,294 +3,182 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CICBDEXT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0117418
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=CDB.DPFILE,
+//CISUMREP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB24841
+//*--------------------------------------------------------------------
+//INITDS   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS.CIREPTTT.SUMMARY,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL2     DD DSN=CDB.LNFILE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL3     DD DSN=CDB.BTFILE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL4     DD DSN=BPM.DPFILE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* NODUPS (GET ALL RECORD WITH CHANGES/NEW COMPARE ALL FIELDS)
-//* USING IDIC DAILY CHANGES TO GET THE MSIC AND CUSTOMER CODE
-//*
-//*---------------------------------------------------------------------
-//GETCHG   EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//NEWCHG   DD DISP=SHR,DSN=CIS.IDIC.DAILY.INEW
-//OLDCHG   DD DISP=SHR,DSN=CIS.IDIC.DAILY.IOLD
-//NOCHG    DD DISP=SHR,DSN=CIS.IDIC.DAILY.NOCHG
-//RLEN#CA  DD DISP=SHR,DSN=UNLOAD.RLEN#CA
-//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
-//OUTFILE  DD DSN=CDB.DPFILE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//OUTFIL1  DD DSN=CDB.LNFILE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//OUTFIL2  DD DSN=CDB.BTFILE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//OUTBPM1  DD DSN=BPM.DPFILE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//*--------------------------------------------------------------------
+//*--- PROCESSING
+//*--------------------------------------------------------------------
+//GET#RECS EXEC SAS609
+//* UNLOAD JOB FROM CIULREPT
+//REPTFILE DD DISP=SHR,DSN=UNLOAD.CIREPTTT.FB
+//*CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
+//OUTFILE  DD DSN=CIS.CIREPTTT.SUMMARY,
+//            DISP=(NEW,CATLG,DELETE),SPACE=(CYL,(10,10),RLSE),
+//            UNIT=SYSDA,DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
 //SYSIN    DD *
-OPTION NOCENTER;
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=5;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
  /*----------------------------------------------------------------*/
- /*    SET DATES                                                   */
+ /*    INPUT FILE DATA DECLARATION                                 */
  /*----------------------------------------------------------------*/
-    DATA SRSDATE;
-          INFILE CTRLDATE;
-            INPUT @001  SRSYY    4.
-                  @005  SRSMM    2.
-                  @007  SRSDD    2.;
+DATA HRCDATA XHRCDATA;
+  INFILE REPTFILE; FORMAT CNTVIEW 8.;
+  INPUT  @001  BANKNO            PD2.
+         @003  RECTYPE            $5.
+         @008  APPLCODE           $5.
+         @013  APPLNO            $20.
+         @033  NOTENO            $10.
+         @043  REPORTDATE        $10.
+         @053  REPORTNO          $20.
+         @073  BRANCHNO           $7.
+         @080  NAME              $60.
+         @140  CODE1              $5.
+         @145  CODE2              $5.
+         @150  CODE3              $5.
+         @155  CODE4              $5.
+         @160  CODE5              $5.
+         @165  AMOUNT1           $20.
+         @185  AMOUNT2           $20.
+         @205  AMOUNT3           $20.
+         @225  AMOUNT4           $20.
+         @245  AMOUNT5           $20.
+         @265  DATE1             $10.
+         @275  DATE2             $10.
+         @285  DATE3             $10.
+         @295  DATE4             $10.
+         @305  DATE5             $10.
+         @315  REMARK1           $25.
+         @340  REMARK2           $25.
+         @365  REMARK3           $25.
+         @390  REMARK4           $25.
+         @415  REMARK5           $25.
+         @440  VIEWED             $1.
+         @441  CUSTASSESS         $1.
+         @442  BRCHCOMMENTS      $40.
+         @482  BRCHREVIEW        $30.
+         @512  BRCHCHECK         $30.
+         @542  HOCOMMENTS        $40.
+         @582  HOREVIEW          $30.
+         @612  HOCHECK           $30.
+         @642  CUSTOCCUP          $5.
+         @647  CUSTNATURE         $5.
+         @652  CUSTEMPLOYER      $40.
+         @692  INDORG             $1.
+         @693  OCCUPDESC         $40.
+         @733  NATUREDESC        $40.
+         @773  VIEWOFFICER        $1.
+         @774  REVIEWED           $1.;
 
-          /* DISPLAY TODAY REPORTING DATE*/
-          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-          CALL SYMPUT('RDATE',PUT(TODAYSAS,YYMMDDN8.));
+         IF RECTYPE EQ 'DPST' AND APPLCODE EQ 'DP' AND
+            REMARK3 IN ('126','127','128','129','140','141','142',
+                        '143','144','145','146','147','148','149',
+                        '171','172','173')
+         THEN DELETE;
 
-    RUN;
-   PROC PRINT;RUN;
-  /*TO CHANGE STATUS*/
-DATA NEWCHG;
-  INFILE NEWCHG;
-   INPUT @21   CUSTNO                 $11.
-         @188  CUSTMNTDATE            $08.
-         @196  CUSTLASTOPER           $8.
-         @316  CUST_CODE              $3.
-         @327  MSICCODE               $5.;
-PROC SORT  DATA=NEWCHG; BY CUSTNO;
-PROC PRINT DATA=NEWCHG(OBS=5);TITLE 'NEW CHG';
-RUN;
+         IF (REVIEWED EQ 'Y' OR VIEWED EQ 'Y')
+         THEN CNTVIEW = 1;
+         ELSE CNTVIEW = 0;
 
-DATA OLDCHG;
-  INFILE OLDCHG;
-   INPUT @21   CUSTNO                 $11.
-         @188  CUSTMNTDATEX           $08.
-         @196  CUSTLASTOPERX          $8.
-         @316  CUST_CODEX             $3.
-         @327  MSICCODEX              $5.;
-PROC SORT  DATA=OLDCHG; BY CUSTNO;
-PROC PRINT DATA=OLDCHG(OBS=5);TITLE 'OLD CHG';
-RUN;
+         IF RECTYPE EQ 'DPST' AND REMARK1 NE ' '
+            AND REMARK2 NE ' ' THEN OUTPUT HRCDATA;
+         ELSE OUTPUT XHRCDATA;
 
-  /*203801*/
-DATA NEWCUST;
-  INFILE NOCHG;
-   FORMAT UPDMSIC $1. UPDCCDE $1.;
-   INPUT @01   RUNTIMESTAMP           $20.
-         @21   CUSTNO                 $11.
-         @188  CUSTMNTDATEX           $08.
-         @196  CUSTLASTOPERX          $8.
-         @316  CUST_CODE              $3.
-         @327  MSICCODE               $5.;
-         DATESTAMP="&YEAR"||"&MONTH"||"&DAY";
-         DATEREC = SUBSTR(RUNTIMESTAMP,1,8);
-         IF DATESTAMP NE DATEREC THEN DELETE;
-         UPDMSIC = 'N';
-         UPDCCDE = 'N';
-         IF CUST_CODE NOT = ' ' THEN UPDMSIC = 'Y';
-         IF MSICCODE  NOT = ' ' THEN UPDCCDE = 'Y';
-PROC SORT  DATA=NEWCUST; BY CUSTNO;
-PROC PRINT DATA=NEWCUST(OBS=5);TITLE 'NEW CUST';
-RUN;
+ PROC SORT  DATA=HRCDATA;
+ BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
+ PROC SORT  DATA=XHRCDATA;
+ BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
+ PROC PRINT DATA=HRCDATA(OBS=5);TITLE 'HRC REPORT DATA';RUN;
+ PROC PRINT DATA=XHRCDATA(OBS=5);TITLE 'NOT HRC REPORT DATA';RUN;
 
-DATA RLEN;
-  INFILE RLEN#CA;
-  INPUT  @005  ACCTNOC           $20.
-         @025  ACCTCODE          $5.
-         @046  CUSTNO            $11.
-         @066  RLENCODE          PD2.
-         @068  PRISEC            PD2.;
-         RLENCD = PUT(RLENCODE,Z3.);
-         IF ACCTCODE NOT IN ('DP   ','LN   ') THEN DELETE;
- RUN;
-PROC SORT  DATA=RLEN; BY CUSTNO;RUN;
-PROC PRINT DATA=RLEN(OBS=5);TITLE 'RLEN';
+ /*----------------------------------------------------------------*/
+ /*  PROC SUMMARY FOR HRC DATA                                     */
+ /*----------------------------------------------------------------*/
+ PROC SUMMARY DATA=HRCDATA;
+ BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO;
+ VAR CNTVIEW;
+ OUTPUT OUT=TEMP (DROP=_TYPE_ RENAME=(_FREQ_=TOTAL))
+                  SUM=CNTVIEW; RUN;
+ PROC SORT  DATA=TEMP; BY BRANCHNO ;RUN;
+ PROC PRINT DATA=TEMP(OBS=5);TITLE 'HRC SUMMARY';RUN;
 
-   DATA MERGE_A;
-        MERGE NEWCHG(IN=A) OLDCHG(IN=B);
-        BY CUSTNO;
-        IF A AND B;
+ /*----------------------------------------------------------------*/
+ /*  PROC SUMMARY FOR NON HRC REPORT DATA                          */
+ /*----------------------------------------------------------------*/
+ PROC SUMMARY DATA=XHRCDATA;
+ BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO;
+ VAR CNTVIEW;
+ OUTPUT OUT=TEMP1(DROP=_TYPE_ RENAME=(_FREQ_=TOTAL)) SUM=CNTVIEW; RUN;
+ PROC SORT  DATA=TEMP1; BY BRANCHNO ;RUN;
+ PROC PRINT DATA=TEMP1(OBS=5);TITLE 'NON-HRC SUMMARY';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* SELECT ONLY VIEWED RECORDS < 100% FOR ALL HRC RECORDS          */
+ /*----------------------------------------------------------------*/
+ DATA HRCRECS;
+     SET TEMP; FORMAT PTAGE 8.2 ISHRC $1.;
+     ISHRC = 'Y';
+     PTAGE = (CNTVIEW * 100) / TOTAL;
+     IF PTAGE < 100 THEN OUTPUT;
+ PROC SORT  DATA=HRCRECS;
+ BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
+ PROC PRINT DATA=HRCRECS(OBS=5);TITLE 'HRC RECORDS';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* SELECT ONLY VIEWED RECORDS < 10% FOR ALL NON-HRC RECORDS        */
+ /*----------------------------------------------------------------*/
+ DATA NONHRCRECS;
+     SET TEMP1; FORMAT PTAGE 8.2 ISHRC $1.;
+     ISHRC = 'N';
+     PTAGE = (CNTVIEW * 100) / TOTAL;
+     IF PTAGE < 10 THEN OUTPUT;
+ PROC SORT  DATA=NONHRCRECS;
+ BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
+ PROC PRINT DATA=NONHRCRECS(OBS=5);TITLE 'NON-HRC RECORDS ';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* MERGED ALL RECORDS                                              */
+ /*----------------------------------------------------------------*/
+ DATA MRGRECORDS; FORMAT YYYY $4. MM $2. DD $2.;
+     SET HRCRECS NONHRCRECS;
+     YYYY = SUBSTR(REPORTDATE,7,4);
+     MM   = SUBSTR(REPORTDATE,4,2);
+     DD   = SUBSTR(REPORTDATE,1,2);
+ PROC SORT  DATA=MRGRECORDS;
+ BY BRANCHNO YYYY MM DD BANKNO REPORTNO RECTYPE; RUN;
+ PROC PRINT DATA=MRGRECORDS(OBS=5);TITLE 'MERGED RECORDS';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* OUTPUT HRC AND NON-HRC DATA                                    */
+ /*----------------------------------------------------------------*/
+ DATA OUTRECS;
+   SET MRGRECORDS;
+   FILE OUTFILE;
+   PUT  @001  BRANCHNO           $7.
+        @008  ', '
+        @010  REPORTDATE        $10.
+        @020  ', '
+        @022  BANKNO             Z3.
+        @025  ', '
+        @027  REPORTNO          $20.
+        @047  ', '
+        @049  RECTYPE            $5.
+        @054  ', '
+        @056  ISHRC              $1.
+        @057  ', '
+        @059  TOTAL               8.
+        @067  ', '
+        @069  CNTVIEW             8.
+        @077  ', '
+        @079  PTAGE              8.2;
    RUN;
-   PROC SORT  DATA=MERGE_A;BY CUSTNO;RUN;
-   PROC PRINT DATA=MERGE_A(OBS=15);TITLE 'COM CIS';RUN;
-
-   DATA DTCHG;
-     FORMAT UPDMSIC $1. UPDCCDE $2.;
-     SET MERGE_A;
-     UPDMSIC = 'N';
-     UPDCCDE = 'N';
-     IF MSICCODE NOT = MSICCODEX THEN DO;
-        UPDMSIC = 'Y';
-     END;
-     IF CUST_CODE NOT = CUST_CODEX THEN DO;
-        UPDCCDE = 'Y';
-     END;
-     IF UPDMSIC = 'Y' OR UPDCCDE = 'Y' THEN OUTPUT;
-   RUN;
-   PROC PRINT DATA=DTCHG(OBS=10);TITLE 'DATA CHANGE';
-
-    /*203801*/
-   DATA MIXALL;
-        SET DTCHG NEWCUST;
-   RUN;
-   PROC SORT  DATA=MIXALL;BY CUSTNO;RUN;
-   PROC PRINT DATA=MIXALL(OBS=10);TITLE 'MIX ALL';
-
-    /*203801 - START COMMENT OFF
-    DATA DPLIST LNLIST BTLIST DPALL;
-        KEEP CUSTNO ACCTNOC CUST_CODE MSICCODE
-             ACCTCODE UPDMSIC UPDCCDE RLENCD BTRADE;
-        MERGE DTCHG(IN=F) RLEN(IN=G);
-        BY CUSTNO;
-        IF F AND G;
-        IF ACCTCODE =  'DP   ' THEN OUTPUT DPALL;
-
-        IF RLENCD = '020';
-        IF SUBSTR(ACCTNOC,1,3) = '025' THEN BTRADE = 'Y';
-        IF SUBSTR(ACCTNOC,1,4) = '0285' THEN BTRADE = 'Y';
-        IF ACCTCODE =  'LN   ' THEN OUTPUT LNLIST;
-        IF ACCTCODE =  'DP   ' THEN OUTPUT DPLIST;
-        IF  BTRADE = 'Y' THEN OUTPUT BTLIST;
-   RUN;
-   PROC SORT  DATA=DPLIST;BY CUSTNO;RUN;
-   PROC PRINT DATA=DPLIST(OBS=10);TITLE 'DPLIST';RUN;
-   PROC SORT  DATA=LNLIST;BY CUSTNO;RUN;
-   PROC PRINT DATA=LNLIST(OBS=10);TITLE 'LNLIST';RUN;
-   PROC SORT  DATA=BTLIST;BY CUSTNO;RUN;
-   PROC PRINT DATA=BTLIST(OBS=10);TITLE 'BTLIST';RUN;
-   PROC SORT  DATA=DPALL;BY CUSTNO;RUN;
-
-    203801 - END  */
-
-    /* 203801 - START */
-   DATA DPLIST BTLIST LNALL DPALL;
-        KEEP CUSTNO ACCTNOC CUST_CODE MSICCODE
-             ACCTCODE UPDMSIC UPDCCDE RLENCD BTRADE;
-        MERGE MIXALL(IN=F) RLEN(IN=G);
-        BY CUSTNO;
-        IF F AND G THEN DO;
-           IF ACCTCODE =  'DP   ' THEN OUTPUT DPALL;
-           IF SUBSTR(ACCTNOC,1,3) = '025'  THEN BTRADE = 'Y';
-           IF SUBSTR(ACCTNOC,1,4) = '0285' THEN BTRADE = 'Y';
-           IF ACCTCODE =  'LN   ' AND BTRADE = 'Y' THEN OUTPUT BTLIST;
-           IF ACCTCODE =  'LN   ' AND BTRADE = ' ' THEN OUTPUT LNALL;
-           IF RLENCD = '020' THEN DO;
-              IF ACCTCODE =  'DP   ' THEN OUTPUT DPLIST;
-           END;
-        END;
-   RUN;
-   PROC SORT  DATA=DPLIST;BY CUSTNO;RUN;
-   PROC PRINT DATA=DPLIST(OBS=10);TITLE 'DPLIST';RUN;
-   PROC SORT  DATA=BTLIST;BY CUSTNO;RUN;
-   PROC PRINT DATA=BTLIST(OBS=10);TITLE 'BTLIST';RUN;
-   PROC SORT  DATA=DPALL;BY CUSTNO;RUN;
-   PROC SORT  DATA=LNALL;BY CUSTNO;RUN;
-
-    /* 203801 - END   */
-
-   DATA RECORDS;
-     FORMAT TTL Z8.;
-     SET DPLIST END=EOF;
-     RETAIN X;
-     FILE OUTFILE;
-     IF _N_ = 1 THEN DO;
-          PUT @001 'FH '  "&RDATE" ;
-     END;
-     PUT  @001   CUSTNO          $11.
-          @013   ACCTNOC         $20.
-          @034   UPDCCDE         $01.
-          @036   CUST_CODE       $03.
-          @040   UPDMSIC         $01.
-          @042   MSICCODE        $05.
-      /*  @046   RLENCD          $03. */
-          ;
-     X+1;
-     IF EOF THEN DO;
-     TTL = X;
-          PUT @001 'T'
-              @002  TTL;
-     END;
-     RUN;
-
-   /*DATA RECORD1;     203801 */
-   DATA BPMREC2;     /*203801 */
-     FORMAT TTL1 Z8.;
-   /*SET LNLIST END=EOF;     203801 */
-     SET LNALL END=EOF;    /*203801 */
-     RETAIN Y;
-     FILE OUTFIL1;
-     IF _N_ = 1 THEN DO;
-          PUT @001 'FH '  "&RDATE" ;
-     END;
-     PUT  @001   CUSTNO          $11.
-          @013   ACCTNOC         $20.
-          @034   UPDCCDE         $01.
-          @036   CUST_CODE       $03.
-          @040   UPDMSIC         $01.
-          @042   MSICCODE        $05.
-      /*  @046   RLENCD          $03. */
-          ;
-     Y+1;
-     IF EOF THEN DO;
-        TTL1 = Y;
-          PUT @001 'T'
-              @002 TTL1;
-     END;
-     RUN;
-
-   DATA RECORD2;
-     SET BTLIST END=EOF;
-     FILE OUTFIL2;
-     IF _N_ = 1 THEN DO;
-          PUT @001 'FH '  "&RDATE" ;
-     END;
-     PUT  @001   CUSTNO          $11.  @12 ';'
-          @013   ACCTNOC         $20.  @33 ';'
-          @034   UPDCCDE         $01.  @35 ';'
-          @036   CUST_CODE       $03.  @39 ';'
-          @040   UPDMSIC         $01.  @41 ';'
-          @042   MSICCODE        $05.  @47 ';'
-      /*  @046   RLENCD          $03. */
-          ;
-     IF EOF THEN DO;
-          PUT @001 'FH' ;
-     END;
-     RUN;
-
-   DATA BPMREC1;
-     FORMAT TTL Z8.;
-     SET DPALL END=EOF;
-     RETAIN X;
-     FILE OUTBPM1;
-     IF _N_ = 1 THEN DO;
-          PUT @001 'FH '  "&RDATE" ;
-     END;
-     PUT  @001   CUSTNO          $11.
-          @013   ACCTNOC         $20.
-          @034   UPDCCDE         $01.
-          @036   CUST_CODE       $03.
-          @040   UPDMSIC         $01.
-          @042   MSICCODE        $05.
-          @048   RLENCD          $03.      /*    ADD*/
-      /*  @046   RLENCD          $03. */
-          ;
-     X+1;
-     IF EOF THEN DO;
-     TTL = X;
-          PUT @001 'T'
-              @002  TTL;
-     END;
-     RUN;
