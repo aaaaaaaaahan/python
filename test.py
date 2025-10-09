@@ -3,224 +3,294 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CISCCARD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID     JOB35832
+//CICBDEXT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0117418
 //*---------------------------------------------------------------------
-//MOVEDATA EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SCCARD    DD DISP=SHR,DSN=SCEL.CARD.CARD
-//SCCUST    DD DISP=SHR,DSN=SCEL.CARD.CUST
-//CISFILE   DD DISP=SHR,DSN=CIS.CUST.DAILY
-//OUTFILE   DD DSN=SCEL.CARD.ACCT,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//             DCB=(LRECL=800,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CDB.DPFILE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=CDB.LNFILE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL3     DD DSN=CDB.BTFILE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL4     DD DSN=BPM.DPFILE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* NODUPS (GET ALL RECORD WITH CHANGES/NEW COMPARE ALL FIELDS)
+//* USING IDIC DAILY CHANGES TO GET THE MSIC AND CUSTOMER CODE
+//*
+//*---------------------------------------------------------------------
+//GETCHG   EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//NEWCHG   DD DISP=SHR,DSN=CIS.IDIC.DAILY.INEW
+//OLDCHG   DD DISP=SHR,DSN=CIS.IDIC.DAILY.IOLD
+//NOCHG    DD DISP=SHR,DSN=CIS.IDIC.DAILY.NOCHG
+//RLEN#CA  DD DISP=SHR,DSN=UNLOAD.RLEN#CA
+//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
+//OUTFILE  DD DSN=CDB.DPFILE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//OUTFIL1  DD DSN=CDB.LNFILE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//OUTFIL2  DD DSN=CDB.BTFILE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//OUTBPM1  DD DSN=BPM.DPFILE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTION NOCENTER;
  /*----------------------------------------------------------------*/
- /*    PROCESS CREDIT CARD FILE
+ /*    SET DATES                                                   */
  /*----------------------------------------------------------------*/
- DATA CUST;
-   INFILE SCCUST;
-   INPUT @001 ALIASKEY       $3.
-         @004 ALIAS          $12.
-         @016 TAXID          $3.                /* OLDIC IND */
-         @019 TAXNUM         $12.               /* OLDIC */
-         @031 ACCTNAME       $40.
-         @071 TOTCOMBLIMIT   6.
-         @077 OUTSTNDAMT     10.2
-         @087 SIGN1          $1.
-         @088 TOTMIN         10.2
-         @098 SIGN2          $1.
-         @099 OUTSTANDDUE    10.2
-         @109 SIGN3          $1.;
-         IF ALIAS EQ '' THEN DELETE;
-         IF ALIASKEY ='CV ' THEN DELETE;
-         IF SIGN1 = '-' THEN OUTSTNDAMT =OUTSTNDAMT *(-1);
-         IF SIGN1 = '+' THEN OUTSTNDAMT =OUTSTNDAMT *(+1);
-         IF SIGN2 = '-' THEN TOTMIN     =TOTMIN     *(-1);
-         IF SIGN2 = '+' THEN TOTMIN     =TOTMIN     *(+1);
-         IF SIGN3 = '-' THEN OUTSTANDDUE=OUTSTANDDUE*(-1);
-         IF SIGN3 = '+' THEN OUTSTANDDUE=OUTSTANDDUE*(+1);
+    DATA SRSDATE;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
 
- RUN;
- PROC SORT DATA=CUST;BY ALIAS TAXID;RUN;
- PROC PRINT DATA=CUST(OBS=10);TITLE 'CUST';RUN;
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('RDATE',PUT(TODAYSAS,YYMMDDN8.));
 
- DATA CARD;
-   FORMAT DATEOPEN $10. DATECLOSE $10. OPENMM $2. OPENYY $4. OPENDD $2.
-          CLOSEMM $2. CLOSEYY $4. CLOSEDD $2.;
-   INFILE SCCARD;
-   INPUT @001 ALIASKEY       $3.
-         @004 ALIAS          $12.
-         @016 TAXID          $3.                /* OLDIC IND*/
-         @019 TAXNUM         $12.               /* OLDIC */
-         @031 ACCTNOC        $16.
-         @047 OPENDATE       $8. /*YYYYMMDD*/
-         @055 STATUS         $1.
-         @056 CLOSEDATE      $8. /*YYYYMMDD*/
-         @064 MONITOR        $1.
-         @065 DUEDAY         $3.
-         @068 OVERDUEAMT     10.2
-         @078 SIGN4          $1.
-         @079 PRODTYPE       $5.;
-         ACCTCODE = PRODTYPE;
-         IF SIGN4 = '-' THEN OVERDUEAMT =OVERDUEAMT *(-1);
-         IF SIGN4 = '+' THEN OVERDUEAMT =OVERDUEAMT *(+1);
-
-         IF ALIAS EQ '' THEN DELETE;
-         IF ALIASKEY ='CV ' THEN DELETE;
-         OPENYY=SUBSTR(OPENDATE,1,4);
-         OPENMM=SUBSTR(OPENDATE,5,2);
-         OPENDD=SUBSTR(OPENDATE,7,2);
-         IF OPENYY NE '' AND OPENDD NE '' AND OPENMM NE '' THEN
-            DATEOPEN=OPENYY||'-'||OPENMM||'-'||OPENDD;
-         ELSE DATEOPEN='9999-01-01';
-
-         CLOSEYY=SUBSTR(CLOSEDATE,1,4);
-         CLOSEMM=SUBSTR(CLOSEDATE,5,2);
-         CLOSEDD=SUBSTR(CLOSEDATE,7,2);
-         IF CLOSEYY NE '' AND CLOSEDD NE '' AND CLOSEMM NE '' THEN
-            DATECLOSE=CLOSEYY||'-'||CLOSEMM||'-'||CLOSEDD;
-         ELSE DATECLOSE='9999-01-01';
- RUN;
- PROC SORT DATA=CARD;BY ALIAS TAXID;RUN;
- PROC PRINT DATA=CARD(OBS=10);TITLE 'CARD';RUN;
-
- DATA CARDCUST;
-    MERGE CUST(IN=A) CARD(IN=B);BY ALIAS TAXID;
- RUN;
- PROC SORT DATA=CARDCUST;BY ALIASKEY ALIAS ACCTNOC;RUN;
- PROC PRINT DATA=CARDCUST(OBS=10);TITLE'CARD + CUST';RUN;
-
- DATA CARD_NEWIC;
-      SET CARDCUST;
-      CUSTID=ALIASKEY||ALIAS;
-      TAXID ='';
-      TAXNUM='';
- RUN;
-
- DATA CARD_OLDIC;
-      SET CARDCUST;
-      CUSTID=TAXID||TAXNUM;
-      ALIASKEY='';
-      ALIAS='';
- RUN;
-
- DATA CARD_CUSTIDS;
-      SET CARD_NEWIC CARD_OLDIC;
-      IF CUSTID = '' THEN DELETE;
- RUN;
- PROC SORT DATA=CARD_CUSTIDS; BY CUSTID ACCTNOC;RUN;
-
- DATA CIS;
-    FORMAT ALIAS $12. RLENCD $3. ACCTNOC $16. TAXID $12. CUSTNO $20.;
-    SET CISFILE.CUSTDLY;
-    KEEP ACCTNOC CUSTNO ALIAS TAXID ALIASKEY
-         CUSTNAME PRIMSEC RLENCATEGORY RLENCD RELATIONDESC JOINTACC;
-    IF ACCTCODE NOT IN ('DP','LN','EQC');
-    IF CUSTNO  EQ ' ' THEN DELETE;
-    IF ACCTNOC EQ ' ' THEN DELETE;
-    IF PRISEC  EQ '901' THEN PRIMSEC = 'P';
-    ELSE PRIMSEC = 'S';
-    RLENCD   = PUT(RLENCODE,Z3.);
- RUN;
- PROC SORT  DATA=CIS;BY ALIASKEY ALIAS ACCTNOC;RUN;
- PROC PRINT DATA=CIS (OBS=05);TITLE 'CIS DAILY';RUN;
-
- DATA CIS_NEWIC;
-     SET CIS;
-     IF ALIAS ='' THEN DELETE;
-     CUSTID=ALIASKEY||ALIAS;
-     TAXID='';
- RUN;
-
- DATA CIS_OLDIC;
-     SET CIS;
-     IF TAXID ='' THEN DELETE;
-     CUSTID='OC'||TAXID;
-     ALIASKEY='';
-     ALIAS='';
- RUN;
-
- DATA CIS_CUSTIDS;
-     SET CIS_NEWIC CIS_OLDIC;
- RUN;
- PROC SORT DATA=CIS_CUSTIDS; BY CUSTID ACCTNOC;RUN;
-
- DATA MATCHED_REC UN_MATCHED_REC;
-     MERGE CARD_CUSTIDS(IN=A) CIS_CUSTIDS(IN=B);BY CUSTID ACCTNOC;
-     IF A AND B THEN DO ;
-          OUTPUT MATCHED_REC;
-     END;
-     IF A AND NOT B THEN DO;
-          CUSTNO=ACCTNOC;
-          CUSTNAME=ACCTNAME;
-          OUTPUT UN_MATCHED_REC;
-     END;
- RUN;
-
- DATA FINAL;
-    SET MATCHED_REC  UN_MATCHED_REC;
-    FILE OUTFILE;
-    BRANCHNO='001';
-    BRCABBRV='HOE';
-    BANKINDC='';
-       PUT @001 CUSTID         $20.      /*ID-NO              */
-           @021 CUSTNO         $20.      /*CUST-NO            */
-           @041 SORTKEY        $5.       /*SRT-KEY            */
-           @046 'PBB'                    /*SOURCE             */
-           @051 BANKINDC       $5.       /*BANK-INDC          */
-           @056 CUSTNAME       $100.     /*CUST-NAME          */
-           @156 ACCTCODE       $5.       /*APPL-CODE          */
-           @161 ACCTNOC        $20.      /*ACCT-NO            */
-           @181 ''                       /*NOTE-NO            */
-           @186 MULTINOTEIND   $1.       /*MULTI-NOTE-IND     */
-           @187 ''                       /*REF-KEY-1          */
-           @192 ''                       /*REF1               */
-           @212 ''                       /*REF-KEY-2          */
-           @217 ''                       /*REF2               */
-           @237 PRIMSEC        $1.       /*PRISEC             */
-           @238 JOINTACC       $1.       /*JOINT-INDC         */
-           @239 RLENCD         $3.       /*RLENCODE           */
-           @242 RELATIONDESC   $30.      /*RLENDESC           */
-           @272 BRANCHNO       $5.       /*ACCT-BRANCH-NO     */
-           @277 BRCABBRV       $8.       /*ACCT-BRANCH-ABBRV  */
-           @285 ACCTNAME       $100.     /*ACCT-NAME          */
-           @385 STATUS         $1.       /*ACCT-STATUS        */
-           @386 ''                       /*ACCT-STATUS1       */
-           @387 MONITOR        $5.       /*DELQ-REASON        */
-           @392 'MYR'                    /*ACCT-CURR-CODE     */
-           @395 'MYR'                    /*ACCT-CURR-BASE     */
-           @398 PRODTYPE       $5.       /*ACCT-PROD-TYPE     */
-           @403 X              PD7.2     /*CUR-BAL            */
-           @410 X              PD7.2     /*INSTALL-AMT        */
-           @417 X              PD7.2     /*OUTSTAND-AMT       */
-           @424 X              PD7.2     /*APPRV-LIMIT        */
-           @431 X              PD7.2     /*OVERALL-LIMIT      */
-           @438 X              PD7.2     /*FACILITY-LIMIT     */
-           @445 OVERDUEAMT     PD7.2     /*OVERDUE-AMT        */
-           @452 TOTMIN         PD7.2     /*MINDUE-AMT         */
-           @459 TOTCOMBLIMIT   PD7.2     /*COMBINE-LIMIT      */
-           @466 X              PD7.2     /*CUST-LIMIT         */
-           @473 X              PD7.2     /*BILL-NOT-PAID      */
-           @480 '0001-01-01'             /*BILL-DUE-DATE      */
-           @490 DATEOPEN       $10.      /*ACCT-OPEN-DATE     */
-           @500 DATECLOSE      $10.      /*ACCT-CLSE-DATE     */
-           @510 '0001-01-01'             /*ISSUE-DATE         */
-           @520 '0001-01-01'             /*MATURE-DATE        */
-           @530 X              PD2.      /*TERM                 */
-           @532 X              PD3.2     /*RATE-OVER            */
-           @535 X              PD3.2     /*MARGIN-POINT         */
-           @538 X              PD6.      /*MARKET-VALUE         */
-           @544 ''                       /*INDEX                */
-           @547 ''                       /*INTEREST-TYPE        */
-           @548 ''                       /*COLL-DESC            */
-           @618 DUEDAY         $3.       /*TIMES-LATE15-OVERDUE */
-           @621 ''                       /*TIMES-LATE30         */
-           @624 ''                       /*TIMES-LATE60         */
-           @627 ''                   ;   /*TIMES-LATE90         */
     RUN;
+   PROC PRINT;RUN;
+  /*TO CHANGE STATUS*/
+DATA NEWCHG;
+  INFILE NEWCHG;
+   INPUT @21   CUSTNO                 $11.
+         @188  CUSTMNTDATE            $08.
+         @196  CUSTLASTOPER           $8.
+         @316  CUST_CODE              $3.
+         @327  MSICCODE               $5.;
+PROC SORT  DATA=NEWCHG; BY CUSTNO;
+PROC PRINT DATA=NEWCHG(OBS=5);TITLE 'NEW CHG';
+RUN;
+
+DATA OLDCHG;
+  INFILE OLDCHG;
+   INPUT @21   CUSTNO                 $11.
+         @188  CUSTMNTDATEX           $08.
+         @196  CUSTLASTOPERX          $8.
+         @316  CUST_CODEX             $3.
+         @327  MSICCODEX              $5.;
+PROC SORT  DATA=OLDCHG; BY CUSTNO;
+PROC PRINT DATA=OLDCHG(OBS=5);TITLE 'OLD CHG';
+RUN;
+
+  /*203801*/
+DATA NEWCUST;
+  INFILE NOCHG;
+   FORMAT UPDMSIC $1. UPDCCDE $1.;
+   INPUT @01   RUNTIMESTAMP           $20.
+         @21   CUSTNO                 $11.
+         @188  CUSTMNTDATEX           $08.
+         @196  CUSTLASTOPERX          $8.
+         @316  CUST_CODE              $3.
+         @327  MSICCODE               $5.;
+         DATESTAMP="&YEAR"||"&MONTH"||"&DAY";
+         DATEREC = SUBSTR(RUNTIMESTAMP,1,8);
+         IF DATESTAMP NE DATEREC THEN DELETE;
+         UPDMSIC = 'N';
+         UPDCCDE = 'N';
+         IF CUST_CODE NOT = ' ' THEN UPDMSIC = 'Y';
+         IF MSICCODE  NOT = ' ' THEN UPDCCDE = 'Y';
+PROC SORT  DATA=NEWCUST; BY CUSTNO;
+PROC PRINT DATA=NEWCUST(OBS=5);TITLE 'NEW CUST';
+RUN;
+
+DATA RLEN;
+  INFILE RLEN#CA;
+  INPUT  @005  ACCTNOC           $20.
+         @025  ACCTCODE          $5.
+         @046  CUSTNO            $11.
+         @066  RLENCODE          PD2.
+         @068  PRISEC            PD2.;
+         RLENCD = PUT(RLENCODE,Z3.);
+         IF ACCTCODE NOT IN ('DP   ','LN   ') THEN DELETE;
+ RUN;
+PROC SORT  DATA=RLEN; BY CUSTNO;RUN;
+PROC PRINT DATA=RLEN(OBS=5);TITLE 'RLEN';
+
+   DATA MERGE_A;
+        MERGE NEWCHG(IN=A) OLDCHG(IN=B);
+        BY CUSTNO;
+        IF A AND B;
+   RUN;
+   PROC SORT  DATA=MERGE_A;BY CUSTNO;RUN;
+   PROC PRINT DATA=MERGE_A(OBS=15);TITLE 'COM CIS';RUN;
+
+   DATA DTCHG;
+     FORMAT UPDMSIC $1. UPDCCDE $2.;
+     SET MERGE_A;
+     UPDMSIC = 'N';
+     UPDCCDE = 'N';
+     IF MSICCODE NOT = MSICCODEX THEN DO;
+        UPDMSIC = 'Y';
+     END;
+     IF CUST_CODE NOT = CUST_CODEX THEN DO;
+        UPDCCDE = 'Y';
+     END;
+     IF UPDMSIC = 'Y' OR UPDCCDE = 'Y' THEN OUTPUT;
+   RUN;
+   PROC PRINT DATA=DTCHG(OBS=10);TITLE 'DATA CHANGE';
+
+    /*203801*/
+   DATA MIXALL;
+        SET DTCHG NEWCUST;
+   RUN;
+   PROC SORT  DATA=MIXALL;BY CUSTNO;RUN;
+   PROC PRINT DATA=MIXALL(OBS=10);TITLE 'MIX ALL';
+
+    /*203801 - START COMMENT OFF
+    DATA DPLIST LNLIST BTLIST DPALL;
+        KEEP CUSTNO ACCTNOC CUST_CODE MSICCODE
+             ACCTCODE UPDMSIC UPDCCDE RLENCD BTRADE;
+        MERGE DTCHG(IN=F) RLEN(IN=G);
+        BY CUSTNO;
+        IF F AND G;
+        IF ACCTCODE =  'DP   ' THEN OUTPUT DPALL;
+
+        IF RLENCD = '020';
+        IF SUBSTR(ACCTNOC,1,3) = '025' THEN BTRADE = 'Y';
+        IF SUBSTR(ACCTNOC,1,4) = '0285' THEN BTRADE = 'Y';
+        IF ACCTCODE =  'LN   ' THEN OUTPUT LNLIST;
+        IF ACCTCODE =  'DP   ' THEN OUTPUT DPLIST;
+        IF  BTRADE = 'Y' THEN OUTPUT BTLIST;
+   RUN;
+   PROC SORT  DATA=DPLIST;BY CUSTNO;RUN;
+   PROC PRINT DATA=DPLIST(OBS=10);TITLE 'DPLIST';RUN;
+   PROC SORT  DATA=LNLIST;BY CUSTNO;RUN;
+   PROC PRINT DATA=LNLIST(OBS=10);TITLE 'LNLIST';RUN;
+   PROC SORT  DATA=BTLIST;BY CUSTNO;RUN;
+   PROC PRINT DATA=BTLIST(OBS=10);TITLE 'BTLIST';RUN;
+   PROC SORT  DATA=DPALL;BY CUSTNO;RUN;
+
+    203801 - END  */
+
+    /* 203801 - START */
+   DATA DPLIST BTLIST LNALL DPALL;
+        KEEP CUSTNO ACCTNOC CUST_CODE MSICCODE
+             ACCTCODE UPDMSIC UPDCCDE RLENCD BTRADE;
+        MERGE MIXALL(IN=F) RLEN(IN=G);
+        BY CUSTNO;
+        IF F AND G THEN DO;
+           IF ACCTCODE =  'DP   ' THEN OUTPUT DPALL;
+           IF SUBSTR(ACCTNOC,1,3) = '025'  THEN BTRADE = 'Y';
+           IF SUBSTR(ACCTNOC,1,4) = '0285' THEN BTRADE = 'Y';
+           IF ACCTCODE =  'LN   ' AND BTRADE = 'Y' THEN OUTPUT BTLIST;
+           IF ACCTCODE =  'LN   ' AND BTRADE = ' ' THEN OUTPUT LNALL;
+           IF RLENCD = '020' THEN DO;
+              IF ACCTCODE =  'DP   ' THEN OUTPUT DPLIST;
+           END;
+        END;
+   RUN;
+   PROC SORT  DATA=DPLIST;BY CUSTNO;RUN;
+   PROC PRINT DATA=DPLIST(OBS=10);TITLE 'DPLIST';RUN;
+   PROC SORT  DATA=BTLIST;BY CUSTNO;RUN;
+   PROC PRINT DATA=BTLIST(OBS=10);TITLE 'BTLIST';RUN;
+   PROC SORT  DATA=DPALL;BY CUSTNO;RUN;
+   PROC SORT  DATA=LNALL;BY CUSTNO;RUN;
+
+    /* 203801 - END   */
+
+   DATA RECORDS;
+     FORMAT TTL Z8.;
+     SET DPLIST END=EOF;
+     RETAIN X;
+     FILE OUTFILE;
+     IF _N_ = 1 THEN DO;
+          PUT @001 'FH '  "&RDATE" ;
+     END;
+     PUT  @001   CUSTNO          $11.
+          @013   ACCTNOC         $20.
+          @034   UPDCCDE         $01.
+          @036   CUST_CODE       $03.
+          @040   UPDMSIC         $01.
+          @042   MSICCODE        $05.
+      /*  @046   RLENCD          $03. */
+          ;
+     X+1;
+     IF EOF THEN DO;
+     TTL = X;
+          PUT @001 'T'
+              @002  TTL;
+     END;
+     RUN;
+
+   /*DATA RECORD1;     203801 */
+   DATA BPMREC2;     /*203801 */
+     FORMAT TTL1 Z8.;
+   /*SET LNLIST END=EOF;     203801 */
+     SET LNALL END=EOF;    /*203801 */
+     RETAIN Y;
+     FILE OUTFIL1;
+     IF _N_ = 1 THEN DO;
+          PUT @001 'FH '  "&RDATE" ;
+     END;
+     PUT  @001   CUSTNO          $11.
+          @013   ACCTNOC         $20.
+          @034   UPDCCDE         $01.
+          @036   CUST_CODE       $03.
+          @040   UPDMSIC         $01.
+          @042   MSICCODE        $05.
+      /*  @046   RLENCD          $03. */
+          ;
+     Y+1;
+     IF EOF THEN DO;
+        TTL1 = Y;
+          PUT @001 'T'
+              @002 TTL1;
+     END;
+     RUN;
+
+   DATA RECORD2;
+     SET BTLIST END=EOF;
+     FILE OUTFIL2;
+     IF _N_ = 1 THEN DO;
+          PUT @001 'FH '  "&RDATE" ;
+     END;
+     PUT  @001   CUSTNO          $11.  @12 ';'
+          @013   ACCTNOC         $20.  @33 ';'
+          @034   UPDCCDE         $01.  @35 ';'
+          @036   CUST_CODE       $03.  @39 ';'
+          @040   UPDMSIC         $01.  @41 ';'
+          @042   MSICCODE        $05.  @47 ';'
+      /*  @046   RLENCD          $03. */
+          ;
+     IF EOF THEN DO;
+          PUT @001 'FH' ;
+     END;
+     RUN;
+
+   DATA BPMREC1;
+     FORMAT TTL Z8.;
+     SET DPALL END=EOF;
+     RETAIN X;
+     FILE OUTBPM1;
+     IF _N_ = 1 THEN DO;
+          PUT @001 'FH '  "&RDATE" ;
+     END;
+     PUT  @001   CUSTNO          $11.
+          @013   ACCTNOC         $20.
+          @034   UPDCCDE         $01.
+          @036   CUST_CODE       $03.
+          @040   UPDMSIC         $01.
+          @042   MSICCODE        $05.
+          @048   RLENCD          $03.      /*    ADD*/
+      /*  @046   RLENCD          $03. */
+          ;
+     X+1;
+     IF EOF THEN DO;
+     TTL = X;
+          PUT @001 'T'
+              @002  TTL;
+     END;
+     RUN;
