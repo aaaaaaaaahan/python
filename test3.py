@@ -181,3 +181,11 @@ con.execute(f"""
     COPY (
         SELECT *,
                ROW_NUMBER() OVER () AS rn,
+               ((ROW_NUMBER() OVER ()) - 1) / 10000 AS file_index
+        FROM mrgcard
+    )
+    TO '{parquet_output_path("CISVPBCS_split")}' 
+    (FORMAT PARQUET, PARTITION_BY (file_index));
+""")
+
+print("✅ CISVPBCS Conversion Completed Successfully.")
