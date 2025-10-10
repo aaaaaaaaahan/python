@@ -1,61 +1,158 @@
-import os
-import re
+import duckdb
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
 import datetime
-import logging
-from logging.handlers import TimedRotatingFileHandler
 
-root_paths = [
-    "/host/cis/input/sas_dataset",
-	"/host/cis/parquet/sas_parquet",
-]
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
-log_file = "/host/cis/logs/housekeeping.log"
-logger = logging.getLogger("housekeeping")
-logger.setLevel(logging.INFO)
+#------------------------------------------------------------#
+#  Initialize DuckDB connection
+#------------------------------------------------------------#
+con = duckdb.connect()
 
-handler = TimedRotatingFileHandler(log_file, when="midnight", interval=1, backupCount=7)
-handler.suffix = "%Y%m%d"
-formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+#------------------------------------------------------------#
+#  Load Input Tables
+#------------------------------------------------------------#
+con.execute(f"""
+    CREATE TABLE merchant AS 
+    SELECT * 
+    FROM '{host_parquet_path("UNICARD_MERCHANT.parquet")}'
+""")
 
-console = logging.StreamHandler()
-console.setFormatter(formatter)
-logger.addHandler(console)
+con.execute(f"""
+    CREATE TABLE visa AS 
+    SELECT * 
+    FROM {host_parquet_path("UNICARD_VISA.parquet")}'
+""")
 
-pattern = re.compile(r".*_(\d{8})(?:\..*)?$") 
+#------------------------------------------------------------#
+#  Process MERCHANT data
+#------------------------------------------------------------#
+con.execute("""
+    CREATE TABLE merchant_proc AS
+    SELECT
+        ACCTNO,
+        CUSTNAME1 AS CUSTNAME,
+        DATEOPEN,
+        DATECLSE,
+        MERCHTYPE,
+        ALIAS,
+        'MERCH' AS ACCTCODE,
+        'N' AS COLLINDC,
+        'C' AS BANKINDC,
+        'P' AS PRIMSEC,
+        'MERCHANT CODE : ' || MERCHTYPE AS OCCUPDESC,
+        CASE 
+            WHEN DATECLSE IS NULL THEN 'ACTIVE'
+            ELSE 'CLOSED'
+        END AS ACCTSTATUS,
+        'O' AS INDORG
+    FROM merchant
+    ORDER BY ACCTNO;
+""")
 
-cutoff_date = datetime.date.today() - datetime.timedelta(days=2)
+#------------------------------------------------------------#
+#  Process VISA data
+#------------------------------------------------------------#
+con.execute("""
+    CREATE TABLE visa_proc AS
+    SELECT
+        ACCTNO,
+        CARDNOGTOR,
+        CUSTNAME,
+        ALIASKEY,
+        COALESCE(NULLIF(ALIAS1,''), ALIAS2, '') AS ALIAS,
+        ALIAS1, ALIAS2,
+        EMPLNAME,
+        OCCUPDESC,
+        DATEOPEN,
+        DATECLSE,
+        CREDITLIMIT,
+        ACCTTYPE,
+        ACCTCLSECODE,
+        ACCTCLSEDESC,
+        CCELCODE,
+        CCELCODEDESC,
+        COLLNO,
+        CURRENTBAL,
+        CURRENTBALSIGN,
+        AUTHCHARGE,
+        AUTHCHARGESIGN,
+        PRODDESC,
+        DOBDOR,
+        CASE 
+            WHEN CRINDC = 'C' THEN 'CREDT'
+            WHEN CRINDC = 'D' THEN 'DEBIT'
+            ELSE ''
+        END AS ACCTCODE,
+        'C' AS BANKINDC,
+        CASE 
+            WHEN SUBSTR(ACCTNO, 14, 1) = '1' THEN 'P'
+            ELSE 'S'
+        END AS PRIMSEC,
+        CASE 
+            WHEN COLLNO <> '00000' THEN 'Y'
+            ELSE 'N'
+        END AS COLLINDC,
+        CASE 
+            WHEN COLLNO <> '00000' THEN 'FIXED DEPOSIT'
+            ELSE ''
+        END AS COLLDESC,
+        CASE 
+            WHEN CCELCODE = '' AND CCELCODEDESC = '' THEN 'ACTIVE'
+            WHEN CCELCODE <> '' AND CCELCODEDESC <> '' THEN CCELCODEDESC
+            WHEN CCELCODE <> '' AND CCELCODEDESC = '' THEN 'INACTIVE'
+            ELSE 'CLOSED'
+        END AS ACCTSTATUS,
+        CASE 
+            WHEN CURRENTBALSIGN = '-' THEN -CURRENTBAL
+            ELSE CURRENTBAL
+        END AS CURRENTBAL2,
+        (-1) * (CURRENTBAL - AUTHCHARGE) AS BAL1,
+        'O/B' AS BAL1INDC,
+        'C/L' AS AMT1INDC,
+        CREDITLIMIT AS AMT1,
+        CASE 
+            WHEN ACCTTYPE = 'I ' THEN 'PRINCIPAL CARD '
+            WHEN ACCTTYPE = 'IA' THEN 'PRINC + SUPP   '
+            WHEN ACCTTYPE = 'IS' THEN 'SUPP SEPARATE  '
+            WHEN ACCTTYPE = 'A ' THEN 'SUPP COMBINE   '
+            ELSE 'UNKNOWN        '
+        END AS RELATIONDESC,
+        'I' AS INDORG
+    FROM visa
+    ORDER BY ACCTNO;
+""")
 
-for root_path in root_paths:
-	logger.info(f"Starting housekeeping in {root_path}, cutoff date = {cutoff_date}")
+#------------------------------------------------------------#
+#  Merge MERCHANT + VISA datasets
+#------------------------------------------------------------#
+con.execute("""
+    CREATE TABLE mrgcard AS
+    SELECT * FROM merchant_proc
+    UNION ALL
+    SELECT * FROM visa_proc;
+""")
 
-	deleted_files = 0
-	skipped_files = 0
+#------------------------------------------------------------#
+#  Additional fields as per SAS
+#------------------------------------------------------------#
+con.execute("""
+    ALTER TABLE mrgcard ADD COLUMN ACCTBRABBR VARCHAR;
+    UPDATE mrgcard SET ACCTBRABBR = 'PBCSS';
 
-	for dirpath, _, filenames in os.walk(root_path):
-		for filename in filenames:
-			match = pattern.match(filename)
-			if not match:
-				skipped_files += 1
-				continue
+    ALTER TABLE mrgcard ADD COLUMN JOINTACC VARCHAR;
+    UPDATE mrgcard SET JOINTACC = 'N';
 
-			try:
-				file_date = datetime.datetime.strptime(match.group(1), "%Y%m%d").date()
-			except ValueError:
-				skipped_files += 1
-				continue
+    UPDATE mrgcard SET DOBDOR = NULL WHERE DOBDOR = '00000000';
+""")
 
-			if file_date <= cutoff_date:
-				file_path = os.path.join(dirpath,filename)
-				try:
-					os.remove(file_path)
-					logger.info(f"Deleted: {file_path} (date={file_date})")
-					deleted_files += 1
-				except Exception as e:	
-					logger.error(f"Failed to delete {file_path}: {e}")
+#------------------------------------------------------------#
+#  Output: Save merged table as Parquet + CSV
+#------------------------------------------------------------#
 
-			else:
-				skipped_files += 1
 
-logger.info(f"Finished {root_path}. Deleted {deleted_files} files, skipped {skipped_files}.")
+#------------------------------------------------------------#
+#  Split output into 10 smaller Parquet files (like OUTFIL SPLIT)
+#------------------------------------------------------------#
+print("✅ CISVPBCS Conversion Completed Successfully.")
