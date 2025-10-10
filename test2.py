@@ -1,7 +1,10 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
 
+#------------------------------------------------------------#
+#  Batch Date Setup
+#------------------------------------------------------------#
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
@@ -22,7 +25,7 @@ con.execute(f"""
 con.execute(f"""
     CREATE TABLE visa AS 
     SELECT * 
-    FROM {host_parquet_path("UNICARD_VISA.parquet")}'
+    FROM '{host_parquet_path("UNICARD_VISA.parquet")}'
 """)
 
 #------------------------------------------------------------#
@@ -62,7 +65,8 @@ con.execute("""
         CUSTNAME,
         ALIASKEY,
         COALESCE(NULLIF(ALIAS1,''), ALIAS2, '') AS ALIAS,
-        ALIAS1, ALIAS2,
+        ALIAS1,
+        ALIAS2,
         EMPLNAME,
         OCCUPDESC,
         DATEOPEN,
@@ -104,14 +108,27 @@ con.execute("""
             WHEN CCELCODE <> '' AND CCELCODEDESC = '' THEN 'INACTIVE'
             ELSE 'CLOSED'
         END AS ACCTSTATUS,
-        CASE 
-            WHEN CURRENTBALSIGN = '-' THEN -CURRENTBAL
-            ELSE CURRENTBAL
+
+        -- Safely handle numeric operations
+        CASE
+            WHEN CURRENTBALSIGN = '-' THEN 
+                -TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(CURRENTBAL), ',', ''), '(', '-'), ')', '') AS DOUBLE)
+            ELSE 
+                TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(CURRENTBAL), ',', ''), '(', '-'), ')', '') AS DOUBLE)
         END AS CURRENTBAL2,
-        (-1) * (CURRENTBAL - AUTHCHARGE) AS BAL1,
+
+        (-1) * (
+            TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(CURRENTBAL), ',', ''), '(', '-'), ')', '') AS DOUBLE)
+            - COALESCE(
+                TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(AUTHCHARGE), ',', ''), '(', '-'), ')', '') AS DOUBLE),
+                0
+            )
+        ) AS BAL1,
+
         'O/B' AS BAL1INDC,
         'C/L' AS AMT1INDC,
         CREDITLIMIT AS AMT1,
+
         CASE 
             WHEN ACCTTYPE = 'I ' THEN 'PRINCIPAL CARD '
             WHEN ACCTTYPE = 'IA' THEN 'PRINC + SUPP   '
@@ -125,17 +142,95 @@ con.execute("""
 """)
 
 #------------------------------------------------------------#
-#  Merge MERCHANT + VISA datasets
+#  Merge MERCHANT + VISA datasets (align columns)
 #------------------------------------------------------------#
 con.execute("""
     CREATE TABLE mrgcard AS
-    SELECT * FROM merchant_proc
+    SELECT
+        ACCTNO,
+        NULL AS CARDNOGTOR,
+        CUSTNAME,
+        NULL AS ALIASKEY,
+        ALIAS,
+        NULL AS ALIAS1,
+        NULL AS ALIAS2,
+        NULL AS EMPLNAME,
+        OCCUPDESC,
+        DATEOPEN,
+        DATECLSE,
+        NULL AS CREDITLIMIT,
+        NULL AS ACCTTYPE,
+        NULL AS ACCTCLSECODE,
+        NULL AS ACCTCLSEDESC,
+        NULL AS CCELCODE,
+        NULL AS CCELCODEDESC,
+        NULL AS COLLNO,
+        NULL AS CURRENTBAL,
+        NULL AS CURRENTBALSIGN,
+        NULL AS AUTHCHARGE,
+        NULL AS AUTHCHARGESIGN,
+        NULL AS PRODDESC,
+        NULL AS DOBDOR,
+        ACCTCODE,
+        BANKINDC,
+        PRIMSEC,
+        COLLINDC,
+        NULL AS COLLDESC,
+        ACCTSTATUS,
+        NULL AS CURRENTBAL2,
+        NULL AS BAL1,
+        NULL AS BAL1INDC,
+        NULL AS AMT1INDC,
+        NULL AS AMT1,
+        NULL AS RELATIONDESC,
+        INDORG
+    FROM merchant_proc
+
     UNION ALL
-    SELECT * FROM visa_proc;
+
+    SELECT
+        ACCTNO,
+        CARDNOGTOR,
+        CUSTNAME,
+        ALIASKEY,
+        ALIAS,
+        ALIAS1,
+        ALIAS2,
+        EMPLNAME,
+        OCCUPDESC,
+        DATEOPEN,
+        DATECLSE,
+        CREDITLIMIT,
+        ACCTTYPE,
+        ACCTCLSECODE,
+        ACCTCLSEDESC,
+        CCELCODE,
+        CCELCODEDESC,
+        COLLNO,
+        CURRENTBAL,
+        CURRENTBALSIGN,
+        AUTHCHARGE,
+        AUTHCHARGESIGN,
+        PRODDESC,
+        DOBDOR,
+        ACCTCODE,
+        BANKINDC,
+        PRIMSEC,
+        COLLINDC,
+        COLLDESC,
+        ACCTSTATUS,
+        CURRENTBAL2,
+        BAL1,
+        BAL1INDC,
+        AMT1INDC,
+        AMT1,
+        RELATIONDESC,
+        INDORG
+    FROM visa_proc;
 """)
 
 #------------------------------------------------------------#
-#  Additional fields as per SAS
+#  Additional fields as per SAS logic
 #------------------------------------------------------------#
 con.execute("""
     ALTER TABLE mrgcard ADD COLUMN ACCTBRABBR VARCHAR;
@@ -150,9 +245,58 @@ con.execute("""
 #------------------------------------------------------------#
 #  Output: Save merged table as Parquet + CSV
 #------------------------------------------------------------#
+final = """
+    SELECT *
+           ,{year1} AS year
+           ,{month1} AS month
+           ,{day1} AS day
+    FROM mrgcard
+""".format(year1=year1,month1=month1,day1=day1)
 
+queries = {
+    "SNGLVIEW_PBCS"            : final
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
 
 #------------------------------------------------------------#
-#  Split output into 10 smaller Parquet files (like OUTFIL SPLIT)
+#  Split output into 10 smaller Parquet files (optional)
 #------------------------------------------------------------#
-print("✅ CISVPBCS Conversion Completed Successfully.")
+# Example: Split into 10 partitions
+for i in range(1, 11):
+    query = f"""
+        SELECT *
+        FROM (
+            SELECT *, ROW_NUMBER() OVER () AS rn
+            FROM ({final})
+        )
+        WHERE MOD(rn, 10) = {i-1}
+    """
+    
+    # Parquet output
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_output_path(f"SNGLVIEW_PBCS{i:02d}")}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true)
+    """)
+
+    # CSV output
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_output_path(f"SNGLVIEW_PBCS{i:02d}")}'
+    (HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true)
+    """)
