@@ -1,151 +1,183 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
-import pyarrow.csv as pc
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
-from pathlib import Path
 
-# ============================================================
-# SETUP SECTION
-# ============================================================
-
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
+#------------------------------------------------------------#
+#  Batch Date Setup
+#------------------------------------------------------------#
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
-# Define file paths
-input_file = "/host/cis/parquet/UNLOAD_CIREPTTT_FB.parquet"
-output_folder = Path("/host/cis/output/cisumrep")
-output_folder.mkdir(parents=True, exist_ok=True)
-
-output_parquet = output_folder / f"cisumrep_{year1}{month1:02}{day1:02}.parquet"
-output_csv = output_folder / f"cisumrep_{year1}{month1:02}{day1:02}.csv"
-
-# ============================================================
-# DUCKDB PROCESSING
-# ============================================================
-
+#------------------------------------------------------------#
+#  Initialize DuckDB connection
+#------------------------------------------------------------#
 con = duckdb.connect()
 
-# Load Parquet file into DuckDB
+#------------------------------------------------------------#
+#  Load Input Tables
+#------------------------------------------------------------#
 con.execute(f"""
-    CREATE TABLE reptfile AS
-    SELECT * FROM read_parquet('{input_file}');
+    CREATE TABLE merchant AS 
+    SELECT * 
+    FROM '{host_parquet_path("UNICARD_MERCHANT.parquet")}'
 """)
 
-# ============================================================
-# FILTERING & SPLITTING INTO HRCDATA AND XHRCDATA
-# ============================================================
-# Delete certain deposit records and compute CNTVIEW
+con.execute(f"""
+    CREATE TABLE visa AS 
+    SELECT * 
+    FROM '{host_parquet_path("UNICARD_VISA.parquet")}'
+""")
+
+#------------------------------------------------------------#
+#  Process MERCHANT data
+#------------------------------------------------------------#
 con.execute("""
-    CREATE TABLE base AS
-    SELECT *,
-        CASE WHEN (REVIEWED = 'Y' OR VIEWED = 'Y') THEN 1 ELSE 0 END AS CNTVIEW
-    FROM reptfile
-    WHERE NOT (
-        RECTYPE = 'DPST' AND APPLCODE = 'DP' AND REMARK3 IN (
-            '126','127','128','129','140','141','142','143','144','145','146','147',
-            '148','149','171','172','173'
-        )
-    );
+    CREATE TABLE merchant_proc AS
+    SELECT
+        ACCTNO,
+        CUSTNAME1 AS CUSTNAME,
+        DATEOPEN,
+        DATECLSE,
+        MERCHTYPE,
+        ALIAS,
+        'MERCH' AS ACCTCODE,
+        'N' AS COLLINDC,
+        'C' AS BANKINDC,
+        'P' AS PRIMSEC,
+        'MERCHANT CODE : ' || MERCHTYPE AS OCCUPDESC,
+        CASE 
+            WHEN DATECLSE IS NULL THEN 'ACTIVE'
+            ELSE 'CLOSED'
+        END AS ACCTSTATUS,
+        'O' AS INDORG
+    FROM merchant
+    ORDER BY ACCTNO;
 """)
 
-# Split HRC and Non-HRC datasets
+#------------------------------------------------------------#
+#  Process VISA data
+#------------------------------------------------------------#
 con.execute("""
-    CREATE TABLE HRCDATA AS
-    SELECT * FROM base
-    WHERE RECTYPE = 'DPST' AND REMARK1 <> '' AND REMARK2 <> '';
+    CREATE TABLE visa_proc AS
+    SELECT
+        ACCTNO,
+        CARDNOGTOR,
+        CUSTNAME,
+        ALIASKEY,
+        COALESCE(NULLIF(ALIAS1,''), ALIAS2, '') AS ALIAS,
+        ALIAS1,
+        ALIAS2,
+        EMPLNAME,
+        OCCUPDESC,
+        DATEOPEN,
+        DATECLSE,
+        CREDITLIMIT,
+        ACCTTYPE,
+        ACCTCLSECODE,
+        ACCTCLSEDESC,
+        CCELCODE,
+        CCELCODEDESC,
+        COLLNO,
+        CURRENTBAL,
+        CURRENTBALSIGN,
+        AUTHCHARGE,
+        AUTHCHARGESIGN,
+        PRODDESC,
+        DOBDOR,
+        CASE 
+            WHEN CRINDC = 'C' THEN 'CREDT'
+            WHEN CRINDC = 'D' THEN 'DEBIT'
+            ELSE ''
+        END AS ACCTCODE,
+        'C' AS BANKINDC,
+        CASE 
+            WHEN SUBSTR(ACCTNO, 14, 1) = '1' THEN 'P'
+            ELSE 'S'
+        END AS PRIMSEC,
+        CASE 
+            WHEN COLLNO <> '00000' THEN 'Y'
+            ELSE 'N'
+        END AS COLLINDC,
+        CASE 
+            WHEN COLLNO <> '00000' THEN 'FIXED DEPOSIT'
+            ELSE ''
+        END AS COLLDESC,
+        CASE 
+            WHEN CCELCODE = '' AND CCELCODEDESC = '' THEN 'ACTIVE'
+            WHEN CCELCODE <> '' AND CCELCODEDESC <> '' THEN CCELCODEDESC
+            WHEN CCELCODE <> '' AND CCELCODEDESC = '' THEN 'INACTIVE'
+            ELSE 'CLOSED'
+        END AS ACCTSTATUS,
+
+        -- Safely handle numeric operations
+        CASE
+            WHEN CURRENTBALSIGN = '-' THEN 
+                -TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(CURRENTBAL), ',', ''), '(', '-'), ')', '') AS DOUBLE)
+            ELSE 
+                TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(CURRENTBAL), ',', ''), '(', '-'), ')', '') AS DOUBLE)
+        END AS CURRENTBAL2,
+
+        (-1) * (
+            TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(CURRENTBAL), ',', ''), '(', '-'), ')', '') AS DOUBLE)
+            - COALESCE(
+                TRY_CAST(REPLACE(REPLACE(REPLACE(TRIM(AUTHCHARGE), ',', ''), '(', '-'), ')', '') AS DOUBLE),
+                0
+            )
+        ) AS BAL1,
+
+        'O/B' AS BAL1INDC,
+        'C/L' AS AMT1INDC,
+        CREDITLIMIT AS AMT1,
+
+        CASE 
+            WHEN ACCTTYPE = 'I ' THEN 'PRINCIPAL CARD '
+            WHEN ACCTTYPE = 'IA' THEN 'PRINC + SUPP   '
+            WHEN ACCTTYPE = 'IS' THEN 'SUPP SEPARATE  '
+            WHEN ACCTTYPE = 'A ' THEN 'SUPP COMBINE   '
+            ELSE 'UNKNOWN        '
+        END AS RELATIONDESC,
+        'I' AS INDORG
+    FROM visa
+    ORDER BY ACCTNO;
 """)
 
+#------------------------------------------------------------#
+#  Merge MERCHANT + VISA datasets
+#------------------------------------------------------------#
 con.execute("""
-    CREATE TABLE XHRCDATA AS
-    SELECT * FROM base
-    WHERE NOT (RECTYPE = 'DPST' AND REMARK1 <> '' AND REMARK2 <> '');
+    CREATE TABLE mrgcard AS
+    SELECT * FROM merchant_proc
+    UNION ALL
+    SELECT * FROM visa_proc;
 """)
 
-# ============================================================
-# HRC SUMMARY
-# ============================================================
+#------------------------------------------------------------#
+#  Additional fields as per SAS logic
+#------------------------------------------------------------#
 con.execute("""
-    CREATE TABLE TEMP AS
-    SELECT BANKNO, RECTYPE, REPORTDATE, REPORTNO, BRANCHNO,
-           COUNT(*) AS TOTAL,
-           SUM(CNTVIEW) AS CNTVIEW
-    FROM HRCDATA
-    GROUP BY BANKNO, RECTYPE, REPORTDATE, REPORTNO, BRANCHNO;
+    ALTER TABLE mrgcard ADD COLUMN ACCTBRABBR VARCHAR;
+    UPDATE mrgcard SET ACCTBRABBR = 'PBCSS';
+
+    ALTER TABLE mrgcard ADD COLUMN JOINTACC VARCHAR;
+    UPDATE mrgcard SET JOINTACC = 'N';
+
+    UPDATE mrgcard SET DOBDOR = NULL WHERE DOBDOR = '00000000';
 """)
 
-# ============================================================
-# NON-HRC SUMMARY
-# ============================================================
-con.execute("""
-    CREATE TABLE TEMP1 AS
-    SELECT BANKNO, RECTYPE, REPORTDATE, REPORTNO, BRANCHNO,
-           COUNT(*) AS TOTAL,
-           SUM(CNTVIEW) AS CNTVIEW
-    FROM XHRCDATA
-    GROUP BY BANKNO, RECTYPE, REPORTDATE, REPORTNO, BRANCHNO;
-""")
+#------------------------------------------------------------#
+#  Output: Save merged table as Parquet + CSV
+#------------------------------------------------------------#
+output_parquet = parquet_output_path("CISVPBCS.parquet")
+output_csv = csv_output_path("CISVPBCS.csv")
 
-# ============================================================
-# HRC RECORDS (PTAGE < 100)
-# ============================================================
-con.execute("""
-    CREATE TABLE HRCRECS AS
-    SELECT *, 'Y' AS ISHRC, (CNTVIEW * 100.0 / TOTAL) AS PTAGE
-    FROM TEMP
-    WHERE (CNTVIEW * 100.0 / TOTAL) < 100;
-""")
+con.execute(f"COPY mrgcard TO '{output_parquet}' (FORMAT PARQUET);")
+con.execute(f"COPY mrgcard TO '{output_csv}' (HEADER, DELIMITER ',');")
 
-# ============================================================
-# NON-HRC RECORDS (PTAGE < 10)
-# ============================================================
-con.execute("""
-    CREATE TABLE NONHRCRECS AS
-    SELECT *, 'N' AS ISHRC, (CNTVIEW * 100.0 / TOTAL) AS PTAGE
-    FROM TEMP1
-    WHERE (CNTVIEW * 100.0 / TOTAL) < 10;
-""")
-
-# ============================================================
-# MERGED RECORDS
-# ============================================================
-con.execute("""
-    CREATE TABLE MRGRECORDS AS
-    SELECT *,
-           substr(REPORTDATE, 7, 4) AS YYYY,
-           substr(REPORTDATE, 4, 2) AS MM,
-           substr(REPORTDATE, 1, 2) AS DD
-    FROM (
-        SELECT * FROM HRCRECS
-        UNION ALL
-        SELECT * FROM NONHRCRECS
-    );
-""")
-
-# ============================================================
-# FINAL OUTPUT
-# ============================================================
-table = con.execute("""
-    SELECT 
-        BRANCHNO,
-        REPORTDATE,
-        BANKNO,
-        REPORTNO,
-        RECTYPE,
-        ISHRC,
-        TOTAL,
-        CNTVIEW,
-        ROUND(PTAGE, 2) AS PTAGE
-    FROM MRGRECORDS
-    ORDER BY BRANCHNO, YYYY, MM, DD, BANKNO, REPORTNO, RECTYPE;
-""").arrow()
-
-# ============================================================
-# SAVE TO PARQUET & CSV (using PyArrow)
-# ============================================================
-pq.write_table(table, output_parquet)
-pc.write_csv(table, output_csv)
-
-print("✅ CISUMREP process completed successfully!")
-print(f"Output Parquet: {output_parquet}")
-print(f"Output CSV: {output_csv}")
+#------------------------------------------------------------#
+#  Split output into 10 smaller Parquet files (optional)
+#------------------------------------------------------------#
+# Example: Split into 10 partitions
+con.execute(f"""
+    COPY (
+        SELECT *,
+               ROW_NUMBER() OVER () AS rn,
