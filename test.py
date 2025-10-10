@@ -3,181 +3,255 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CISUMREP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB24841
-//*--------------------------------------------------------------------
-//INITDS   EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.CIREPTTT.SUMMARY,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//*--- PROCESSING
-//*--------------------------------------------------------------------
-//GET#RECS EXEC SAS609
-//* UNLOAD JOB FROM CIULREPT
-//REPTFILE DD DISP=SHR,DSN=UNLOAD.CIREPTTT.FB
-//OUTFILE  DD DSN=CIS.CIREPTTT.SUMMARY,
-//            DISP=(NEW,CATLG,DELETE),SPACE=(CYL,(10,10),RLSE),
-//            UNIT=SYSDA,DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SYSIN    DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=5;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
+//CISVPBCS JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB18660
+//*---------------------------------------------------------------------
+//* EXTRACTING ALL CARD ACCOUNTS
+//*---------------------------------------------------------------------
+//ALLCARD  EXEC SAS609
+//IEFRDER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//MERCHANT  DD DISP=SHR,DSN=UNICARD.MERCHANT
+//VISAFILE  DD DISP=SHR,DSN=UNICARD.VISA
+//OUTFILE   DD DSN=SNGLVIEW.PBCS,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//             DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
  /*----------------------------------------------------------------*/
- /*    INPUT FILE DATA DECLARATION                                 */
+ /*    UNICARD MERCHANT DECLARATION                                */
  /*----------------------------------------------------------------*/
-DATA HRCDATA XHRCDATA;
-  INFILE REPTFILE; FORMAT CNTVIEW 8.;
-  INPUT  @001  BANKNO            PD2.
-         @003  RECTYPE            $5.
-         @008  APPLCODE           $5.
-         @013  APPLNO            $20.
-         @033  NOTENO            $10.
-         @043  REPORTDATE        $10.
-         @053  REPORTNO          $20.
-         @073  BRANCHNO           $7.
-         @080  NAME              $60.
-         @140  CODE1              $5.
-         @145  CODE2              $5.
-         @150  CODE3              $5.
-         @155  CODE4              $5.
-         @160  CODE5              $5.
-         @165  AMOUNT1           $20.
-         @185  AMOUNT2           $20.
-         @205  AMOUNT3           $20.
-         @225  AMOUNT4           $20.
-         @245  AMOUNT5           $20.
-         @265  DATE1             $10.
-         @275  DATE2             $10.
-         @285  DATE3             $10.
-         @295  DATE4             $10.
-         @305  DATE5             $10.
-         @315  REMARK1           $25.
-         @340  REMARK2           $25.
-         @365  REMARK3           $25.
-         @390  REMARK4           $25.
-         @415  REMARK5           $25.
-         @440  VIEWED             $1.
-         @441  CUSTASSESS         $1.
-         @442  BRCHCOMMENTS      $40.
-         @482  BRCHREVIEW        $30.
-         @512  BRCHCHECK         $30.
-         @542  HOCOMMENTS        $40.
-         @582  HOREVIEW          $30.
-         @612  HOCHECK           $30.
-         @642  CUSTOCCUP          $5.
-         @647  CUSTNATURE         $5.
-         @652  CUSTEMPLOYER      $40.
-         @692  INDORG             $1.
-         @693  OCCUPDESC         $40.
-         @733  NATUREDESC        $40.
-         @773  VIEWOFFICER        $1.
-         @774  REVIEWED           $1.;
+   DATA MERCHANT;
+     INFILE MERCHANT;
+     FORMAT ACCTNO $20. ACCTSTATUS $20. CUSTNAME$40.;
+         INPUT @01  ACCTNO             $10.        /*MERCHANT NO    */
+               @11  CUSTNAME1          $30.        /*MERCHANT NAME  */
+               @41  DATEOPEN         DDMMYY6.      /*OPEN DATE      */
+               @47  DATECLSE         DDMMYY6.      /*CLOSED DATE    */
+               @53  MERCHTYPE          $4.         /*MERCH CATEGORY */
+               @57  ALIAS              $14.;       /*MERCH REGNO    */
+               CUSTNAME=CUSTNAME1;
+               ACCTCODE='MERCH';
+               COLLINDC='N';
+               BANKINDC='C';
+               PRIMSEC='P';
+               OCCUPDESC='MERCHANT CODE : '||MERCHTYPE;
+               IF DATECLSE EQ .  THEN ACCTSTATUS = 'ACTIVE';
+               IF DATECLSE NE .  THEN ACCTSTATUS = 'CLOSED';
+               INDORG='O';
+ PROC SORT DATA=MERCHANT; BY ACCTNO; RUN;
+ PROC PRINT DATA=MERCHANT(OBS=10); TITLE 'MERCHANT FILE'; RUN;
+ /*----------------------------------------------------------------*/
+ /*    UNICARD VISA FILE DECLARATION                               */
+ /*----------------------------------------------------------------*/
+   DATA VISA;
+     INFILE VISAFILE;
+     FORMAT ACCTNO $20. ACCTSTATUS $20. ;
+         INPUT @1   ACCTNO             $16.        /*CARD NUMBER    */
+               @17  CARDNOGTOR         $16.        /*CARDNO (GTOR)  */
+               @33  CUSTNAME           $40.        /*CUSTNAME       */
+               @73  ALIASKEY           $3.         /*DOC TYPE       */
+               @76  ALIAS1             $12.        /*CUSTNO (CARD)  */
+               @88  ALIAS2             $12.        /*REFNO  (CARD)  */
+               @100 EMPLNAME           $30.        /*EMPLOYER NAME  */
+               @130 OCCUPDESC          $20.        /*               */
+               @150 DATEOPEN           DDMMYY6.    /*               */
+               @156 CREDITLIMIT        6.          /*               */
+               @162 ACCTTYPE           $2.         /* I/IA/IS       */
+               @164 ACCTCLSECODE       $1.         /*               */
+               @165 ACCTCLSEDESC       $20.        /*               */
+               @185 DATECLSE           DDMMYY6.    /*               */
+               @191 RECLASSCODE        $1.         /*               */
+               @192 CURRENTBAL         9.2         /*               */
+               @201 CURRENTBALSIGN     $1.         /*               */
+               @202 AUTHCHARGE         10.2        /*               */
+               @212 AUTHCHARGESIGN     $1.         /*               */
+               @213 ADDRESSTYPE        $1.         /*HOME/BUS/COLL  */
+               @214 ADDRESSLINE1       $30.        /*               */
+               @244 ADDRESSLINE2       $30.        /*               */
+               @274 ADDRESSLINE3       $30.        /*               */
+               @304 ADDRESSLINE4       $30.        /*               */
+               @334 ADDRESSLINE5       $30.        /*               */
+               @364 POSTCODE           $5.         /*               */
+               @369 MONITORCODE        $1.         /*               */
+               @478 PRODDESC           $20.        /*PRODUCT DESCRIB*/
+               @498 COLLNO             $5.         /*FDR VALUE      */
+               @503 CCELCODE           $1.         /*CANCEL CODE    */
+               @504 CCELCODEDESC       $20.        /*CCEL CODE DESC */
+               @524 CRINDC             $20.        /*CREDIT/DEBIT   */
+               @525 DOBDOR             $8.;        /*DOB - INDV     */
 
-         IF RECTYPE EQ 'DPST' AND APPLCODE EQ 'DP' AND
-            REMARK3 IN ('126','127','128','129','140','141','142',
-                        '143','144','145','146','147','148','149',
-                        '171','172','173')
-         THEN DELETE;
+         BANKINDC='C';
+         IF ALIAS1 NE '' THEN ALIAS=ALIAS1;
+         IF ALIAS1 EQ '' AND ALIAS2 NE '' THEN DO;
+            ALIAS=ALIAS1;
+            ALIASKEY='';
+         END;
+         IF ALIAS1 EQ '' AND ALIAS2 EQ '' THEN ALIASKEY='';
 
-         IF (REVIEWED EQ 'Y' OR VIEWED EQ 'Y')
-         THEN CNTVIEW = 1;
-         ELSE CNTVIEW = 0;
+         IF CRINDC = 'C' THEN ACCTCODE='CREDT';
+         IF CRINDC = 'D' THEN ACCTCODE='DEBIT';
 
-         IF RECTYPE EQ 'DPST' AND REMARK1 NE ' '
-            AND REMARK2 NE ' ' THEN OUTPUT HRCDATA;
-         ELSE OUTPUT XHRCDATA;
+         IF ACCTTYPE = 'I ' THEN RELATIONDESC='PRINCIPAL CARD ';
+         ELSE IF ACCTTYPE = 'IA' THEN RELATIONDESC='PRINC + SUPP   ';
+         ELSE IF ACCTTYPE = 'IS' THEN RELATIONDESC='SUPP SEPARATE  ';
+         ELSE IF ACCTTYPE = 'A ' THEN RELATIONDESC='SUPP COMBINE   ';
+         ELSE RELATIONDESC='UNKNOWN        ';
 
- PROC SORT  DATA=HRCDATA;
- BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
- PROC SORT  DATA=XHRCDATA;
- BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
- PROC PRINT DATA=HRCDATA(OBS=5);TITLE 'HRC REPORT DATA';RUN;
- PROC PRINT DATA=XHRCDATA(OBS=5);TITLE 'NOT HRC REPORT DATA';RUN;
+         IF CCELCODE EQ '' AND CCELCODEDESC EQ ''
+               THEN ACCTSTATUS='ACTIVE               ';
+         IF CCELCODE NE '' AND CCELCODEDESC NE ''
+               THEN ACCTSTATUS=CCELCODEDESC;
+         IF CCELCODE NE ' ' AND CCELCODEDESC EQ ''
+               THEN ACCTSTATUS='INACTIVE             ';
+         IF DATECLSE NE . THEN ACCTSTATUS='CLOSED    ';
+         IF ACCTSTATUS='ACTIVE   ' THEN DATECLSE = .;
 
- /*----------------------------------------------------------------*/
- /*  PROC SUMMARY FOR HRC DATA                                     */
- /*----------------------------------------------------------------*/
- PROC SUMMARY DATA=HRCDATA;
- BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO;
- VAR CNTVIEW;
- OUTPUT OUT=TEMP (DROP=_TYPE_ RENAME=(_FREQ_=TOTAL))
-                  SUM=CNTVIEW; RUN;
- PROC SORT  DATA=TEMP; BY BRANCHNO ;RUN;
- PROC PRINT DATA=TEMP(OBS=5);TITLE 'HRC SUMMARY';RUN;
+         IF COLLNO NE '00000' THEN DO;
+            COLLINDC='Y';
+            COLLDESC='FIXED DEPOSIT';
+         END;
+         ELSE DO;
+            COLLINDC='N';
+            COLLDESC='';
+         END;
 
- /*----------------------------------------------------------------*/
- /*  PROC SUMMARY FOR NON HRC REPORT DATA                          */
- /*----------------------------------------------------------------*/
- PROC SUMMARY DATA=XHRCDATA;
- BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO;
- VAR CNTVIEW;
- OUTPUT OUT=TEMP1(DROP=_TYPE_ RENAME=(_FREQ_=TOTAL)) SUM=CNTVIEW; RUN;
- PROC SORT  DATA=TEMP1; BY BRANCHNO ;RUN;
- PROC PRINT DATA=TEMP1(OBS=5);TITLE 'NON-HRC SUMMARY';RUN;
+         IF SUBSTR(ACCTNO,14,1)='1' THEN PRIMSEC='P';
+         ELSE PRIMSEC='S';
 
- /*----------------------------------------------------------------*/
- /* SELECT ONLY VIEWED RECORDS < 100% FOR ALL HRC RECORDS          */
- /*----------------------------------------------------------------*/
- DATA HRCRECS;
-     SET TEMP; FORMAT PTAGE 8.2 ISHRC $1.;
-     ISHRC = 'Y';
-     PTAGE = (CNTVIEW * 100) / TOTAL;
-     IF PTAGE < 100 THEN OUTPUT;
- PROC SORT  DATA=HRCRECS;
- BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
- PROC PRINT DATA=HRCRECS(OBS=5);TITLE 'HRC RECORDS';RUN;
+         IF SUBSTR(ACCTNO,15,1) = '0' THEN PRISEC='P';
+         ELSE PRISEC='S';
 
- /*----------------------------------------------------------------*/
- /* SELECT ONLY VIEWED RECORDS < 10% FOR ALL NON-HRC RECORDS        */
- /*----------------------------------------------------------------*/
- DATA NONHRCRECS;
-     SET TEMP1; FORMAT PTAGE 8.2 ISHRC $1.;
-     ISHRC = 'N';
-     PTAGE = (CNTVIEW * 100) / TOTAL;
-     IF PTAGE < 10 THEN OUTPUT;
- PROC SORT  DATA=NONHRCRECS;
- BY BANKNO RECTYPE REPORTDATE REPORTNO BRANCHNO; RUN;
- PROC PRINT DATA=NONHRCRECS(OBS=5);TITLE 'NON-HRC RECORDS ';RUN;
-
- /*----------------------------------------------------------------*/
- /* MERGED ALL RECORDS                                              */
- /*----------------------------------------------------------------*/
- DATA MRGRECORDS; FORMAT YYYY $4. MM $2. DD $2.;
-     SET HRCRECS NONHRCRECS;
-     YYYY = SUBSTR(REPORTDATE,7,4);
-     MM   = SUBSTR(REPORTDATE,4,2);
-     DD   = SUBSTR(REPORTDATE,1,2);
- PROC SORT  DATA=MRGRECORDS;
- BY BRANCHNO YYYY MM DD BANKNO REPORTNO RECTYPE; RUN;
- PROC PRINT DATA=MRGRECORDS(OBS=5);TITLE 'MERGED RECORDS';RUN;
-
- /*----------------------------------------------------------------*/
- /* OUTPUT HRC AND NON-HRC DATA                                    */
- /*----------------------------------------------------------------*/
- DATA OUTRECS;
-   SET MRGRECORDS;
-   FILE OUTFILE;
-   PUT  @001  BRANCHNO           $7.
-        @008  ', '
-        @010  REPORTDATE        $10.
-        @020  ', '
-        @022  BANKNO             Z3.
-        @025  ', '
-        @027  REPORTNO          $20.
-        @047  ', '
-        @049  RECTYPE            $5.
-        @054  ', '
-        @056  ISHRC              $1.
-        @057  ', '
-        @059  TOTAL               8.
-        @067  ', '
-        @069  CNTVIEW             8.
-        @077  ', '
-        @079  PTAGE              8.2;
+         INDORG='I';
+         BAL1INDC='O/B';                           /*OUTSTANDING BAL  */
+         IF CURRENTBALSIGN = '-' THEN CURRENTBAL=CURRENTBAL*(-1);
+         BAL1=CURRENTBAL-AUTHCHARGE;
+         BAL1=BAL1*(-1);
+         AMT1INDC='C/L';                           /*CREDIT LIMIT     */
+         AMT1=CREDITLIMIT;                         /*CREDIT LIMIT     */
    RUN;
+ PROC SORT DATA=VISA; BY ACCTNO; RUN;
+ PROC PRINT DATA=VISA(OBS=20); TITLE 'VISA FILE '; RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   APPEND UNICARD ACCT AND CARD FILES                           */
+ /*----------------------------------------------------------------*/
+   DATA MRGCARD;
+       SET MERCHANT VISA;BY ACCTNO;
+       ACCTBRABBR='PBCSS';
+       JOINTACC='N';
+       IF DOBDOR = '00000000' THEN DOBDOR = '';
+   RUN;
+
+ PROC SORT DATA=MRGCARD; BY ACCTCODE ; RUN;
+ PROC PRINT DATA=MRGCARD(OBS=10);TITLE 'MERCH + CARD FILES'; RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAILS                                               */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT;
+  SET MRGCARD;
+  FILE OUTFILE;
+
+     CUSTNAME=TRANWRD(CUSTNAME,'\','\\');    /* 2011-2834 */
+     PUT @1    '"'
+         @2    '033'               @5     '","' /*BANK NO        */
+      /* @8    CUSTNO         $11. */     @19    '","'
+         @22   INDORG         $01. @23    '","'
+         @26   CUSTNAME       $40. @66    '","'
+         @69   ALIASKEY       $03. @72    '","'
+         @75   ALIAS          $20. @95    '","'
+      /* @98   OCCUPCD1       $05. */     @103   '","'
+         @106  OCCUPDESC      $20. @126   '","'
+         @129  EMPLNAME       $60. @189   '","'
+         @192  ACCTBRABBR     $07. @199   '","'
+      /* @202  BRANCHNO        Z5. */     @207   '","'
+         @210  ACCTCODE       $05. @215   '","' /*ACCOUNT CODE   */
+         @218  ACCTNO         $20. @238   '","' /*ACCOUNT NUM    */
+      /* @241  NOTENO         $05. */     @246   '","'
+         @249  BANKINDC       $01. @250   '","'
+         @253  PRIMSEC        $01. @254   '","' /*PRIM SEC ACCT  */
+      /* @257  RLENCODE        Z3. */     @260   '","'
+         @263  RELATIONDESC   $15. @278   '","'
+         @281  ACCTSTATUS     $25. @306   '","'
+         @309  DATEOPEN   YYMMDDN8. @319   '","'
+         @322  DATECLSE   YYMMDDN8. @332   '","'
+      /* @335  SIGNATORY      $01. */     @336   '","'
+         @339  BAL1INDC       $05. @344   '","' /*LEDGER BAL     */
+         @350  BAL1           13.2 @365   '","' /*LEDGER BAL AMT */
+      /* @368  BAL2INDC       $05. */     @373   '","'
+      /* @376  BAL2           13.2 */     @391   '","'
+         @394  AMT1INDC       $05. @399   '","' /*OD LIMIT       */
+         @402  AMT1           13.2 @417   '","' /*OD LIMIT AMT   */
+      /* @420  AMT2INDC       $05. */     @425   '","'
+      /* @428  AMT2           13.2 */     @443   '","'
+      /* @446  COLLTYPE       $05. */     @451   '","'
+      /* @454  COLLCODE       Z05. */     @459   '","'
+         @462  COLLDESC       $30. @492   '","'
+         @495  COLLINDC        $1. @496   '","' /*COLL INDC  Y/N  */
+         @499  COLLNO         $11. @510   '","'
+      /* @513  COLLCLASS      $03. */     @516   '","'
+      /* @519  AANUMBER       $20. */     @539   '","'
+      /* @542  ARREARDAY       Z5. */     @547   '","'
+         @550  JOINTACC        $1. @551   '","'
+         @554  PRODDESC       $40.        @594   '", '
+         @597  '\N'
+         @605  DOBDOR         $8.;
+  RUN;
+//*--------------------------------------------------------------------
+//*--> SPLIT FROM ONE FILE INTO A FEW FILES
+//*--------------------------------------------------------------------
+//STEP0001 EXEC PGM=SORT
+//SORTIN   DD DISP=SHR,DSN=SNGLVIEW.PBCS
+//OUT01    DD DSN=SNGLVIEW.PBCS01,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT02    DD DSN=SNGLVIEW.PBCS02,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT03    DD DSN=SNGLVIEW.PBCS03,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT04    DD DSN=SNGLVIEW.PBCS04,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT05    DD DSN=SNGLVIEW.PBCS05,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT06    DD DSN=SNGLVIEW.PBCS06,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT07    DD DSN=SNGLVIEW.PBCS07,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT08    DD DSN=SNGLVIEW.PBCS08,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT09    DD DSN=SNGLVIEW.PBCS09,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//OUT10    DD DSN=SNGLVIEW.PBCS10,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(500,200),RLSE),
+//            DCB=(LRECL=1000,BLKSIZE=0,RECFM=FB)
+//SYSOUT   DD SYSOUT=*
+//SYSIN    DD *
+  OPTION COPY
+  OUTFIL FNAMES=(OUT01,OUT02,OUT03,OUT04,OUT05,
+                 OUT06,OUT07,OUT08,OUT09,OUT10),SPLIT
+/*
+//*
