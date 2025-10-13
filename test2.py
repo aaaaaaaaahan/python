@@ -1,101 +1,16 @@
-convert program to python with duckdb and pyarrow
-duckdb for process input file
-pyarrow use for output
-assumed all the input file ady convert to parquet can directly use it
-
-//CIRHUNIA JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB58034
-//*---------------------------------------------------------------------
-//DATA#ADD EXEC SAS609
-//IEFRDER   DD DUMMY
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//INFILE    DD DISP=SHR,DSN=RHOLD.FULL.LIST
-//OUTFILE   DD DSN=RHOLD.PBCS.DAILY.ADD(+1),
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
- /*----------------------------------------------------------------*/
- /*    DESCRIPTION                                                 */
- /*----------------------------------------------------------------*/
-   DATA DATA_ADD;
-   INFILE INFILE;
-   INPUT @001     CLASS_CODE             $10.
-         @011     CLASS_DESC             $150.
-         @161     NATURE_CODE            $10.
-         @171     NATURE_DESC            $150.
-         @321     DEPT_CODE              $10.
-         @331     DEPT_DESC              $150.
-         @481     GUIDE_CODE             $10.
-         @491     CLASS_ID               $10.
-         @501     INDORG                 $01.
-         @505     NAME                   $40.
-         @545     ID1                    $20.
-         @565     ID2                    $20.
-         @585     DTL_REMARK1            $40.
-         @625     DTL_REMARK2            $40.
-         @665     DTL_REMARK3            $40.
-         @705     DTL_REMARK4            $40.
-         @745     DTL_REMARK5            $40.
-         @785     DTL_CRT_DATE           $10.
-         @795     DTL_CRT_TIME           $08.
-         @805     DTL_LASTOPERATOR       $08.
-         @815     DTL_LASTMNT_DATE       $10.
-         @815     MNT_DATE_YY            $4.
-         @820     MNT_DATE_MM            $2.
-         @823     MNT_DATE_DD            $2.
-         @825     DTL_LASTMNT_TIME       $08.
-         @835     CONTACT_1              $50.
-         @885     CONTACT_2              $50.
-         @935     CONTACT_3              $50. ;
-
-         /*--------------------------*/
-         /* TAKE DAILY RECORDS ONLY  */
-         /*--------------------------*/
-         LASTMNT_SAS=MDY(MNT_DATE_MM,MNT_DATE_DD,MNT_DATE_YY);
-         IF LASTMNT_SAS = &SDATE;
-
-         /*-------------------*/
-         /* DROP PBCS RECORDS */
-         /*-------------------*/
-         IF DEPT_CODE = 'PBCSS' THEN DELETE;
-         IF DEPT_CODE = '     ' THEN DELETE;
-
-         /*----------------------------------------*/
-         /* ESMR 2014-1737                         */
-         /* EXCL CLASSCODE 4 (NATURE 28 AND 44)    */
-         /*----------------------------------------*/
-         IF CLASS_CODE = 'CLS0000004' AND NATURE_CODE = 'NAT0000028'
-            THEN DELETE;
-         IF CLASS_CODE = 'CLS0000004' AND NATURE_CODE = 'NAT0000044'
-            THEN DELETE;
-   RUN;
-
- PROC SORT DATA=DATA_ADD; BY DEPT_CODE; RUN;
- PROC PRINT DATA=DATA_ADD;RUN;
- /*-------------------------------------------------------*/
- /*- FULL FILE DETAILS                                   -*/
- /*-------------------------------------------------------*/
- DATA OUT;
- SET DATA_ADD;
-   FILE OUTFILE;
-     DT_ALIAS='' ;
-     DT_BANKRUPT_NO='';
-     DELIM = '41'X;
-     NAME        =COMPRESS(NAME,DELIM);
-     ID1         =COMPRESS(ID1,DELIM);
-     ID2         =COMPRESS(ID2,DELIM);
-     PUT @001     NAME                   $50.
-         @051     DT_ALIAS               $30.
-         @081     ID2                    $12.
-         @093     ID1                    $12.
-         @105     DT_BANKRUPT_NO         $18.
-         @123     'SN'
-         @125     'L1'
-         @127     'ADD'
-         @130     ' '
-         @131     DEPT_CODE              $ 8. ;
- RUN;
+#=======================================================================#
+#  4. BUILD FINAL OUTPUT STRUCTURE (DATA OUT) - FIXED
+#=======================================================================#
+final_df = con.sql("""
+    SELECT
+        regexp_replace(NAME, '[\\x00-\\x1F]', '', 'g') AS NAME,
+        regexp_replace(ID1, '[\\x00-\\x1F]', '', 'g') AS ID1,
+        regexp_replace(ID2, '[\\x00-\\x1F]', '', 'g') AS ID2,
+        '' AS DT_ALIAS,
+        '' AS DT_BANKRUPT_NO,
+        'SN' AS CONST_SN,
+        'L1' AS CONST_L1,
+        'ADD' AS CONST_ADD,
+        DEPT_CODE
+    FROM sorted
+""").df()
