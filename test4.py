@@ -1,87 +1,81 @@
-#------------------------------------------------------------#
-#  Merge MERCHANT + VISA datasets (align columns)
-#------------------------------------------------------------#
-con.execute("""
-    CREATE TABLE mrgcard AS
-    SELECT
-        ACCTNO,
-        NULL AS CARDNOGTOR,
-        CUSTNAME,
-        NULL AS ALIASKEY,
-        ALIAS,
-        NULL AS ALIAS1,
-        NULL AS ALIAS2,
-        NULL AS EMPLNAME,
-        OCCUPDESC,
-        DATEOPEN,
-        DATECLSE,
-        NULL AS CREDITLIMIT,
-        NULL AS ACCTTYPE,
-        NULL AS ACCTCLSECODE,
-        NULL AS ACCTCLSEDESC,
-        NULL AS CCELCODE,
-        NULL AS CCELCODEDESC,
-        NULL AS COLLNO,
-        NULL AS CURRENTBAL,
-        NULL AS CURRENTBALSIGN,
-        NULL AS AUTHCHARGE,
-        NULL AS AUTHCHARGESIGN,
-        NULL AS PRODDESC,
-        NULL AS DOBDOR,
-        ACCTCODE,
-        BANKINDC,
-        PRIMSEC,
-        COLLINDC,
-        NULL AS COLLDESC,
-        ACCTSTATUS,
-        NULL AS CURRENTBAL2,
-        NULL AS BAL1,
-        NULL AS BAL1INDC,
-        NULL AS AMT1INDC,
-        NULL AS AMT1,
-        NULL AS RELATIONDESC,
-        INDORG
-    FROM merchant_proc
+import os
+import datetime
+import logging
 
-    UNION ALL
+# =========================================
+# Configuration
+# =========================================
+FTP_FOLDER = "/host/ftp/incoming"
+LOG_FILE = "/host/ftp/ftp_controller.log"
 
-    SELECT
-        ACCTNO,
-        CARDNOGTOR,
-        CUSTNAME,
-        ALIASKEY,
-        ALIAS,
-        ALIAS1,
-        ALIAS2,
-        EMPLNAME,
-        OCCUPDESC,
-        DATEOPEN,
-        DATECLSE,
-        CREDITLIMIT,
-        ACCTTYPE,
-        ACCTCLSECODE,
-        ACCTCLSEDESC,
-        CCELCODE,
-        CCELCODEDESC,
-        COLLNO,
-        CURRENTBAL,
-        CURRENTBALSIGN,
-        AUTHCHARGE,
-        AUTHCHARGESIGN,
-        PRODDESC,
-        DOBDOR,
-        ACCTCODE,
-        BANKINDC,
-        PRIMSEC,
-        COLLINDC,
-        COLLDESC,
-        ACCTSTATUS,
-        CURRENTBAL2,
-        BAL1,
-        BAL1INDC,
-        AMT1INDC,
-        AMT1,
-        RELATIONDESC,
-        INDORG
-    FROM visa_proc;
-""")
+# =========================================
+# Setup Logging
+# =========================================
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# =========================================
+# Function 1: Check for today's dummy file
+# =========================================
+def check_dummy_file():
+    today = datetime.date.today()
+    found_today = False
+
+    if not os.path.exists(FTP_FOLDER):
+        logging.warning(f"FTP folder not found: {FTP_FOLDER}")
+        return False
+
+    for file in os.listdir(FTP_FOLDER):
+        file_path = os.path.join(FTP_FOLDER, file)
+        if os.path.isfile(file_path):
+            modified_date = datetime.date.fromtimestamp(os.path.getmtime(file_path))
+            # check file date is today
+            if modified_date == today:
+                found_today = True
+                logging.info(f"Found today's file: {file}")
+    
+    if not found_today:
+        logging.warning("No dummy file found for today.")
+    return found_today
+
+
+# =========================================
+# Function 2: Delete old files
+# =========================================
+def delete_old_files():
+    today = datetime.date.today()
+
+    if not os.path.exists(FTP_FOLDER):
+        logging.warning(f"FTP folder not found: {FTP_FOLDER}")
+        return
+
+    for file in os.listdir(FTP_FOLDER):
+        file_path = os.path.join(FTP_FOLDER, file)
+        if os.path.isfile(file_path):
+            modified_date = datetime.date.fromtimestamp(os.path.getmtime(file_path))
+            if modified_date < today:
+                try:
+                    os.remove(file_path)
+                    logging.info(f"Deleted old file: {file} (modified: {modified_date})")
+                except Exception as e:
+                    logging.error(f"Error deleting {file}: {e}")
+
+# =========================================
+# Main Controller Flow
+# =========================================
+if __name__ == "__main__":
+    logging.info("===== FTP Controller Started =====")
+
+    # Step 1: Check today's dummy file
+    if check_dummy_file():
+        logging.info("Today's dummy file found ✅")
+    else:
+        logging.info("Today's dummy file not found ❌")
+
+    # Step 2: Delete old files
+    delete_old_files()
+
+    logging.info("===== FTP Controller Completed =====")
