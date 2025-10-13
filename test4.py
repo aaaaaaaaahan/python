@@ -1,8 +1,36 @@
-This Python controller is designed to monitor and manage FTP transfer files.
-It performs two main functions:
+# ----------------------------------------------------------------#
+# 5. Output FULL FILE with all fields (including one empty field)
+# ----------------------------------------------------------------#
+full_df = con.sql("""
+SELECT 
+    CLASS_CODE,
+    CLASS_DESC,
+    NATURE_CODE,
+    NATURE_DESC,
+    DEPT_CODE,
+    DEPT_DESC,
+    GUIDE_CODE,
+    CLASS_ID,
+    INDORG,
+    NAME,
+    ID1,
+    ID2,
+    DTL_REMARK1,
+    DTL_REMARK2,
+    DTL_REMARK3,
+    DTL_REMARK4,
+    DTL_REMARK5,
+    DTL_CRT_DATE,
+    DTL_CRT_TIME,
+    DTL_LASTOPERATOR,
+    DTL_LASTMNT_DATE,
+    DTL_LASTMNT_TIME,
+    CONTACT1,
+    CONTACT2,
+    CONTACT3,
+    '' AS BLANK1
+FROM DEPT_DESC
+ORDER BY CLASS_ID, INDORG, NAME
+""").arrow()
 
-Check Function – Scans the specified FTP folder to verify whether today’s dummy (empty) confirmation file has been received. The file name must include the date in the format YYYYMMDD (e.g., dummy_20251013.txt).
-
-Delete Function – Automatically deletes any files with dates earlier than today, ensuring that only the latest FTP files are retained.
-
-The program also maintains a daily rotating log file that records all actions taken, including files found, deleted, or skipped. This helps in tracking FTP job results and maintaining folder cleanliness.
+pq.write_table(full_df, f"{output_path}RHOLD_FULL_LIST.parquet")
