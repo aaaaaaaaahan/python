@@ -1,0 +1,108 @@
+//CIMYKAD1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB88831
+//*---------------------------------------------------------------------
+//* REF ESMR 2014-1906 (FROM BDS)
+//* JABATAN PENDAFTARAN NEGARA (JPN) VIDE LETTER REF:
+//* JPN.MPC.(S):163/786/7 KLT.17 (85) DATED 21/02/2013 HAS REQUESTED THE
+//* BANK TO USE AND DISPLAY THE "GMPCNAME" AS THE NAME OF THE MYKAD
+//* HOLDER IN THE BANK'S APPLICATION SYSTEM.
+//*
+//* NOTE:
+//* JPN HAS DEFINED THE NAME AS FOLLOWS:-
+//* "ORIGINALNAME" - NAMA ASAL PEMEGANG MYKAD
+//* "GMPCNAME" - NAMA PEMEGANG MYKAD YANG DICETAK DIPERMUKAAN MYKAD
+//*
+//* ESMR 2017-5099 VALIDATION OF MYPR (PERMANENT RESIDENCE) FOR CTR
+//* EJS A2018-9760 ADJUST POSITION OF INPUT FILE. BDS GAVE DELIMITERS
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CIS.MYKADBDS.LOAD,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.CIS.MYKADBDS.REJECT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//*  PROCESS ACCOUNT INFORMATION
+//*---------------------------------------------------------------------
+//MYKADBDS EXEC SAS609
+//MYKAD    DD DISP=SHR,DSN=RBP2.B033.CIS.MYKADBDS
+//REJECT   DD DSN=RBP2.B033.CIS.MYKADBDS.REJECT,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(200,100),RLSE),
+//            DCB=(LRECL=700,BLKSIZE=0,RECFM=FB)
+//LOADFILE DD DSN=RBP2.B033.CIS.MYKADBDS.LOAD,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(1500,500),RLSE),
+//            DCB=(LRECL=700,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+ DATA MYKAD_LOAD MYKAD_REJECT;
+  INFILE MYKAD;
+    INPUT @  1  MYKAD_NEW_IC             $13.
+          @ 15  MYKAD_OLD_IC             $ 8.
+          @ 28  MYKAD_NAME               $40.
+          @ 69  MYKAD_DOB                $10.
+          @ 79  MYKAD_GENDER             $ 1.
+          @ 92  MYKAD_RELIGION           $11.
+          @107  MYKAD_RACE               $25.
+          @133  MYKAD_CITIZENSHIP        $18.
+          @152  MYKAD_ISSUE_DATE         $10.
+          @169  MYKAD_BIRTH_PLACE        $25.
+          @195  MYKAD_ADDRESS1           $30.
+          @226  MYKAD_ADDRESS2           $30.
+          @257  MYKAD_ADDRESS3           $30.
+          @288  MYKAD_POSTCODE           $ 6.
+          @303  MYKAD_CITY               $25.
+          @329  MYKAD_STATE              $30.
+          @360  MYKAD_GMPC_NAME          $80. ;
+          IF LENGTH(MYKAD_NEW_IC) = 12 THEN OUTPUT MYKAD_LOAD;
+          ELSE OUTPUT MYKAD_REJECT;
+ RUN;
+ PROC SORT  DATA=MYKAD_LOAD; BY MYKAD_NEW_IC;RUN;
+ PROC PRINT DATA=MYKAD_LOAD(OBS=10);TITLE 'MYKAD LOAD FILE';RUN;
+
+ PROC SORT  DATA=MYKAD_REJECT; BY MYKAD_NEW_IC;RUN;
+ PROC PRINT DATA=MYKAD_REJECT(OBS=15);TITLE 'MYKAD REJECT FILE';RUN;
+
+ DATA REJECT;
+   SET MYKAD_REJECT;
+   FILE REJECT;
+      PUT @  1  MYKAD_NEW_IC             $20.
+          @ 21  MYKAD_OLD_IC             $20.
+          @ 41  MYKAD_NAME              $150.
+          @191  MYKAD_DOB                $10.
+          @201  MYKAD_GENDER              $1.
+          @202  MYKAD_RELIGION           $30.
+          @232  MYKAD_RACE               $30.
+          @262  MYKAD_CITIZENSHIP        $30.
+          @292  MYKAD_ISSUE_DATE         $10.
+          @302  MYKAD_BIRTH_PLACE        $30.
+          @332  MYKAD_ADDRESS1           $40.
+          @372  MYKAD_ADDRESS2           $40.
+          @412  MYKAD_ADDRESS3           $40.
+          @452  MYKAD_POSTCODE           $10.
+          @462  MYKAD_CITY               $40.
+          @502  MYKAD_STATE              $40.
+          @542  MYKAD_GMPC_NAME         $150. ;
+          ;
+ DATA LOADFILE;
+   SET MYKAD_LOAD;
+   FILE LOADFILE;
+      PUT @  1  MYKAD_NEW_IC             $20.
+          @ 21  MYKAD_OLD_IC             $20.
+          @ 41  MYKAD_NAME              $150.
+          @191  MYKAD_DOB                $10.
+          @201  MYKAD_GENDER              $1.
+          @202  MYKAD_RELIGION           $30.
+          @232  MYKAD_RACE               $30.
+          @262  MYKAD_CITIZENSHIP        $30.
+          @292  MYKAD_ISSUE_DATE         $10.
+          @302  MYKAD_BIRTH_PLACE        $30.
+          @332  MYKAD_ADDRESS1           $40.
+          @372  MYKAD_ADDRESS2           $40.
+          @412  MYKAD_ADDRESS3           $40.
+          @452  MYKAD_POSTCODE           $10.
+          @462  MYKAD_CITY               $40.
+          @502  MYKAD_STATE              $40.
+          @542  MYKAD_GMPC_NAME         $150. ;
+          ;
+   RETURN;
+   RUN;
