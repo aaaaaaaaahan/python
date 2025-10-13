@@ -3,99 +3,56 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CIRHUNIA JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB58034
+//CMCBMPUF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB84625
 //*---------------------------------------------------------------------
-//DATA#ADD EXEC SAS609
-//IEFRDER   DD DUMMY
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//INFILE    DD DISP=SHR,DSN=RHOLD.FULL.LIST
-//OUTFILE   DD DSN=RHOLD.PBCS.DAILY.ADD(+1),
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
- /*----------------------------------------------------------------*/
- /*    DESCRIPTION                                                 */
- /*----------------------------------------------------------------*/
-   DATA DATA_ADD;
-   INFILE INFILE;
-   INPUT @001     CLASS_CODE             $10.
-         @011     CLASS_DESC             $150.
-         @161     NATURE_CODE            $10.
-         @171     NATURE_DESC            $150.
-         @321     DEPT_CODE              $10.
-         @331     DEPT_DESC              $150.
-         @481     GUIDE_CODE             $10.
-         @491     CLASS_ID               $10.
-         @501     INDORG                 $01.
-         @505     NAME                   $40.
-         @545     ID1                    $20.
-         @565     ID2                    $20.
-         @585     DTL_REMARK1            $40.
-         @625     DTL_REMARK2            $40.
-         @665     DTL_REMARK3            $40.
-         @705     DTL_REMARK4            $40.
-         @745     DTL_REMARK5            $40.
-         @785     DTL_CRT_DATE           $10.
-         @795     DTL_CRT_TIME           $08.
-         @805     DTL_LASTOPERATOR       $08.
-         @815     DTL_LASTMNT_DATE       $10.
-         @815     MNT_DATE_YY            $4.
-         @820     MNT_DATE_MM            $2.
-         @823     MNT_DATE_DD            $2.
-         @825     DTL_LASTMNT_TIME       $08.
-         @835     CONTACT_1              $50.
-         @885     CONTACT_2              $50.
-         @935     CONTACT_3              $50. ;
+//STATS#01 EXEC SAS609
+//CBMFILE  DD DISP=SHR,DSN=UNLOAD.CMCBMTXT.FB
+//OUTFILE  DD DSN=CBM.PURGE.MORE1Y(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTIONS NOCENTER;
 
-         /*--------------------------*/
-         /* TAKE DAILY RECORDS ONLY  */
-         /*--------------------------*/
-         LASTMNT_SAS=MDY(MNT_DATE_MM,MNT_DATE_DD,MNT_DATE_YY);
-         IF LASTMNT_SAS = &SDATE;
-
-         /*-------------------*/
-         /* DROP PBCS RECORDS */
-         /*-------------------*/
-         IF DEPT_CODE = 'PBCSS' THEN DELETE;
-         IF DEPT_CODE = '     ' THEN DELETE;
-
-         /*----------------------------------------*/
-         /* ESMR 2014-1737                         */
-         /* EXCL CLASSCODE 4 (NATURE 28 AND 44)    */
-         /*----------------------------------------*/
-         IF CLASS_CODE = 'CLS0000004' AND NATURE_CODE = 'NAT0000028'
-            THEN DELETE;
-         IF CLASS_CODE = 'CLS0000004' AND NATURE_CODE = 'NAT0000044'
-            THEN DELETE;
+DATA REPTDATE;
+   PURDTE = TODAY()-365;
+   PURDTE8=PUT(PURDTE,YYMMDDN8.);
+   CALL SYMPUT('PURGEDTE',PURDTE8);
    RUN;
+PROC PRINT;RUN;
 
- PROC SORT DATA=DATA_ADD; BY DEPT_CODE; RUN;
- PROC PRINT DATA=DATA_ADD;RUN;
- /*-------------------------------------------------------*/
- /*- FULL FILE DETAILS                                   -*/
- /*-------------------------------------------------------*/
- DATA OUT;
- SET DATA_ADD;
+DATA CBMTXT;
+   INFILE CBMFILE;
+   INPUT  @0001   CBM_LOAD_DATE                 $8.
+          @0009   CBM_RUN_NO                    $8.
+          @0387   REG_IDNO                      $20.
+          @2087   LAST_UPDATE                   $10.
+          @2087   LAST_UPDATE_DD                $2.
+          @2090   LAST_UPDATE_MM                $2.
+          @2093   LAST_UPDATE_YY                $4.
+          @7467   REG_NEW_IDNO                  $20.
+          ;
+
+          IF LAST_UPDATE = "-         " THEN DELETE;
+          LASTDATE=LAST_UPDATE_YY||LAST_UPDATE_MM||LAST_UPDATE_DD;
+RUN;
+PROC SORT  DATA=CBMTXT; BY CBM_LOAD_DATE; RUN;
+PROC PRINT DATA=CBMTXT(OBS=10);TITLE 'CMCBMTXT';RUN;
+
+DATA TOPURGE;
+  SET CBMTXT;
+   IF LASTDATE < &PURGEDTE;
+   RUN;
+PROC PRINT DATA=TOPURGE(OBS=10);TITLE 'PURGE MORE THAN 1 YEAR';RUN;
+
+DATA OUT;
+   SET TOPURGE;
    FILE OUTFILE;
-     DT_ALIAS='' ;
-     DT_BANKRUPT_NO='';
-     DELIM = '41'X;
-     NAME        =COMPRESS(NAME,DELIM);
-     ID1         =COMPRESS(ID1,DELIM);
-     ID2         =COMPRESS(ID2,DELIM);
-     PUT @001     NAME                   $50.
-         @051     DT_ALIAS               $30.
-         @081     ID2                    $12.
-         @093     ID1                    $12.
-         @105     DT_BANKRUPT_NO         $18.
-         @123     'SN'
-         @125     'L1'
-         @127     'ADD'
-         @130     ' '
-         @131     DEPT_CODE              $ 8. ;
- RUN;
+     PUT @0001   CBM_LOAD_DATE                 $8.
+         @0009   CBM_RUN_NO                    $8.
+         @0017   REG_IDNO                      $20.
+         @0037   REG_NEW_IDNO                  $20.
+         @0057   LAST_UPDATE                   $10.
+         ;
+RUN;
