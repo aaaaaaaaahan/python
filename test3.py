@@ -1,114 +1,181 @@
-import duckdb
-import datetime
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-#=======================================================================#
-#  CONFIGURATION
-#=======================================================================#
-input_parquet = "RHOLD_FULL_LIST.parquet"
-output_parquet = "RHOLD_PBCS_DAILY_ADD.parquet"
-
-# Date setup (equivalent to SAS &SDATE)
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
-SDATE = batch_date.strftime("%Y-%m-%d")  # format: YYYY-MM-DD
-
-#=======================================================================#
-#  INIT DUCKDB CONNECTION
-#=======================================================================#
-con = duckdb.connect()
-
-#=======================================================================#
-#  1. READ INPUT FILE
-#=======================================================================#
-con.execute(f"""
-    CREATE TABLE data_add AS
-    SELECT *
-    FROM read_parquet('{input_parquet}')
-""")
-
-#=======================================================================#
-#  2. FILTER AND CLEAN DATA
-#=======================================================================#
-# Equivalent to SAS logic:
-# - Keep only records where LASTMNT_SAS = &SDATE
-# - Exclude DEPT_CODE = 'PBCSS' or blank
-# - Exclude CLASS_CODE='CLS0000004' + NATURE_CODE in ('NAT0000028','NAT0000044')
-
-con.execute(f"""
-    CREATE TABLE filtered AS
-    SELECT
-        CLASS_CODE,
-        CLASS_DESC,
-        NATURE_CODE,
-        NATURE_DESC,
-        DEPT_CODE,
-        DEPT_DESC,
-        GUIDE_CODE,
-        CLASS_ID,
-        INDORG,
-        NAME,
-        ID1,
-        ID2,
-        DTL_REMARK1,
-        DTL_REMARK2,
-        DTL_REMARK3,
-        DTL_REMARK4,
-        DTL_REMARK5,
-        DTL_CRT_DATE,
-        DTL_CRT_TIME,
-        DTL_LASTOPERATOR,
-        DTL_LASTMNT_DATE,
-        SUBSTR(DTL_LASTMNT_DATE,1,4) AS MNT_DATE_YY,
-        SUBSTR(DTL_LASTMNT_DATE,6,2) AS MNT_DATE_MM,
-        SUBSTR(DTL_LASTMNT_DATE,9,2) AS MNT_DATE_DD,
-        DTL_LASTMNT_TIME,
-        CONTACT_1,
-        CONTACT_2,
-        CONTACT_3
-    FROM data_add
-    WHERE DATE(DTL_LASTMNT_DATE) = DATE '{SDATE}'
-      AND TRIM(DEPT_CODE) <> 'PBCSS'
-      AND TRIM(DEPT_CODE) <> ''
-      AND NOT (
-          CLASS_CODE = 'CLS0000004' AND 
-          NATURE_CODE IN ('NAT0000028', 'NAT0000044')
-      )
-""")
-
-#=======================================================================#
-#  3. SORT BY DEPT_CODE (PROC SORT)
-#=======================================================================#
-con.execute("""
-    CREATE TABLE sorted AS
-    SELECT * FROM filtered
-    ORDER BY DEPT_CODE
-""")
-
-#=======================================================================#
-#  4. BUILD FINAL OUTPUT STRUCTURE (DATA OUT)
-#=======================================================================#
-final_df = con.sql("""
-    SELECT
-        REPLACE(NAME, CHAR(0x41), '') AS NAME,
-        '' AS DT_ALIAS,
-        '' AS DT_BANKRUPT_NO,
-        ID2,
-        ID1,
-        'SN' AS CONST_SN,
-        'L1' AS CONST_L1,
-        'ADD' AS CONST_ADD,
-        DEPT_CODE
-    FROM sorted
-""").df()
-
-#=======================================================================#
-#  5. WRITE OUTPUT USING PYARROW
-#=======================================================================#
-table = pa.Table.from_pandas(final_df)
-pq.write_table(table, output_parquet)
-
-print(f"✅ CIRHUNIA processing complete.")
-print(f"Input : {input_parquet}")
-print(f"Output: {output_parquet}")
-print(f"Records written: {len(final_df)}")
+INPUT @00001  CBM_LOAD_DATE              $08.
+      @00009  CBM_RUN_NO                 $08.
+      @00017  CBM_REQUEST_NO             $20.
+      @00037  CBM_REQUEST_DATE           $20.
+      @00057  COMP_ENTITY_TYPE_STD       $10.
+      @00067  COMP_ENTITY_TYPE           $100.
+      @00167  COMP_STATUS_TYPE_STD       $10.
+      @00177  COMP_STATUS_TYPE           $100.
+      @00277  COMP_TYPE_STD              $10.
+      @00287  COMP_TYPE                  $100.
+      @00387  REG_IDNO                   $20.
+      @00407  REG_NAME                   $150.
+      @00557  REG_DATE_BR                $10.
+      @00567  BUSS_CODE_STD              $10.
+      @00577  BUSS_CODE                  $150.
+      @00727  REG_ADD1                   $100.
+      @00827  REG_ADD2                   $100.
+      @00927  REG_ADD3                   $100.
+      @01027  REG_ADD4                   $100.
+      @01127  REG_TOWN                   $50.
+      @01177  REG_POSTCODE               $10.
+      @01187  REG_STATE_STD              $10.
+      @01197  REG_STATE                  $100.
+      @01297  REG_COUNTRY_STD            $10.
+      @01307  REG_COUNTRY                $100.
+      @01407  BUSS_ADD1                  $100.
+      @01507  BUSS_ADD2                  $100.
+      @01607  BUSS_ADD3                  $100.
+      @01707  BUSS_ADD4                  $100.
+      @01807  BUSS_TOWN                  $50.
+      @01857  BUSS_POSTCODE              $10.
+      @01867  BUSS_STATE_STD             $10.
+      @01877  BUSS_STATE                 $100.
+      @01977  BUSS_COUNTRY_STD           $10.
+      @01987  BUSS_COUNTRY               $100.
+      @02087  LAST_UPDATE                $10.
+      @02097  AUTH_AMOUNT                $20.
+      @02117  ISSUE_AMOUNT               $20.
+      @02137  EXPIRY_DATE                $10.
+      @02147  OWNER_IDNO                 $20.
+      @02167  OWNER_NAME                 $150.
+      @02317  OWNER_ADD1                 $100.
+      @02417  OWNER_ADD2                 $100.
+      @02517  OWNER_ADD3                 $100.
+      @02617  OWNER_ADD4                 $100.
+      @02717  OWNER_TOWN                 $50.
+      @02767  OWNER_POSTCODE             $10.
+      @02777  OWNER_STATE_STD            $10.
+      @02787  OWNER_STATE                $100.
+      @02887  OWNER_DESIGNATION          $20.
+      @02907  OWNER_APPOINT_DATE         $10.
+      @02917  OWNER_SHARE                $20.
+      @02937  OWNER_SHARE_PERCENT        $05.
+      @02942  F1_AUDITFIRM_NAME          $150.
+      @03092  F1_AUDITFIRM_ADDR1         $100.
+      @03192  F1_AUDITFIRM_ADDR2         $100.
+      @03292  F1_AUDITFIRM_ADDR3         $100.
+      @03392  F1_AUDITFIRM_POSTCODE      $10.
+      @03402  F1_AUDITFIRM_TOWN          $50.
+      @03452  F1_EXEMPT_PRIVATE_COMP     $01.
+      @03453  F1_FINANCIAL_YEAR          $10.
+      @03463  F1_UNQUALIFIED_RPT         $01.
+      @03464  F1_CONSOLIDATED_ACCT       $01.
+      @03465  F1_DATE_OF_TABLING         $10.
+      @03475  F1_BAL_NON_CURR_ASSET      $20.
+      @03495  F1_BAL_CURR_ASSET          $20.
+      @03515  F1_BAL_NON_CURR_LIAB       $20.
+      @03535  F1_BAL_CURR_LIAB           $20.
+      @03555  F1_BAL_SHR_CAPITAL         $20.
+      @03575  F1_BAL_RESERVES            $20.
+      @03595  F1_BAL_RETAINED_EARNINGS   $20.
+      @03615  F1_BAL_MINORITY_INTEREST   $20.
+      @03635  F1_INC_REVENUE             $20.
+      @03655  F1_INC_PROFIT_B4_TAX       $20.
+      @03675  F1_INC_PROFIT_AF_TAX       $20.
+      @03695  F1_INC_NET_DIVIDEN         $20.
+      @03715  F1_INC_MINORITY_INTEREST   $20.
+      @03735  F1_FR_CURRENT_RATIO        $05.
+      @03740  F1_FR_GEARING_RATIO        $05.
+      @03745  F1_FR_ROCE                 $10.
+      @03755  F1_FR_TURNOVER_RATIO       $05.
+      @03760  F1_FR_EARNINGS_PER_SHARE   $15.
+      @03775  F2_AUDITFIRM_NAME          $150.
+      @03925  F2_AUDITFIRM_ADDR1         $100.
+      @04025  F2_AUDITFIRM_ADDR2         $100.
+      @04125  F2_AUDITFIRM_ADDR3         $100.
+      @04225  F2_AUDITFIRM_POSTCODE      $10.
+      @04235  F2_AUDITFIRM_TOWN          $50.
+      @04285  F2_EXEMPT_PRIVATE_COMP     $01.
+      @04286  F2_FINANCIAL_YEAR          $10.
+      @04296  F2_UNQUALIFIED_RPT         $01.
+      @04297  F2_CONSOLIDATED_ACCT       $01.
+      @04298  F2_DATE_OF_TABLING         $10.
+      @04308  F2_BAL_NON_CURR_ASSET      $20.
+      @04328  F2_BAL_CURR_ASSET          $20.
+      @04348  F2_BAL_NON_CURR_LIAB       $20.
+      @04368  F2_BAL_CURR_LIAB           $20.
+      @04388  F2_BAL_SHR_CAPITAL         $20.
+      @04408  F2_BAL_RESERVES            $20.
+      @04428  F2_BAL_RETAINED_EARNINGS   $20.
+      @04448  F2_BAL_MINORITY_INTEREST   $20.
+      @04468  F2_INC_REVENUE             $20.
+      @04488  F2_INC_PROFIT_B4_TAX       $20.
+      @04508  F2_INC_PROFIT_AF_TAX       $20.
+      @04528  F2_INC_NET_DIVIDEN         $20.
+      @04548  F2_INC_MINORITY_INTEREST   $20.
+      @04568  F2_FR_CURRENT_RATIO        $05.
+      @04573  F2_FR_GEARING_RATIO        $05.
+      @04578  F2_FR_ROCE                 $10.
+      @04588  F2_FR_TURNOVER_RATIO       $05.
+      @04593  F2_FR_EARNINGS_PER_SHARE   $15.
+      @04608  F3_AUDITFIRM_NAME          $150.
+      @04758  F3_AUDITFIRM_ADDR1         $100.
+      @04858  F3_AUDITFIRM_ADDR2         $100.
+      @04958  F3_AUDITFIRM_ADDR3         $100.
+      @05058  F3_AUDITFIRM_POSTCODE      $10.
+      @05068  F3_AUDITFIRM_TOWN          $50.
+      @05118  F3_EXEMPT_PRIVATE_COMP     $01.
+      @05119  F3_FINANCIAL_YEAR          $10.
+      @05129  F3_UNQUALIFIED_RPT         $01.
+      @05130  F3_CONSOLIDATED_ACCT       $01.
+      @05131  F3_DATE_OF_TABLING         $10.
+      @05141  F3_BAL_NON_CURR_ASSET      $20.
+      @05161  F3_BAL_CURR_ASSET          $20.
+      @05181  F3_BAL_NON_CURR_LIAB       $20.
+      @05201  F3_BAL_CURR_LIAB           $20.
+      @05221  F3_BAL_SHR_CAPITAL         $20.
+      @05241  F3_BAL_RESERVES            $20.
+      @05261  F3_BAL_RETAINED_EARNINGS   $20.
+      @05281  F3_BAL_MINORITY_INTEREST   $20.
+      @05301  F3_INC_REVENUE             $20.
+      @05321  F3_INC_PROFIT_B4_TAX       $20.
+      @05341  F3_INC_PROFIT_AF_TAX       $20.
+      @05361  F3_INC_NET_DIVIDEN         $20.
+      @05381  F3_INC_MINORITY_INTEREST   $20.
+      @05401  F3_FR_CURRENT_RATIO        $05.
+      @05406  F3_FR_GEARING_RATIO        $05.
+      @05411  F3_FR_ROCE                 $10.
+      @05421  F3_FR_TURNOVER_RATIO       $05.
+      @05426  F3_FR_EARNINGS_PER_SHARE   $15.
+      @05441  REG_CODE1                  $10.
+      @05451  REG_DESC1                  $100.
+      @05551  REG_CODE2                  $10.
+      @05561  REG_DESC2                  $100.
+      @05661  REG_CODE3                  $10.
+      @05671  REG_DESC3                  $100.
+      @05771  REG_CODE4                  $10.
+      @05781  REG_DESC4                  $100.
+      @05881  REG_CODE5                  $10.
+      @05891  REG_DESC5                  $100.
+      @05991  REG_CODE6                  $10.
+      @06001  REG_DESC6                  $100.
+      @06101  REG_CODE7                  $10.
+      @06111  REG_DESC7                  $100.
+      @06211  REG_CODE8                  $10.
+      @06221  REG_DESC8                  $100.
+      @06321  REG_CODE9                  $10.
+      @06331  REG_DESC9                  $100.
+      @06431  REG_CODE10                 $10.
+      @06441  REG_DESC10                 $100.
+      @06541  BUSS_CODE1                 $10.
+      @06551  BUSS_DESC1                 $100.
+      @06651  BUSS_CODE2                 $10.
+      @06661  BUSS_DESC2                 $100.
+      @06761  BUSS_CODE3                 $10.
+      @06771  BUSS_DESC3                 $100.
+      @06871  BUSS_CODE4                 $10.
+      @06881  BUSS_DESC4                 $100.
+      @06981  BUSS_CODE5                 $10.
+      @06991  BUSS_DESC5                 $100.
+      @07091  BUSS_CODE6                 $10.
+      @07101  BUSS_DESC6                 $100.
+      @07201  BUSS_CODE7                 $10.
+      @07211  BUSS_DESC7                 $100.
+      @07311  BUSS_CODE8                 $10.
+      @07321  BUSS_DESC8                 $100.
+      @07421  BUSS_CODE9                 $10.
+      @07431  BUSS_DESC9                 $100.
+      @07531  BUSS_CODE10                $10.
+      @07541  BUSS_DESC10                $100.
+;
