@@ -1,0 +1,56 @@
+//CIMYGSTD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB06679
+//*---------------------------------------------------------------------
+//* ESMR 2013-3121 FOONG WAN YEEN - GOODS AND SERVICES TAX (MYGST)
+//*   ** DELTA FILE **
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.MYGST.DELTA.LOAD,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//*- PROCESS ACCOUNT INFORMATION
+//*---------------------------------------------------------------------
+//GSTDELTA EXEC SAS609
+//MYGST    DD DISP=SHR,DSN=RBP2.B033.MYGST.DELTA
+//OUTFILE  DD DSN=RBP2.B033.MYGST.DELTA.LOAD,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(300,100),RLSE),
+//            DCB=(LRECL=226,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+ DATA GST;
+   INFILE MYGST DELIMITER = "|"  MISSOVER DSD LRECL=250;
+   INFORMAT IDENTIFIER               $1.  ;
+   INFORMAT MYGST_ACCTNO             $12. ;
+   INFORMAT TAXPAYER_ID              $50. ;
+   INFORMAT TAXPAYER_IDTYPE          $6.  ;
+   INFORMAT TAXPAYER_NAME            $150.;
+   INFORMAT REGISTER_DATE            $8.  ;
+
+     FORMAT IDENTIFIER               $1.  ;
+     FORMAT MYGST_ACCTNO             $12. ;
+     FORMAT TAXPAYER_ID              $50. ;
+     FORMAT TAXPAYER_IDTYPE          $6.  ;
+     FORMAT TAXPAYER_NAME            $150.;    /* ORIGINAL 255 */
+     FORMAT REGISTER_DATE            $8.  ;
+
+      INPUT  IDENTIFIER       $
+             MYGST_ACCTNO     $
+             TAXPAYER_ID      $
+             TAXPAYER_IDTYPE  $
+             TAXPAYER_NAME    $
+             REGISTER_DATE    $ ;
+      IF IDENTIFIER = 'B';
+ RUN;
+ PROC PRINT DATA=GST(OBS=15);TITLE 'GST FILE';RUN;
+
+ DATA _NULL_;
+   SET GST;
+   FILE OUTFILE;
+      PUT @001  MYGST_ACCTNO          $12.
+          @013  TAXPAYER_ID           $50.
+          @063  TAXPAYER_IDTYPE       $6.
+          @069  TAXPAYER_NAME         $150.
+          @219  REGISTER_DATE         $8.  ;
+
+   RETURN;
+   RUN;
