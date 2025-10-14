@@ -1,141 +1,94 @@
 import duckdb
 import pyarrow as pa
+import pyarrow.csv as csv
 import pyarrow.parquet as pq
-from pathlib import Path
+from datetime import datetime
+import os
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
-# Assume parquet files already exist at these paths
-SDBFILE_PATH = "/host/sdb/parquet/BDS_SDB_LIST.parquet"
-DOWJONES_PATH = "/host/dwj/parquet/UNLOAD_CIDOWJ1T_FB.parquet"
-OUTPUT_PATH = "/host/cis/output/CIS_SDB_MATCH_DWJ.parquet"
+# Assume parquet files already exist
+input_dw_parquet = "/host/cis/parquet/sas_parquet/CIS_SDB_MATCH_DWJ.parquet"
+input_rh_parquet = "/host/cis/parquet/sas_parquet/CIS_SDB_MATCH_RHL.parquet"
+output_txt = "/host/cis/output/CIS_SDB_MATCH_FRPT.txt"
+
+# Report date (today or any control date)
+report_date = datetime.today().strftime("%d/%m/%Y")
 
 # ============================================================
-# DUCKDB CONNECTION
+# PROCESS INPUT FILES USING DUCKDB
 # ============================================================
 con = duckdb.connect(database=':memory:')
 
-# ============================================================
-# LOAD INPUT PARQUETS
-# ============================================================
+# Read and combine both parquet files
 con.execute(f"""
-    CREATE TABLE SDBFILE AS SELECT * FROM read_parquet('{SDBFILE_PATH}');
+    CREATE TABLE combined AS
+    SELECT * FROM read_parquet('{input_dw_parquet}')
+    UNION ALL
+    SELECT * FROM read_parquet('{input_rh_parquet}')
 """)
 
-con.execute(f"""
-    CREATE TABLE DOWJONES AS SELECT * FROM read_parquet('{DOWJONES_PATH}');
-""")
-
-# ============================================================
-# STEP 1 - PROCESS DOWJONES (split into DNAME, DID, DNID)
-# ============================================================
+# Deduplicate and sort
 con.execute("""
-    CREATE TABLE DNAME AS
-    SELECT CUSTNAME AS NAME, ID
-    FROM DOWJONES
-    WHERE TRIM(CUSTNAME) <> '';
+    CREATE TABLE dwj AS
+    SELECT DISTINCT BOXNO, SDBNAME, IDNUMBER, BRANCH
+    FROM combined
+    ORDER BY BRANCH, BOXNO, SDBNAME, IDNUMBER
 """)
 
-con.execute("""
-    CREATE TABLE DID AS
-    SELECT ID, CUSTNAME AS NAME
-    FROM DOWJONES
-    WHERE TRIM(ID) <> '';
-""")
-
-con.execute("""
-    CREATE TABLE DNID AS
-    SELECT CUSTNAME AS NAME, ID
-    FROM DOWJONES
-    WHERE TRIM(CUSTNAME) <> '' AND TRIM(ID) <> '';
-""")
-
-# Remove duplicates
-con.execute("CREATE TABLE DNAME_SORT AS SELECT DISTINCT * FROM DNAME;")
-con.execute("CREATE TABLE DID_SORT AS SELECT DISTINCT * FROM DID;")
-con.execute("CREATE TABLE DNID_SORT AS SELECT DISTINCT * FROM DNID;")
+# Fetch all records
+data = con.execute("SELECT * FROM dwj").fetchall()
+columns = [desc[0] for desc in con.description]
 
 # ============================================================
-# STEP 2 - PROCESS SDBFILE (split into SDBID, SDBNID, SDBNME)
+# GENERATE REPORT AS TXT FILE (PYARROW)
 # ============================================================
-con.execute("""
-    CREATE TABLE SDBFILE_EX AS
-    SELECT 
-        CAST(BRX AS INTEGER) AS BRX,
-        BOXNO,
-        IDTYPE,
-        SDBNAME AS NAME,
-        IDNUMBER AS ID,
-        BOXSTATUS
-    FROM SDBFILE;
-""")
+if not data:
+    # No matching records
+    with open(output_txt, "w") as f:
+        f.write("\n" * 2)
+        f.write(" " * 15 + "**********************************\n")
+        f.write(" " * 15 + "*       NO MATCHING RECORDS      *\n")
+        f.write(" " * 15 + "**********************************\n")
+else:
+    with open(output_txt, "w") as f:
+        page_cnt = 1
+        line_cnt = 0
+        grand_total = 0
+        current_branch = None
 
-# Split by available fields
-con.execute("CREATE TABLE SDBID AS SELECT * FROM SDBFILE_EX WHERE TRIM(ID) <> '';")
-con.execute("CREATE TABLE SDBNID AS SELECT * FROM SDBFILE_EX WHERE TRIM(NAME) <> '' AND TRIM(ID) <> '';")
-con.execute("CREATE TABLE SDBNME AS SELECT * FROM SDBFILE_EX WHERE TRIM(NAME) <> '';")
+        def print_header(branch):
+            nonlocal page_cnt, line_cnt
+            f.write(f"REPORT ID   : SDB/SCREEN/FULL{' ' * 35}PUBLIC BANK BERHAD{' ' * 15}PAGE : {page_cnt:4d}\n")
+            f.write(f"PROGRAM ID  : CISDBFRP{' ' * 55}REPORT DATE : {report_date}\n")
+            f.write(f"BRANCH      : {branch or '0000001'}{' ' * 10}SDB FULL DATABASE SCREENING\n")
+            f.write(" " * 50 + "===========================\n")
+            f.write(f"{'BOX NO':<10}{'NAME (HIRER S NAME)':<40}{'CUSTOMER ID':<20}\n")
+            f.write("-" * 120 + "\n")
+            line_cnt = 9
 
-# Remove duplicates
-con.execute("CREATE TABLE SDBID_SORT AS SELECT DISTINCT * FROM SDBID;")
-con.execute("CREATE TABLE SDBNID_SORT AS SELECT DISTINCT * FROM SDBNID;")
-con.execute("CREATE TABLE SDBNME_SORT AS SELECT DISTINCT * FROM SDBNME;")
+        # Start first page
+        print_header(None)
 
-# ============================================================
-# STEP 3 - MATCHING (NAME, ID, NAME+ID)
-# ============================================================
+        for row in data:
+            boxno, sdbname, idnumber, branch = row
+            if current_branch != branch:
+                page_cnt += 1
+                print_header(branch)
+                current_branch = branch
 
-# NAME MATCH
-con.execute("""
-    CREATE TABLE MRGNAME AS
-    SELECT B.*
-    FROM DNAME_SORT A
-    JOIN SDBNME_SORT B ON A.NAME = B.NAME;
-""")
+            f.write(f"{boxno:<10}{sdbname:<45}{idnumber:<20}\n")
+            grand_total += 1
+            line_cnt += 1
 
-# ID MATCH
-con.execute("""
-    CREATE TABLE MRGID AS
-    SELECT B.*
-    FROM DID_SORT A
-    JOIN SDBID_SORT B ON A.ID = B.ID;
-""")
+            # New page if too many lines
+            if line_cnt > 55:
+                page_cnt += 1
+                print_header(branch)
 
-# NAME + ID MATCH
-con.execute("""
-    CREATE TABLE MRGNID AS
-    SELECT B.*
-    FROM DNID_SORT A
-    JOIN SDBNID_SORT B ON A.NAME = B.NAME AND A.ID = B.ID;
-""")
+        # Footer
+        f.write("\n" * 2)
+        f.write(f"GRAND TOTAL OF ALL BRANCHES = {grand_total:>9}\n")
 
-# ============================================================
-# STEP 4 - COMBINE MATCHES AND DEDUP
-# ============================================================
-con.execute("""
-    CREATE TABLE ALLMATCH AS
-    SELECT * FROM (
-        SELECT * FROM MRGNAME
-        UNION ALL
-        SELECT * FROM MRGID
-        UNION ALL
-        SELECT * FROM MRGNID
-    )
-    WHERE TRIM(BOXNO) <> '';
-""")
-
-con.execute("""
-    CREATE TABLE ALLMATCH_SORT AS
-    SELECT DISTINCT BRX, BOXNO, NAME, ID, BOXSTATUS
-    FROM ALLMATCH
-    ORDER BY BRX, BOXNO, NAME, ID;
-""")
-
-# ============================================================
-# STEP 5 - OUTPUT
-# ============================================================
-# Convert to Arrow Table and save as Parquet
-table = con.execute("SELECT * FROM ALLMATCH_SORT").arrow()
-pq.write_table(table, OUTPUT_PATH)
-
-print(f"✅ Output written to {OUTPUT_PATH}")
+print(f"✅ Report generated successfully: {output_txt}")
