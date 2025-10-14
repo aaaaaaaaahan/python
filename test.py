@@ -1,6 +1,6 @@
 convert program to python with duckdb and pyarrow
 duckdb for process input file
-write the output as txt file
+pyarrow for output csv
 assumed all the input file ady convert to parquet can directly use it
 
 //CISDBFRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0021327
