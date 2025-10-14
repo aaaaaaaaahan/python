@@ -3,56 +3,111 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CMCBMPUF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB84625
-//*---------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//CBMFILE  DD DISP=SHR,DSN=UNLOAD.CMCBMTXT.FB
-//OUTFILE  DD DSN=CBM.PURGE.MORE1Y(+1),
+//CISDBRHL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0021294
+//*********************************************************************
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS.SDB.MATCH.RHL,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*********************************************************************
+//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1
+//* (1) IC MATCH, (2) NAME AND IC MATCH, (3) NAME AND (4) NAME AND DOB
+//*********************************************************************
+//MATCH#1  EXEC SAS609
+//SDBFILE  DD DISP=SHR,DSN=BDS.SDB.LIST
+//RHOLD    DD DISP=SHR,DSN=UNLOAD.CIRHOLDT.FB
+//OUTPUT   DD DSN=CIS.SDB.MATCH.RHL,
 //            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SYSIN    DD *
-OPTIONS NOCENTER;
+DATA SDBID SDBNID SDBALL;                                               00570000
+   INFILE SDBFILE;                                                      00580000
+       FORMAT ID $20. BRANCH $5.;                                       00590000
+       INPUT  @001   BRX               3.                               00250000
+              @005   BOXNO             $6.                              00260000
+              @011   IDTYPE            $1.                              00270000
+              @014   SDBNAME           $40.                             00280000
+              @065   IDNUMBER          $20.                             00290000
+              @086   DOBDOR            $8.                              00290000
+              @129   BOXSTATUS         $10.;                            00300000
+              ID = IDNUMBER;
+              NAME = SDBNAME;                                           00910000
+              BRANCX = PUT(INPUT(BRX,BEST32.),Z5.);
+              BRANCH  = TRANSLATE(RIGHT(BRANCX),'0',' ');
+              IF ID NE ' ' THEN OUTPUT SDBID;                           00980000
+              IF NAME NE ' ' AND ID NE ' ' THEN OUTPUT SDBNID;          01000000
+              IF NAME  NE ' ' THEN OUTPUT SDBALL;                       01020000
+RUN;                                                                    01040000
+PROC SORT DATA=SDBID ; BY ID;RUN;                                       01050000
+PROC SORT DATA=SDBNID  ; BY NAME ID ;RUN;                               01090000
+PROC SORT DATA=SDBALL ; BY NAME ;RUN;                                   01130000
 
-DATA REPTDATE;
-   PURDTE = TODAY()-365;
-   PURDTE8=PUT(PURDTE,YYMMDDN8.);
-   CALL SYMPUT('PURGEDTE',PURDTE8);
-   RUN;
-PROC PRINT;RUN;
-
-DATA CBMTXT;
-   INFILE CBMFILE;
-   INPUT  @0001   CBM_LOAD_DATE                 $8.
-          @0009   CBM_RUN_NO                    $8.
-          @0387   REG_IDNO                      $20.
-          @2087   LAST_UPDATE                   $10.
-          @2087   LAST_UPDATE_DD                $2.
-          @2090   LAST_UPDATE_MM                $2.
-          @2093   LAST_UPDATE_YY                $4.
-          @7467   REG_NEW_IDNO                  $20.
-          ;
-
-          IF LAST_UPDATE = "-         " THEN DELETE;
-          LASTDATE=LAST_UPDATE_YY||LAST_UPDATE_MM||LAST_UPDATE_DD;
+DATA RHOLIC;
+   INFILE RHOLD;
+        INPUT @12   NAME           $40.
+              @52   ID             $20. ;
+              IF NAME = ' ' AND ID = ' ' THEN DELETE;
 RUN;
-PROC SORT  DATA=CBMTXT; BY CBM_LOAD_DATE; RUN;
-PROC PRINT DATA=CBMTXT(OBS=10);TITLE 'CMCBMTXT';RUN;
+PROC SORT DATA=RHOLIC NODUPKEY; BY NAME ID;RUN;
 
-DATA TOPURGE;
-  SET CBMTXT;
-   IF LASTDATE < &PURGEDTE;
-   RUN;
-PROC PRINT DATA=TOPURGE(OBS=10);TITLE 'PURGE MORE THAN 1 YEAR';RUN;
-
-DATA OUT;
-   SET TOPURGE;
-   FILE OUTFILE;
-     PUT @0001   CBM_LOAD_DATE                 $8.
-         @0009   CBM_RUN_NO                    $8.
-         @0017   REG_IDNO                      $20.
-         @0037   REG_NEW_IDNO                  $20.
-         @0057   LAST_UPDATE                   $10.
-         ;
+DATA RHOLID;
+   INFILE RHOLD;
+        INPUT @12   NAME           $40.
+              @72   ID             $20. ;
+              IF NAME = ' ' AND ID = ' ' THEN DELETE;
 RUN;
+PROC SORT DATA=RHOLID NODUPKEY; BY NAME ID;RUN;
+
+DATA RID RNAME RNID;
+   SET RHOLIC RHOLID;
+       IF NAME = ' ' AND ID = ' ' THEN DELETE;
+RUN;
+PROC SORT DATA=RID NODUPKEY; BY ID ;RUN;
+PROC SORT DATA=RNID NODUPKEY; BY NAME ID;RUN;
+PROC SORT DATA=RNAME NODUPKEY; BY NAME  ;RUN;
+                                                                        01170000
+DATA MRGNAME;                                                           01180000
+   MERGE RNAME(IN=A) SDBALL(IN=B); BY NAME ;                            01200000
+   IF A AND B;                                                          01210000
+RUN;                                                                    01250000
+PROC SORT DATA=MRGNAME NODUPKEY; BY SDBNAME IDNUMBER BOXNO; RUN;        01260000
+PROC PRINT DATA=MRGNAME(OBS=5);TITLE 'NAME MATCH';                      01270000
+                                                                        01280000
+DATA MRGID;                                                             01290000
+   MERGE RID(IN=C) SDBID(IN=D); BY ID ;                                 01200000
+   IF C AND D;                                                          01320000
+RUN;                                                                    01360000
+PROC SORT DATA=MRGID NODUPKEY; BY SDBNAME IDNUMBER BOXNO; RUN;          01370000
+PROC PRINT DATA=MRGID(OBS=5);TITLE 'ID MATCH';                          01380000
+                                                                        01390000
+DATA MRGNID;                                                            01620000
+   MERGE RNID(IN=I) SDBNID(IN=J); BY NAME ID ;                          01200000
+   IF I AND J;                                                          01650000
+RUN;                                                                    01690000
+PROC SORT DATA=MRGNID NODUPKEY; BY SDBNAME IDNUMBER BOXNO; RUN;         01700000
+PROC PRINT DATA=MRGNID(OBS=5);TITLE 'NAME ID MATCH';                    01710000
+                                                                        01830000
+                                                                        01840000
+DATA ALLMATCH;                                                          01850000
+   FORMAT IDNUMBER $20.;
+   SET MRGNAME MRGID MRGNID;
+RUN;                                                                    01950000
+PROC SORT DATA=ALLMATCH NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;  01960000
+PROC PRINT DATA=ALLMATCH(OBS=15);TITLE 'ALL MATCH';                     01970000
+                                                                        01980000
+                                                                        01990000
+  DATA OUTPUT;                                                          02000000
+   SET ALLMATCH;                                                        02010000
+   FILE OUTPUT;                                                         02080000
+        PUT @001  BOXNO        $06.                                     02090000
+            @007  SDBNAME      $40.                                     02090000
+            @050  IDNUMBER     $20.                                     02100000
+            @070  BRANCH       $5. ;
+  RUN;                                                                  02270000
