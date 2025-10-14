@@ -1,75 +1,95 @@
-import os
-import re
-from typing import List, Tuple
+import duckdb
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
+import datetime
 
-def get_hive_parquet_loan(base_folder: str, debug: bool = False) -> Tuple[List[str], int, int, int]:
-    base_path = loan_parquet
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
-    # --- find all available years ---
-    years = []
-    for y_folder in os.listdir(base_path):
-        match = re.search(r"year=(\d+)", y_folder)
-        if match:
-            years.append(int(match.group(1)))
-    if not years:
-        raise FileNotFoundError(f"No year folders found under {base_path}")
-    years.sort(reverse=True)
+#---------------------------------------------------------------------#
+# Original Program: CISECOMT                                          #
+#---------------------------------------------------------------------#
+# ESMR 2015-707 MONTHLY REPORT EVERY 15TH                             #
+# INITIALIZE DATASETS                                                 #
+#---------------------------------------------------------------------#
 
-    # --- search by newest -> oldest ---
-    for year in years:
-        year_path = os.path.join(base_path, f"year={year}")
-        if not os.path.exists(year_path):
-            continue
+# =========================
+#   REPORT DATE
+# =========================
+report_date = (datetime.date.today()).strftime("%d-%m-%Y")
 
-        # --- find months ---
-        months = []
-        for m_folder in os.listdir(year_path):
-            match = re.search(r"month=(\d+)", m_folder)
-            if match:
-                months.append(int(match.group(1)))
-        if not months:
-            continue
-        months.sort(reverse=True)
+# =========================
+#   CONNECT TO DUCKDB
+# =========================
+con = duckdb.connect()
+cis_race, year, month, day = get_hive_parquet('CIS_RACE')
 
-        for month in months:
-            month_path = os.path.join(year_path, f"month={month}")
-            if not os.path.exists(month_path):
-                continue
+# =========================
+#   LOAD & SORT DATA
+# =========================
+df = con.execute(f"""
+    SELECT 
+        ALIASKEY,
+        ALIAS,   
+        CUSTNAME,
+        CUSTNO,  
+        CUSTBRCH
+    FROM read_parquet('{cis_race[0]}')
+    ORDER BY CUSTBRCH
+""").fetchdf()
 
-            # --- find days ---
-            days = []
-            for d_folder in os.listdir(month_path):
-                match = re.search(r"day=(\d+)", d_folder)
-                if match:
-                    days.append(int(match.group(1)))
-            if not days:
-                continue
-            days.sort(reverse=True)
+# =========================
+#   WRITE REPORT
+# =========================
+output_txt = f"/host/cis/output/ETHNIC_REPORT_MONTHLY_{report_date}.txt"
 
-            # --- loop through days (latest first) ---
-            for day in days:
-                day_path = os.path.join(month_path, f"day={day}")
-                final_path = os.path.join(day_path, base_folder)
+with open(output_txt, "w") as f:
+    if df.empty:
+        f.write("**********************************\n")
+        f.write("*                                *\n")
+        f.write("*         EMPTY REPORT           *\n")
+        f.write("*                                *\n")
+        f.write("**********************************\n")
+    else:
+        grand_total = 0
+        linecnt = 0
+        pagecnt = 0
+        current_branch = None
+        branch_count = 0
 
-                if not os.path.exists(final_path):
-                    continue
+        def print_header(branch, pagecnt):
+            f.write(f"REPORT NO : ETHNIC/OTHERS".ljust(54))
+            f.write(f"PUBLIC BANK BERHAD".ljust(40))
+            f.write(f"PAGE : {pagecnt:4d}\n")
+            f.write(f"PROGRAM ID  : CISECOMT".ljust(94))
+            f.write(f"REPORT DATE : {report_date}\n")
+            f.write(f"BRANCH      : 00{branch}\n")
+            f.write("LIST OF MALAYSIAN WITH ETHNIC CODE OTHERS\n")
+            f.write("=========================================\n")
+            f.write("CIS NUMBER   MYKAD NUMBER       NAME                                BRANCH\n")
+            f.write("===========  ================== ==================================== ========\n")
 
-                parquet_files = []
-                for folder in os.listdir(final_path):
-                    if folder.endswith(".parquet"):
-                        part_path = os.path.join(final_path, folder)
-                        if os.path.isdir(part_path):
-                            for f in os.listdir(part_path):
-                                if f.endswith(".parquet"):
-                                    parquet_files.append(os.path.join(part_path, f))
-                        else:
-                            parquet_files.append(part_path)
+        for _, row in df.iterrows():
+            # new branch or first record
+            if current_branch != row["CUSTBRCH"]:
+                # print branch total if previous branch exists
+                if current_branch is not None:
+                    f.write(f"{'':25}TOTAL = {branch_count:9d}\n\n")
+                    branch_count = 0
 
-                if parquet_files:
-                    if debug:
-                        print(f"[DEBUG][LOAN] Found parquet for year={year}, month={month}, day={day}")
-                        for p in parquet_files:
-                            print(f"  -> {p}")
-                    return parquet_files, year, month, day
+                # new page header
+                pagecnt += 1
+                print_header(row["CUSTBRCH"], pagecnt)
+                linecnt = 7
+                current_branch = row["CUSTBRCH"]
 
-    raise FileNotFoundError(f"No available parquet files found under {base_path} for {base_folder}")
+            # write record
+            f.write(f"{row['CUSTNO']:<11}  {row['ALIAS']:<20} {row['CUSTNAME']:<40} {row['CUSTBRCH']:<8}\n")
+            branch_count += 1
+            grand_total += 1
+            linecnt += 1
+
+        # final branch total
+        f.write(f"{'':25}TOTAL = {branch_count:9d}\n\n")
+
+        # grand total
+        f.write(f"   GRAND TOTAL OF ALL BRANCHES = {grand_total:9d}\n")
