@@ -48,19 +48,15 @@ with open(output_txt, "w") as f:
         f.write(" " * 15 + "*                                *\n")
         f.write(" " * 15 + "**********************************\n")
     else:
+        # Initialize counters
         page_cnt = 0
         line_cnt = 0
         grand_total = 0
         current_branch = None
 
-        def print_header(branch):
+        def print_header(f, branch, page_cnt, report_date):
             """Print SAS-style page header"""
-            nonlocal page_cnt, line_cnt
-            page_cnt += 1
-            line_cnt = 9
-
             branch_display = branch if branch else "0000001"
-
             f.write(f"{'REPORT ID   : SDB/SCREEN/FULL':<54}{'PUBLIC BANK BERHAD':<40}{'PAGE        : '}{page_cnt:>4}\n")
             f.write(f"{'PROGRAM ID  : CISDBFRP':<94}{'REPORT DATE : ' + report_date}\n")
             f.write(f"{'BRANCH      : ' + branch_display:<54}{'SDB FULL DATABASE SCREENING'}\n")
@@ -68,18 +64,20 @@ with open(output_txt, "w") as f:
             f.write(f"{'BOX NO':<10}{'NAME (HIRER S NAME)':<40}{'CUSTOMER ID':<20}\n")
             f.write(f"{'-'*40}{'-'*40}{'-'*40}\n")
 
-        # --- Start the first page ---
         first_page = True
-        for idx, row in enumerate(data):
+
+        for row in data:
             boxno, sdbname, idnumber, branch = row
 
             # Start new page when branch changes or line limit reached
             if first_page or branch != current_branch or line_cnt >= 52:
-                print_header(branch)
+                page_cnt += 1
+                print_header(f, branch, page_cnt, report_date)
                 current_branch = branch
+                line_cnt = 9
                 first_page = False
 
-            # Print each record in SAS-aligned columns
+            # Print each record
             f.write(f"{' ' * 1}{boxno:<6}{' ' * 5}{sdbname:<40}{' ' * 2}{idnumber:<20}\n")
             line_cnt += 1
             grand_total += 1
