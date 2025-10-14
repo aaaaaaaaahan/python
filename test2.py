@@ -2,93 +2,95 @@ import duckdb
 import pyarrow as pa
 import pyarrow.csv as csv
 import pyarrow.parquet as pq
-from datetime import datetime
+import pyarrow.compute as pc
+import datetime
 import os
 
 # ============================================================
-# CONFIGURATION
+#  BATCH DATE SETUP (Use yesterday’s date)
 # ============================================================
-# Assume parquet files already exist
-input_dw_parquet = "/host/cis/parquet/sas_parquet/CIS_SDB_MATCH_DWJ.parquet"
-input_rh_parquet = "/host/cis/parquet/sas_parquet/CIS_SDB_MATCH_RHL.parquet"
-output_txt = "/host/cis/output/CIS_SDB_MATCH_FRPT.txt"
-
-# Report date (today or any control date)
-report_date = datetime.today().strftime("%d/%m/%Y")
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
-# PROCESS INPUT FILES USING DUCKDB
+#  PATH CONFIGURATION
 # ============================================================
-con = duckdb.connect(database=':memory:')
+input_parquet = f"/host/cis/parquet/sas_parquet/CIDOWJ1T_{year1}{month1:02d}{day1:02d}.parquet"
+output_csv_path = f"/host/cis/output/AMLA_DOWJONE_EXTRACT_{year1}{month1:02d}{day1:02d}.csv"
 
-# Read and combine both parquet files
-con.execute(f"""
-    CREATE TABLE combined AS
-    SELECT * FROM read_parquet('{input_dw_parquet}')
-    UNION ALL
-    SELECT * FROM read_parquet('{input_rh_parquet}')
-""")
-
-# Deduplicate and sort
-con.execute("""
-    CREATE TABLE dwj AS
-    SELECT DISTINCT BOXNO, SDBNAME, IDNUMBER, BRANCH
-    FROM combined
-    ORDER BY BRANCH, BOXNO, SDBNAME, IDNUMBER
-""")
-
-# Fetch all records
-data = con.execute("SELECT * FROM dwj").fetchall()
-columns = [desc[0] for desc in con.description]
+# Ensure output directory exists
+os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
 
 # ============================================================
-# GENERATE REPORT AS TXT FILE (PYARROW)
+#  DUCKDB PROCESSING
 # ============================================================
-if not data:
-    # No matching records
-    with open(output_txt, "w") as f:
-        f.write("\n" * 2)
-        f.write(" " * 15 + "**********************************\n")
-        f.write(" " * 15 + "*       NO MATCHING RECORDS      *\n")
-        f.write(" " * 15 + "**********************************\n")
-else:
-    with open(output_txt, "w") as f:
-        page_cnt = 1
-        line_cnt = 0
-        grand_total = 0
-        current_branch = None
+con = duckdb.connect()
 
-        def print_header(branch):
-            nonlocal page_cnt, line_cnt
-            f.write(f"REPORT ID   : SDB/SCREEN/FULL{' ' * 35}PUBLIC BANK BERHAD{' ' * 15}PAGE : {page_cnt:4d}\n")
-            f.write(f"PROGRAM ID  : CISDBFRP{' ' * 55}REPORT DATE : {report_date}\n")
-            f.write(f"BRANCH      : {branch or '0000001'}{' ' * 10}SDB FULL DATABASE SCREENING\n")
-            f.write(" " * 50 + "===========================\n")
-            f.write(f"{'BOX NO':<10}{'NAME (HIRER S NAME)':<40}{'CUSTOMER ID':<20}\n")
-            f.write("-" * 120 + "\n")
-            line_cnt = 9
+# Load input parquet
+df = con.execute(f"""
+    SELECT 
+        DJ_NAME,
+        DJ_ID_NO,
+        DJ_PERSON_ID,
+        DJ_IND_ORG,
+        DJ_DESC1,
+        DJ_DOB_DOR,
+        DJ_NAME_TYPE,
+        DJ_ID_TYPE,
+        DJ_DATE_TYPE,
+        DJ_GENDER,
+        DJ_SANCTION_INDC,
+        DJ_OCCUP_INDC,
+        DJ_RLENSHIP_INDC,
+        DJ_OTHER_LIST_INDC,
+        DJ_ACTIVE_STATUS,
+        DJ_CITIZENSHIP
+    FROM read_parquet('{input_parquet}')
+""").arrow()
 
-        # Start first page
-        print_header(None)
+# ============================================================
+#  SORT BY DJ_ID_NO
+# ============================================================
+df = df.sort_by([("DJ_ID_NO", "ascending")])
 
-        for row in data:
-            boxno, sdbname, idnumber, branch = row
-            if current_branch != branch:
-                page_cnt += 1
-                print_header(branch)
-                current_branch = branch
+# ============================================================
+#  CREATE OUTPUT STRING COLUMN
+#  Combine all fields with '|' separator
+# ============================================================
+combined = pc.binary_join_element_wise(
+    df["DJ_NAME"],
+    pa.scalar("|"), df["DJ_ID_NO"],
+    pa.scalar("|"), df["DJ_PERSON_ID"],
+    pa.scalar("|"), df["DJ_IND_ORG"],
+    pa.scalar("|"), df["DJ_DESC1"],
+    pa.scalar("|"), df["DJ_DOB_DOR"],
+    pa.scalar("|"), df["DJ_NAME_TYPE"],
+    pa.scalar("|"), df["DJ_ID_TYPE"],
+    pa.scalar("|"), df["DJ_DATE_TYPE"],
+    pa.scalar("|"), df["DJ_GENDER"],
+    pa.scalar("|"), df["DJ_SANCTION_INDC"],
+    pa.scalar("|"), df["DJ_OCCUP_INDC"],
+    pa.scalar("|"), df["DJ_RLENSHIP_INDC"],
+    pa.scalar("|"), df["DJ_OTHER_LIST_INDC"],
+    pa.scalar("|"), df["DJ_ACTIVE_STATUS"],
+    pa.scalar("|"), df["DJ_CITIZENSHIP"]
+)
 
-            f.write(f"{boxno:<10}{sdbname:<45}{idnumber:<20}\n")
-            grand_total += 1
-            line_cnt += 1
+# ============================================================
+#  CONVERT TO ARROW TABLE FOR OUTPUT
+# ============================================================
+output_table = pa.Table.from_arrays([combined], names=["OUTPUT_LINE"])
 
-            # New page if too many lines
-            if line_cnt > 55:
-                page_cnt += 1
-                print_header(branch)
+# ============================================================
+#  WRITE TO CSV USING PYARROW
+# ============================================================
+csv.write_csv(output_table, output_csv_path)
 
-        # Footer
-        f.write("\n" * 2)
-        f.write(f"GRAND TOTAL OF ALL BRANCHES = {grand_total:>9}\n")
+# ============================================================
+#  DISPLAY FIRST 5 RECORDS
+# ============================================================
+print("OUTPUT (First 5 Records):")
+for row in output_table.slice(0, 5).column(0):
+    print(row.as_py())
 
-print(f"✅ Report generated successfully: {output_txt}")
+print(f"\n✅ CSV output generated at: {output_csv_path}")
