@@ -3,19 +3,19 @@ duckdb for process input file
 pyarrow use for output
 assumed all the input file ady convert to parquet can directly use it
 
-//CISDBRHL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0021294
+//CISDBDWJ JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0153410
 //*********************************************************************
 //INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.SDB.MATCH.RHL,
+//DEL1     DD DSN=CIS.SDB.MATCH.DWJ,
 //            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*********************************************************************
-//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1
-//* (1) IC MATCH, (2) NAME AND IC MATCH, (3) NAME AND (4) NAME AND DOB
+//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS
+//* NAME MATCH , ID/IC MATCH , NAME AND ID/IC MATCH
 //*********************************************************************
 //MATCH#1  EXEC SAS609
 //SDBFILE  DD DISP=SHR,DSN=BDS.SDB.LIST
-//RHOLD    DD DISP=SHR,DSN=UNLOAD.CIRHOLDT.FB
-//OUTPUT   DD DSN=CIS.SDB.MATCH.RHL,
+//DOWJONES  DD DISP=SHR,DSN=UNLOAD.CIDOWJ1T.FB
+//OUTPUT   DD DSN=CIS.SDB.MATCH.DWJ,
 //            DISP=(NEW,CATLG,DELETE),
 //            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
 //            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
@@ -27,79 +27,75 @@ assumed all the input file ady convert to parquet can directly use it
 //SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SYSIN    DD *
-DATA SDBID SDBNID SDBALL;                                               00570000
+ /*----------------------------------------------------------------*/   00190000
+ /*    DOWJONES FILE                                               */   00200000
+ /*----------------------------------------------------------------*/   00210000
+    DATA DNAME DID DNID;                                                00220000
+      INFILE DOWJONES;                                                  00240000
+       INPUT  @001   CUSTNAME          $40.                             00250000
+              @041   ID                $20.;                            00260000
+       NAME = CUSTNAME;                                                 00350000
+       IF CUSTNAME NE ' ' THEN OUTPUT DNAME;                            00360000
+       IF ID NE ' ' THEN OUTPUT DID;                                    00380000
+       IF CUSTNAME NE ' ' AND ID NE ' ' THEN OUTPUT DNID;               00400000
+                                                                        00420000
+    RUN;                                                                00430000
+    PROC SORT  DATA=DNAME NODUPKEY;BY NAME;RUN;                         00440000
+    PROC SORT  DATA=DID NODUPKEY;BY ID;RUN;                             00480000
+    PROC SORT  DATA=DNID NODUPKEY;BY NAME ID;RUN;                       00520000
+                                                                        00560000
+DATA SDBID SDBNID SDBNME;                                               00570000
    INFILE SDBFILE;                                                      00580000
-       FORMAT ID $20. BRANCH $5.;                                       00590000
-       INPUT  @001   BRX               3.                               00250000
+       FORMAT ID $20. BRANCH2 $5.;                                      00590000
+       INPUT  @001   BRX                3.                              00250000
               @005   BOXNO             $6.                              00260000
               @011   IDTYPE            $1.                              00270000
               @014   SDBNAME           $40.                             00280000
               @065   IDNUMBER          $20.                             00290000
-              @086   DOBDOR            $8.                              00290000
               @129   BOXSTATUS         $10.;                            00300000
               ID = IDNUMBER;
               NAME = SDBNAME;                                           00910000
-              BRANCX = PUT(INPUT(BRX,BEST32.),Z5.);
-              BRANCH  = TRANSLATE(RIGHT(BRANCX),'0',' ');
+              BRANCH = PUT(INPUT(BRX,BEST32.),Z5.);
+              BRANCH2 = TRANSLATE(RIGHT(BRANCH),'0',' ');
               IF ID NE ' ' THEN OUTPUT SDBID;                           00980000
               IF NAME NE ' ' AND ID NE ' ' THEN OUTPUT SDBNID;          01000000
-              IF NAME  NE ' ' THEN OUTPUT SDBALL;                       01020000
+              IF NAME  NE ' ' THEN OUTPUT SDBNME;                       01020000
 RUN;                                                                    01040000
 PROC SORT DATA=SDBID ; BY ID;RUN;                                       01050000
-PROC SORT DATA=SDBNID  ; BY NAME ID ;RUN;                               01090000
-PROC SORT DATA=SDBALL ; BY NAME ;RUN;                                   01130000
-
-DATA RHOLIC;
-   INFILE RHOLD;
-        INPUT @12   NAME           $40.
-              @52   ID             $20. ;
-              IF NAME = ' ' AND ID = ' ' THEN DELETE;
-RUN;
-PROC SORT DATA=RHOLIC NODUPKEY; BY NAME ID;RUN;
-
-DATA RHOLID;
-   INFILE RHOLD;
-        INPUT @12   NAME           $40.
-              @72   ID             $20. ;
-              IF NAME = ' ' AND ID = ' ' THEN DELETE;
-RUN;
-PROC SORT DATA=RHOLID NODUPKEY; BY NAME ID;RUN;
-
-DATA RID RNAME RNID;
-   SET RHOLIC RHOLID;
-       IF NAME = ' ' AND ID = ' ' THEN DELETE;
-RUN;
-PROC SORT DATA=RID NODUPKEY; BY ID ;RUN;
-PROC SORT DATA=RNID NODUPKEY; BY NAME ID;RUN;
-PROC SORT DATA=RNAME NODUPKEY; BY NAME  ;RUN;
+PROC PRINT DATA=SDBID(OBS=5);TITLE 'SDB IDS';                           01060000
+PROC SORT DATA=SDBNID ; BY NAME ID ;RUN;                                01090000
+PROC PRINT DATA=SDBNID(OBS=5);TITLE 'SDB NAME ID';                      01100000
+PROC SORT DATA=SDBNME ; BY NAME ;RUN;                                   01130000
+PROC PRINT DATA=SDBNME(OBS=5);TITLE 'SDB NAME';                         01140000
                                                                         01170000
 DATA MRGNAME;                                                           01180000
-   MERGE RNAME(IN=A) SDBALL(IN=B); BY NAME ;                            01200000
+   MERGE DNAME(IN=A) SDBNME(IN=B); BY NAME ;                            01200000
    IF A AND B;                                                          01210000
 RUN;                                                                    01250000
-PROC SORT DATA=MRGNAME NODUPKEY; BY SDBNAME IDNUMBER BOXNO; RUN;        01260000
+PROC SORT DATA=MRGNAME; BY BOXNO NAME ID; RUN;                          01260000
 PROC PRINT DATA=MRGNAME(OBS=5);TITLE 'NAME MATCH';                      01270000
                                                                         01280000
 DATA MRGID;                                                             01290000
-   MERGE RID(IN=C) SDBID(IN=D); BY ID ;                                 01200000
+   MERGE DID(IN=C) SDBID(IN=D); BY ID ;                                 01310000
    IF C AND D;                                                          01320000
 RUN;                                                                    01360000
-PROC SORT DATA=MRGID NODUPKEY; BY SDBNAME IDNUMBER BOXNO; RUN;          01370000
+PROC SORT DATA=MRGID; BY BOXNO NAME ID; RUN;                            01370000
 PROC PRINT DATA=MRGID(OBS=5);TITLE 'ID MATCH';                          01380000
                                                                         01390000
+                                                                        01610000
 DATA MRGNID;                                                            01620000
-   MERGE RNID(IN=I) SDBNID(IN=J); BY NAME ID ;                          01200000
+   MERGE DNID(IN=I) SDBNID(IN=J); BY NAME ID ;                          01640000
    IF I AND J;                                                          01650000
 RUN;                                                                    01690000
-PROC SORT DATA=MRGNID NODUPKEY; BY SDBNAME IDNUMBER BOXNO; RUN;         01700000
+PROC SORT DATA=MRGNID; BY BOXNO NAME ID; RUN;                           01700000
 PROC PRINT DATA=MRGNID(OBS=5);TITLE 'NAME ID MATCH';                    01710000
                                                                         01830000
                                                                         01840000
 DATA ALLMATCH;                                                          01850000
-   FORMAT IDNUMBER $20.;
    SET MRGNAME MRGID MRGNID;
+       IF BOXNO = ' ' THEN DELETE;
 RUN;                                                                    01950000
-PROC SORT DATA=ALLMATCH NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;  01960000
+PROC SORT DATA=ALLMATCH NODUPKEY;BY BRANCH2 BOXNO SDBNAME IDNUMBER;RUN; 01960000
 PROC PRINT DATA=ALLMATCH(OBS=15);TITLE 'ALL MATCH';                     01970000
                                                                         01980000
                                                                         01990000
@@ -109,5 +105,6 @@ PROC PRINT DATA=ALLMATCH(OBS=15);TITLE 'ALL MATCH';                     01970000
         PUT @001  BOXNO        $06.                                     02090000
             @007  SDBNAME      $40.                                     02090000
             @050  IDNUMBER     $20.                                     02100000
-            @070  BRANCH       $5. ;
+            @070  BRANCH2      $5. ;                                    02100000
   RUN;                                                                  02270000
+  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';                         02280000
