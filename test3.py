@@ -1,26 +1,23 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
+from CIS_PY_READER import get_hive_parquet
 import datetime
 
+# ============================================================
+# DATE SETUP
+# ============================================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
+report_date = datetime.date.today().strftime("%d-%m-%Y")
 
-# =========================
-#   REPORT DATE
-# =========================
-report_date = (datetime.date.today()).strftime("%d-%m-%Y")
-
-# =========================
-#   CONNECT TO DUCKDB
-# =========================
+# ============================================================
+# CONNECT TO DUCKDB
+# ============================================================
 con = duckdb.connect()
-sdb_rhl, year, month, day = get_hive_parquet('CIS_SDB_MATCH_RHL')
-sdb_dwj, year, month, day = get_hive_parquet('CIS_SDB_MATCH_DWJ')
+sdb_rhl, _, _, _ = get_hive_parquet('CIS_SDB_MATCH_RHL')
+sdb_dwj, _, _, _ = get_hive_parquet('CIS_SDB_MATCH_DWJ')
 
-# =========================
-#   LOAD & SORT DATA
-# =========================
-# Read and combine both parquet files
+# ============================================================
+# LOAD & SORT DATA
+# ============================================================
 con.execute(f"""
     CREATE TABLE combined AS
     SELECT * FROM read_parquet('{sdb_rhl[0]}')
@@ -28,7 +25,6 @@ con.execute(f"""
     SELECT * FROM read_parquet('{sdb_dwj[0]}')
 """)
 
-# Deduplicate and sort
 con.execute("""
     CREATE TABLE dwj AS
     SELECT DISTINCT BOXNO, SDBNAME, IDNUMBER, BRANCH
@@ -36,60 +32,60 @@ con.execute("""
     ORDER BY BRANCH, BOXNO, SDBNAME, IDNUMBER
 """)
 
-# Fetch all records
 data = con.execute("SELECT * FROM dwj").fetchall()
-columns = [desc[0] for desc in con.description]
 
 # ============================================================
-# GENERATE REPORT AS TXT FILE (PYARROW)
+# OUTPUT REPORT
 # ============================================================
 output_txt = f"/host/cis/output/CIS_SDB_MATCH_FRPT_{report_date}.txt"
 
-if not data:
-    # No matching records
-    with open(output_txt, "w") as f:
-        f.write("\n" * 2)
+with open(output_txt, "w") as f:
+    if not data:
+        # No matching records case
         f.write(" " * 15 + "**********************************\n")
+        f.write(" " * 15 + "*                                *\n")
         f.write(" " * 15 + "*       NO MATCHING RECORDS      *\n")
+        f.write(" " * 15 + "*                                *\n")
         f.write(" " * 15 + "**********************************\n")
-else:
-    with open(output_txt, "w") as f:
-        page_cnt = 1
+    else:
+        page_cnt = 0
         line_cnt = 0
         grand_total = 0
         current_branch = None
 
-        state = {'page_cnt': 1, 'line_cnt': 0}
         def print_header(branch):
-            state['line_cnt'] = 9
-            f.write(f"PAGE : {state['page_cnt']}")
-            f.write(f"REPORT ID   : SDB/SCREEN/FULL{' ' * 35}PUBLIC BANK BERHAD{' ' * 15}PAGE : {page_cnt:4d}\n")
-            f.write(f"PROGRAM ID  : CISDBFRP{' ' * 55}REPORT DATE : {report_date}\n")
-            f.write(f"BRANCH      : {branch or '0000001'}{' ' * 10}SDB FULL DATABASE SCREENING\n")
-            f.write(" " * 50 + "===========================\n")
-            f.write(f"{'BOX NO':<10}{'NAME (HIRER S NAME)':<40}{'CUSTOMER ID':<20}\n")
-            f.write("-" * 120 + "\n")
+            """Print SAS-style page header"""
+            nonlocal page_cnt, line_cnt
+            page_cnt += 1
             line_cnt = 9
 
-        # Start first page
-        print_header(None)
+            branch_display = branch if branch else "0000001"
 
-        for row in data:
+            f.write(f"{'REPORT ID   : SDB/SCREEN/FULL':<54}{'PUBLIC BANK BERHAD':<40}{'PAGE        : '}{page_cnt:>4}\n")
+            f.write(f"{'PROGRAM ID  : CISDBFRP':<94}{'REPORT DATE : ' + report_date}\n")
+            f.write(f"{'BRANCH      : ' + branch_display:<54}{'SDB FULL DATABASE SCREENING'}\n")
+            f.write(f"{'':<49}{'==========================='}\n")
+            f.write(f"{'BOX NO':<10}{'NAME (HIRER S NAME)':<40}{'CUSTOMER ID':<20}\n")
+            f.write(f"{'-'*40}{'-'*40}{'-'*40}\n")
+
+        # --- Start the first page ---
+        first_page = True
+        for idx, row in enumerate(data):
             boxno, sdbname, idnumber, branch = row
-            if current_branch != branch:
-                page_cnt += 1
+
+            # Start new page when branch changes or line limit reached
+            if first_page or branch != current_branch or line_cnt >= 52:
                 print_header(branch)
                 current_branch = branch
+                first_page = False
 
-            f.write(f"{boxno:<10}{sdbname:<45}{idnumber:<20}\n")
-            grand_total += 1
+            # Print each record in SAS-aligned columns
+            f.write(f"{' ' * 1}{boxno:<6}{' ' * 5}{sdbname:<40}{' ' * 2}{idnumber:<20}\n")
             line_cnt += 1
+            grand_total += 1
 
-            # New page if too many lines
-            if line_cnt > 55:
-                page_cnt += 1
-                print_header(branch)
-
-        # Footer
-        f.write("\n" * 2)
-        f.write(f"GRAND TOTAL OF ALL BRANCHES = {grand_total:>9}\n")
+        # --- END OF REPORT footer ---
+        f.write(" " * 55 + "                      \n")
+        f.write(" " * 55 + "****END OF REPORT ****\n")
+        f.write(" " * 55 + "                      \n\n")
+        f.write(f"{' ' * 3}GRAND TOTAL OF ALL BRANCHES = {grand_total:>9}\n")
