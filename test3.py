@@ -4,7 +4,7 @@ def get_hive_dp_parquet(base_folder: str, debug: bool = False):
     if not os.path.exists(year_path):
         raise FileNotFoundError(f"'Year' folder not found: {year_path}")
 
-    # Find latest month
+    # --- Find all available months ---
     months = []
     for m_folder in os.listdir(year_path):
         if m_folder.startswith("Month"):
@@ -13,38 +13,37 @@ def get_hive_dp_parquet(base_folder: str, debug: bool = False):
                 months.append(int(match.group(1)))
     if not months:
         raise FileNotFoundError(f"No Month folders under {year_path}")
-    latest_month = max(months)
-    month_path = os.path.join(year_path, f"Month = {latest_month}")
+    months.sort(reverse=True)  # newest first
 
-    # Find latest day
-    days = []
-    for d_folder in os.listdir(month_path):
-        if d_folder.startswith("Day"):
-            match = re.search(r"(\d+)", d_folder)
-            if match:
-                days.append(int(match.group(1)))
-    if not days:
-        # If no day folder exists in this month, fallback to previous month
-        prev_months = [m for m in months if m < latest_month]
-        if not prev_months:
-            raise FileNotFoundError(f"No Day folders found in any month under {year_path}")
-        latest_month = max(prev_months)
-        month_path = os.path.join(year_path, f"Month = {latest_month}")
-        days = [int(re.search(r"(\d+)", d).group(1)) for d in os.listdir(month_path) if d.startswith("Day")]
+    # --- Loop through months and days (newest first) ---
+    for m in months:
+        month_path = os.path.join(year_path, f"Month = {m}")
+        if not os.path.exists(month_path):
+            continue
+
+        # collect all day folders under the month
+        days = []
+        for d_folder in os.listdir(month_path):
+            if d_folder.startswith("Day"):
+                match = re.search(r"(\d+)", d_folder)
+                if match:
+                    days.append(int(match.group(1)))
         if not days:
-            raise FileNotFoundError(f"No Day folders found in fallback month={latest_month}")
-    latest_day = max(days)
+            continue
+        days.sort(reverse=True)
 
-    day_path = os.path.join(month_path, f"Day = {latest_day}")
-    final_file = os.path.join(day_path, base_folder)
-    if not final_file.endswith(".parquet"):
-        final_file += ".parquet"
+        # Try to find the latest existing parquet file
+        for d in days:
+            day_path = os.path.join(month_path, f"Day = {d}")
+            final_file = os.path.join(day_path, base_folder)
+            if not final_file.endswith(".parquet"):
+                final_file += ".parquet"
 
-    if not os.path.exists(final_file):
-        raise FileNotFoundError(f"Parquet file not found: {final_file}")
+            if os.path.exists(final_file):
+                if debug:
+                    print(f"[DEBUG][DP] Found parquet: Month={m}, Day={d}")
+                    print(f"  -> {final_file}")
+                return [final_file], m, d
 
-    if debug:
-        print(f"[DEBUG][DP] Latest available: Month={latest_month}, Day={latest_day}")
-        print(f"  -> {final_file}")
-
-    return [final_file], latest_month, latest_day
+    # If no file found at all
+    raise FileNotFoundError(f"No available parquet file found for {base_folder}")
