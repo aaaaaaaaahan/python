@@ -59,8 +59,10 @@ else:
         grand_total = 0
         current_branch = None
 
+        state = {'page_cnt': 1, 'line_cnt': 0}
         def print_header(branch):
-            nonlocal page_cnt, line_cnt
+            state['line_cnt'] = 9
+            f.write(f"PAGE : {state['page_cnt']}")
             f.write(f"REPORT ID   : SDB/SCREEN/FULL{' ' * 35}PUBLIC BANK BERHAD{' ' * 15}PAGE : {page_cnt:4d}\n")
             f.write(f"PROGRAM ID  : CISDBFRP{' ' * 55}REPORT DATE : {report_date}\n")
             f.write(f"BRANCH      : {branch or '0000001'}{' ' * 10}SDB FULL DATABASE SCREENING\n")
