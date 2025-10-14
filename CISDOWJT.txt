@@ -1,15 +1,17 @@
 //CISDOWJT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
 //****************************************************************
+//**ESMR 2019-4341 - FORMAT DOWJONE FILE WITH DELIMITER          *
+//****************************************************************
 //**************************************************************        00040000
 //*  DELETE OLD  DATA FILE                                     *        00050000
 //**************************************************************        00060000
 //*DELETE   EXEC PGM=IEFBR14                                            00070000
-//*DD1      DD DSN=AMLA.DOWJONE.EXTRACT,                      00080007
+//*DD1      DD DSN=RBP2.B033.AMLA.DOWJONE.EXTRACT,                      00080007
 //*            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,0)
 //*
 //EXTRACT  EXEC SAS609
-//DOWJONE  DD DISP=SHR,DSN=UNLOAD.CIDOWJ1T.FB
-//OUTPUT   DD DSN=AMLA.DOWJONE.EXTRACT(+1),
+//DOWJONE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIDOWJ1T.FB
+//OUTPUT   DD DSN=RBP2.B033.AMLA.DOWJONE.EXTRACT(+1),
 //            DISP=(NEW,CATLG,DELETE),
 //            SPACE=(CYL,(500,500),RLSE),UNIT=SYSDA,
 //            DCB=(LRECL=300,BLKSIZE=0,RECFM=FB)
@@ -83,3 +85,4 @@ PROC SORT DATA=DOWJONE; BY DJ_ID_NO ; RUN;
   RUN;
 
   PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
+
