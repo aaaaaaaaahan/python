@@ -6,11 +6,10 @@ from typing import List, Tuple
 # PATH CONFIGURATION
 # ============================================================
 host_input = '/host/cis/parquet/sas_parquet'
-dp_parquet = '/host/dp/parquet/Year'
-loan_parquet = '/host/loan/parquet'
 python_hive = '/host/cis/parquet'
 csv_output = '/host/cis/output'
-
+dp_parquet = '/host/dp/parquet'
+loan_parquet = '/host/loan/parquet'
 
 # ============================================================
 # FUNCTION: host_parquet_path
@@ -223,7 +222,7 @@ def get_hive_parquet(base_folder: str, debug: bool = False) -> Tuple[List[str], 
 # Pattern: /host/loan/parquet/year=2025/month=10/day=01/<file>.parquet/part.N.parquet
 # ====================================================================
 def get_hive_parquet_loan(base_folder: str, debug: bool = False) -> Tuple[List[str], int, int, int]:
-    base_path = os.path.join(loan_parquet, base_folder)
+    base_path = loan_parquet
 
     # --- find latest year ---
     years = []
@@ -258,16 +257,18 @@ def get_hive_parquet_loan(base_folder: str, debug: bool = False) -> Tuple[List[s
     latest_day = max(days)
     day_path = os.path.join(month_path, f"day={latest_day}")
 
+    final_path = os.path.join(day_path, base_folder)
+
     # --- collect parquet parts ---
     parquet_files = []
-    for folder in os.listdir(day_path):
+    for folder in os.listdir(final_path):
         if folder.endswith(".parquet"):
-            part_path = os.path.join(day_path, folder)
+            part_path = os.path.join(final_path, folder)
             for f in os.listdir(part_path):
                 if f.endswith(".parquet"):
                     parquet_files.append(os.path.join(part_path, f))
     if not parquet_files:
-        raise FileNotFoundError(f"No parquet files found in {day_path}")
+        raise FileNotFoundError(f"No parquet files found in {final_path}")
 
     if debug:
         print(f"[DEBUG][LOAN] Latest Path: year={latest_year}, month={latest_month}, day={latest_day}")
@@ -281,48 +282,56 @@ def get_hive_parquet_loan(base_folder: str, debug: bool = False) -> Tuple[List[s
 # FUNCTION: get_hive_parquet_dp
 # Pattern: /host/dp/parquet/Year/Month = 10/Day = 10/<file>.parquet
 # ====================================================================
-def get_hive_parquet_dp(base_folder: str, debug: bool = False) -> Tuple[List[str], str, int, int]:
-    base_path = os.path.join("dp_parquet", base_folder)
+def get_hive_parquet_dp(base_folder: str, debug: bool = False):
+    """
+    Pattern:
+      /host/dp/parquet/Year/Month = 10/Day = 10/<file>.parquet
+    """
+    base_path = dp_parquet
 
-    if not os.path.exists(base_path):
-        raise FileNotFoundError(f"'Year' folder not found under {base_path}")
+    year_path = os.path.join(base_path, "Year")
+    if not os.path.exists(year_path):
+        raise FileNotFoundError(f"'Year' folder not found: {year_path}")
 
     # --- find latest Month ---
     months = []
-    for m_folder in os.listdir(base_path):
-        match = re.search(r"(\d+)", m_folder)
-        if match:
-            months.append(int(match.group(1)))
+    for m_folder in os.listdir(year_path):
+        if m_folder.startswith("Month"):
+            match = re.search(r"(\d+)", m_folder)
+            if match:
+                months.append(int(match.group(1)))
     if not months:
-        raise FileNotFoundError(f"No Month folders under {base_path}")
+        raise FileNotFoundError(f"No Month folders under {year_path}")
     latest_month = max(months)
-    month_folder = f"Month = {latest_month}"
-    month_path = os.path.join(base_path, month_folder)
+    month_path = os.path.join(year_path, f"Month = {latest_month}")
 
     # --- find latest Day ---
     days = []
     for d_folder in os.listdir(month_path):
-        match = re.search(r"(\d+)", d_folder)
-        if match:
-            days.append(int(match.group(1)))
+        if d_folder.startswith("Day"):
+            match = re.search(r"(\d+)", d_folder)
+            if match:
+                days.append(int(match.group(1)))
     if not days:
         raise FileNotFoundError(f"No Day folders under {month_path}")
     latest_day = max(days)
-    day_folder = f"Day = {latest_day}"
-    day_path = os.path.join(month_path, day_folder)
+    day_path = os.path.join(month_path, f"Day = {latest_day}")
+
+    final_path = os.path.join(day_path, base_folder)
 
     # --- collect parquet files ---
     parquet_files = [
-        os.path.join(day_path, f)
-        for f in os.listdir(day_path)
+        os.path.join(final_path, f)
+        for f in os.listdir(final_path)
         if f.endswith(".parquet")
     ]
+
     if not parquet_files:
-        raise FileNotFoundError(f"No parquet files found in {day_path}")
+        raise FileNotFoundError(f"No parquet files found in {final_path}")
 
     if debug:
-        print(f"[DEBUG][DP] Latest Path: Year='Year', Month={latest_month}, Day={latest_day}")
+        print(f"[DEBUG][DP] Latest Path: Month={latest_month}, Day={latest_day}")
         for p in parquet_files:
             print(f"  -> {p}")
 
-    return parquet_files, "Year", latest_month, latest_day
+    return parquet_files, latest_month, latest_day
