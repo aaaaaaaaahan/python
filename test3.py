@@ -70,7 +70,8 @@ with open(output_txt, "w") as f:
             boxno, sdbname, idnumber, branch = row
 
             # Start new page when branch changes or line limit reached
-            if first_page or branch != current_branch or line_cnt >= 52:
+            if first_page or branch != current_branch or line_cnt >= 55:
+                f.write("/n" * 3)
                 page_cnt += 1
                 print_header(f, branch, page_cnt, report_date)
                 current_branch = branch
