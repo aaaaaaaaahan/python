@@ -1,110 +1,173 @@
 convert program to python with duckdb and pyarrow
 duckdb for process input file
-pyarrow use for output
+write the output as txt file
 assumed all the input file ady convert to parquet can directly use it
 
-//CISDBDWJ JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0153410
+//CISDBFRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0021327
 //*********************************************************************
 //INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.SDB.MATCH.DWJ,
+//DEL1     DD DSN=CIS.SDB.MATCH.FRPT,
 //            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*********************************************************************
-//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS
-//* NAME MATCH , ID/IC MATCH , NAME AND ID/IC MATCH
+//* FULL REPORT
 //*********************************************************************
-//MATCH#1  EXEC SAS609
-//SDBFILE  DD DISP=SHR,DSN=BDS.SDB.LIST
-//DOWJONES  DD DISP=SHR,DSN=UNLOAD.CIDOWJ1T.FB
-//OUTPUT   DD DSN=CIS.SDB.MATCH.DWJ,
+//COPYFILE EXEC PGM=ICEGENER
+//SYSPRINT DD SYSOUT=X
+//SYSUT1   DD DISP=SHR,DSN=CIS.SDB.MATCH.DWJ
+//         DD DISP=SHR,DSN=CIS.SDB.MATCH.RHL
+//SYSUT2   DD DSN=CIS.SDB.MATCH.FULL(+1),
 //            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            UNIT=SYSDA,SPACE=(TRK,(10,10),RLSE),
 //            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SYSIN    DD *
- /*----------------------------------------------------------------*/   00190000
- /*    DOWJONES FILE                                               */   00200000
- /*----------------------------------------------------------------*/   00210000
-    DATA DNAME DID DNID;                                                00220000
-      INFILE DOWJONES;                                                  00240000
-       INPUT  @001   CUSTNAME          $40.                             00250000
-              @041   ID                $20.;                            00260000
-       NAME = CUSTNAME;                                                 00350000
-       IF CUSTNAME NE ' ' THEN OUTPUT DNAME;                            00360000
-       IF ID NE ' ' THEN OUTPUT DID;                                    00380000
-       IF CUSTNAME NE ' ' AND ID NE ' ' THEN OUTPUT DNID;               00400000
-                                                                        00420000
-    RUN;                                                                00430000
-    PROC SORT  DATA=DNAME NODUPKEY;BY NAME;RUN;                         00440000
-    PROC SORT  DATA=DID NODUPKEY;BY ID;RUN;                             00480000
-    PROC SORT  DATA=DNID NODUPKEY;BY NAME ID;RUN;                       00520000
-                                                                        00560000
-DATA SDBID SDBNID SDBNME;                                               00570000
-   INFILE SDBFILE;                                                      00580000
-       FORMAT ID $20. BRANCH2 $5.;                                      00590000
-       INPUT  @001   BRX                3.                              00250000
-              @005   BOXNO             $6.                              00260000
-              @011   IDTYPE            $1.                              00270000
-              @014   SDBNAME           $40.                             00280000
-              @065   IDNUMBER          $20.                             00290000
-              @129   BOXSTATUS         $10.;                            00300000
-              ID = IDNUMBER;
-              NAME = SDBNAME;                                           00910000
-              BRANCH = PUT(INPUT(BRX,BEST32.),Z5.);
-              BRANCH2 = TRANSLATE(RIGHT(BRANCH),'0',' ');
-              IF ID NE ' ' THEN OUTPUT SDBID;                           00980000
-              IF NAME NE ' ' AND ID NE ' ' THEN OUTPUT SDBNID;          01000000
-              IF NAME  NE ' ' THEN OUTPUT SDBNME;                       01020000
-RUN;                                                                    01040000
-PROC SORT DATA=SDBID ; BY ID;RUN;                                       01050000
-PROC PRINT DATA=SDBID(OBS=5);TITLE 'SDB IDS';                           01060000
-PROC SORT DATA=SDBNID ; BY NAME ID ;RUN;                                01090000
-PROC PRINT DATA=SDBNID(OBS=5);TITLE 'SDB NAME ID';                      01100000
-PROC SORT DATA=SDBNME ; BY NAME ;RUN;                                   01130000
-PROC PRINT DATA=SDBNME(OBS=5);TITLE 'SDB NAME';                         01140000
-                                                                        01170000
-DATA MRGNAME;                                                           01180000
-   MERGE DNAME(IN=A) SDBNME(IN=B); BY NAME ;                            01200000
-   IF A AND B;                                                          01210000
-RUN;                                                                    01250000
-PROC SORT DATA=MRGNAME; BY BOXNO NAME ID; RUN;                          01260000
-PROC PRINT DATA=MRGNAME(OBS=5);TITLE 'NAME MATCH';                      01270000
-                                                                        01280000
-DATA MRGID;                                                             01290000
-   MERGE DID(IN=C) SDBID(IN=D); BY ID ;                                 01310000
-   IF C AND D;                                                          01320000
-RUN;                                                                    01360000
-PROC SORT DATA=MRGID; BY BOXNO NAME ID; RUN;                            01370000
-PROC PRINT DATA=MRGID(OBS=5);TITLE 'ID MATCH';                          01380000
-                                                                        01390000
-                                                                        01610000
-DATA MRGNID;                                                            01620000
-   MERGE DNID(IN=I) SDBNID(IN=J); BY NAME ID ;                          01640000
-   IF I AND J;                                                          01650000
-RUN;                                                                    01690000
-PROC SORT DATA=MRGNID; BY BOXNO NAME ID; RUN;                           01700000
-PROC PRINT DATA=MRGNID(OBS=5);TITLE 'NAME ID MATCH';                    01710000
-                                                                        01830000
-                                                                        01840000
-DATA ALLMATCH;                                                          01850000
-   SET MRGNAME MRGID MRGNID;
-       IF BOXNO = ' ' THEN DELETE;
-RUN;                                                                    01950000
-PROC SORT DATA=ALLMATCH NODUPKEY;BY BRANCH2 BOXNO SDBNAME IDNUMBER;RUN; 01960000
-PROC PRINT DATA=ALLMATCH(OBS=15);TITLE 'ALL MATCH';                     01970000
-                                                                        01980000
-                                                                        01990000
-  DATA OUTPUT;                                                          02000000
-   SET ALLMATCH;                                                        02010000
-   FILE OUTPUT;                                                         02080000
-        PUT @001  BOXNO        $06.                                     02090000
-            @007  SDBNAME      $40.                                     02090000
-            @050  IDNUMBER     $20.                                     02100000
-            @070  BRANCH2      $5. ;                                    02100000
-  RUN;                                                                  02270000
-  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';                         02280000
+//SYSIN    DD DUMMY
+//*********************************************************************
+//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1
+//* (1) IC MATCH, (2) NAME AND IC MATCH, (3) NAME AND (4) NAME AND DOB
+//*********************************************************************
+//MATCHREC EXEC SAS609
+//IEFR1ER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
+//DWJLST    DD DISP=SHR,DSN=CIS.SDB.MATCH.DWJ
+//          DD DISP=SHR,DSN=CIS.SDB.MATCH.RHL
+//RPTFILE   DD DSN=CIS.SDB.MATCH.FRPT,
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(50,50),RLSE),
+//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*  IMIS SINGLE VIEW FILES                                        */
+ /*----------------------------------------------------------------*/
+ DATA DWJ;
+      INFILE DWJLST;
+      INPUT   @001  BOXNO        $06.
+              @007  SDBNAME      $40.
+              @050  IDNUMBER     $20.
+              @070  BRANCH       $05. ;
+   RUN;
+ PROC SORT  DATA=DWJ NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=DWJ(OBS=5);TITLE 'ALL LIST ONLY'; RUN;
+ /*----------------------------------------------------------------*/
+ /*    SET DATES FOR REPORT                                        */
+ /*----------------------------------------------------------------*/
+DATA SRSDATE;
+   INFILE CTRLDATE;
+     INPUT @001  SRSYY    4.
+           @005  SRSMM    2.
+           @007  SRSDD    2.;
+   REPTDATE=MDY(SRSMM,SRSDD,SRSYY);
+   CALL SYMPUT('RDATE',PUT(REPTDATE,DDMMYY10.));
+RUN;
+
+DATA REPORT;
+   IF TRN=0 THEN DO;
+      FILE RPTFILE PRINT HEADER=NEWPAGE;
+      PUT _PAGE_;
+      PUT  /@15    '**********************************';
+      PUT  /@15    '*                                *';
+      PUT  /@15    '*       NO MATCHING RECORDS      *';
+      PUT  /@15    '*                                *';
+      PUT  /@15    '**********************************';
+   END;
+
+   RETAIN TRN;
+   SET DWJ NOBS=TRN END=EOF;BY BRANCH BOXNO SDBNAME IDNUMBER;
+   FILE RPTFILE NOTITLE PRINT HEADER=NEWPAGE;
+
+   IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
+      PUT _PAGE_;
+   END;
+
+      LINECNT + 6;
+      BRCNT + 1;
+      LINECNT + 1;
+      PUT  @2    BOXNO             $06.
+           @13   SDBNAME           $40.
+           @54   IDNUMBER          $20.;
+      LINECNT + 2;
+
+   IF LINECNT > 55 THEN DO; LINK NEWPAGE; LINECNT=0; END;
+
+   IF EOF THEN DO;
+      PUT @055 '                      ';
+      PUT @055 '****END OF REPORT ****';
+      PUT @055 '                      ';
+   END;
+   RETURN;
+
+   NEWPAGE:
+      PAGECNT +1;
+      LINECNT = 0;
+   /* LINECNT +7; */
+      PUT @1   'REPORT ID   : SDB/SCREEN/FULL'
+          @55  'PUBLIC BANK BERHAD'
+          @94  'PAGE        : ' PAGECNT   4.
+         /@1   'PROGRAM ID  : CISDBFRP'
+          @94  'REPORT DATE : '  "&RDATE"
+         /@1   'BRANCH      : 0000001'
+          @050 'SDB FULL DATABASE SCREENING'
+         /@050 '===========================' ;
+      PUT  @2    'BOX NO'
+           @13   'NAME (HIRER S NAME)'
+           @54   'CUSTOMER ID';
+      PUT @001 '----------------------------------------'
+          @041 '----------------------------------------'
+          @081 '----------------------------------------'
+          @121 '----------';
+   RETURN;
+RUN;
+ /*----------------------------------------------------------------*/
+ /* GENERATE REPORT                                                */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+  SET DWJ END=EOF; BY BRANCH BOXNO SDBNAME IDNUMBER;
+  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
+  LINECNT = 0.;
+
+  IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
+     PUT _PAGE_;
+  END;
+
+    LINECNT + 6;
+    BRCNT + 1;
+
+  LINECNT + 1;
+  PUT  @2    BOXNO             $06.
+       @13   SDBNAME           $40.
+       @54   IDNUMBER          $20.;
+  BRCUST   + 1;
+  GRCUST   + 1;
+
+     IF EOF THEN DO;
+        PUT /@3    'GRAND TOTAL OF ALL BRANCHES = '
+             @35   GRCUST     9.;
+     END;
+      RETURN;
+
+  NEWPAGE :
+    PAGECNT+1;
+    LINECNT = 0;
+
+      PUT @1   'REPORT ID   : SDB/SCREEN/FULL'
+          @55  'PUBLIC BANK BERHAD'
+          @94  'PAGE        : ' PAGECNT   4.
+         /@1   'PROGRAM ID  : CISDBFRP'
+          @94  'REPORT DATE : '  "&RDATE"
+         /@1   'BRANCH      : ' BRANCH $5.
+          @050 'SDB FULL DATABASE SCREENING'
+         /@050 '===========================' ;
+      PUT  @2    'BOX NO'
+           @13   'NAME (HIRER S NAME)'
+           @54   'CUSTOMER ID';
+      PUT @001 '----------------------------------------'
+          @041 '----------------------------------------'
+          @081 '----------------------------------------'
+          @121 '----------';
+    LINECNT = 9;
+  RETURN;
+RUN;
