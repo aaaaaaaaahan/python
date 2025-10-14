@@ -1,9 +1,5 @@
 def get_hive_parquet_dp(base_folder: str, debug: bool = False):
-    """
-    Pattern:
-      /host/dp/parquet/Year/Month = 10/Day = 10/<file>.parquet
-    """
-    base_path = dp_parquet.rsplit('/', 1)[0]  # ✅ go up one level (/host/dp/parquet)
+    base_path = dp_parquet
 
     year_path = os.path.join(base_path, "Year")
     if not os.path.exists(year_path):
@@ -33,15 +29,15 @@ def get_hive_parquet_dp(base_folder: str, debug: bool = False):
     latest_day = max(days)
     day_path = os.path.join(month_path, f"Day = {latest_day}")
 
-    # --- collect parquet files ---
-    parquet_files = [
-        os.path.join(day_path, f)
-        for f in os.listdir(day_path)
-        if f.endswith(".parquet")
-    ]
+    # The final parquet file is directly here, not a folder
+    final_file = os.path.join(day_path, base_folder)
+    if not final_file.endswith(".parquet"):
+        final_file += ".parquet"
 
-    if not parquet_files:
-        raise FileNotFoundError(f"No parquet files found in {day_path}")
+    if not os.path.exists(final_file):
+        raise FileNotFoundError(f"Parquet file not found: {final_file}")
+
+    parquet_files = [final_file]
 
     if debug:
         print(f"[DEBUG][DP] Latest Path: Month={latest_month}, Day={latest_day}")
