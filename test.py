@@ -5,7 +5,6 @@ assumed all the input file ady convert to parquet can directly use it
 
 
 //CISDOWJT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
-//****************************************************************
 //**************************************************************        00040000
 //*  DELETE OLD  DATA FILE                                     *        00050000
 //**************************************************************        00060000
