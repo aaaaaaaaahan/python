@@ -1,25 +1,13 @@
-//CISDBFRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0021327
+//CISDBNRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0108893
 //**********************************************************************
 //* ESMR 2019-4492
-//* MATCHING DOWJONES AND SDB MASTER FILE
+//* MATCHING DOWJONES AND SDB MASTER FILE NEW RECORD ONLY
 //*********************************************************************
 //INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.CIS.SDB.MATCH.FRPT,
+//DEL1     DD DSN=RBP2.B033.CIS.SDB.MATCH.NRPT,
 //            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*********************************************************************
-//* FULL REPORT
-//*********************************************************************
-//COPYFILE EXEC PGM=ICEGENER
-//SYSPRINT DD SYSOUT=X
-//SYSUT1   DD DISP=SHR,DSN=RBP2.B033.CIS.SDB.MATCH.DWJ
-//         DD DISP=SHR,DSN=RBP2.B033.CIS.SDB.MATCH.RHL
-//SYSUT2   DD DSN=RBP2.B033.CIS.SDB.MATCH.FULL(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(TRK,(10,10),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SYSIN    DD DUMMY
-//*********************************************************************
-//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1
+//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS
 //* (1) IC MATCH, (2) NAME AND IC MATCH, (3) NAME AND (4) NAME AND DOB
 //*********************************************************************
 //MATCHREC EXEC SAS609
@@ -29,27 +17,47 @@
 //SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
-//DWJLST    DD DISP=SHR,DSN=RBP2.B033.CIS.SDB.MATCH.DWJ
-//          DD DISP=SHR,DSN=RBP2.B033.CIS.SDB.MATCH.RHL
-//RPTFILE   DD DSN=RBP2.B033.CIS.SDB.MATCH.FRPT,
+//OLDLST    DD DISP=SHR,DSN=RBP2.B033.CIS.SDB.MATCH.FULL(-1)
+//NEWLST    DD DISP=SHR,DSN=RBP2.B033.CIS.SDB.MATCH.FULL(0)
+//RPTFILE   DD DSN=RBP2.B033.CIS.SDB.MATCH.NRPT,
 //             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//             SPACE=(CYL,(50,50),RLSE),
+//             SPACE=(CYL,(100,100),RLSE),
 //             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
 //SASLIST   DD SYSOUT=X
 //SYSIN     DD *
 OPTIONS NOCENTER;
  /*----------------------------------------------------------------*/
- /*  IMIS SINGLE VIEW FILES                                        */
+ /*  OLD LIST                                                      */
  /*----------------------------------------------------------------*/
- DATA DWJ;
-      INFILE DWJLST;
+ DATA OLD;
+      INFILE OLDLST;
       INPUT   @001  BOXNO        $06.
               @007  SDBNAME      $40.
               @050  IDNUMBER     $20.
               @070  BRANCH       $05. ;
    RUN;
- PROC SORT  DATA=DWJ NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;
- PROC PRINT DATA=DWJ(OBS=5);TITLE 'ALL LIST ONLY'; RUN;
+ PROC SORT  DATA=OLD NODUPKEY;BY BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=OLD(OBS=5);TITLE 'OLD LIST ONLY'; RUN;
+ /*----------------------------------------------------------------*/
+ /*  NEW LIST                                                      */
+ /*----------------------------------------------------------------*/
+ DATA NEW;
+      INFILE NEWLST;
+      INPUT   @001  BOXNO        $06.
+              @007  SDBNAME      $40.
+              @050  IDNUMBER     $20.
+              @070  BRANCH       $05. ;
+   RUN;
+ PROC SORT  DATA=NEW NODUPKEY;BY BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=NEW(OBS=5);TITLE 'NEW LIST ONLY'; RUN;
+
+ DATA COMP;
+      MERGE OLD(IN=O) NEW(IN=N);BY BOXNO SDBNAME IDNUMBER;
+      IF N AND (NOT O);
+      RUN;
+ PROC SORT  DATA=COMP NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=COMP(OBS=5);TITLE 'COM LIST ONLY'; RUN;
+
  /*----------------------------------------------------------------*/
  /*    SET DATES FOR REPORT                                        */
  /*----------------------------------------------------------------*/
@@ -62,8 +70,12 @@ DATA SRSDATE;
    CALL SYMPUT('RDATE',PUT(REPTDATE,DDMMYY10.));
 RUN;
 
-DATA REPORT;
+ /*----------------------------------------------------------------*/
+ /* GENERATE REPORT                                                */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
    IF TRN=0 THEN DO;
+      BRANCH = '00000' ;
       FILE RPTFILE PRINT HEADER=NEWPAGE;
       PUT _PAGE_;
       PUT  /@15    '**********************************';
@@ -74,56 +86,7 @@ DATA REPORT;
    END;
 
    RETAIN TRN;
-   SET DWJ NOBS=TRN END=EOF;BY BRANCH BOXNO SDBNAME IDNUMBER;
-   FILE RPTFILE NOTITLE PRINT HEADER=NEWPAGE;
-
-   IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
-      PUT _PAGE_;
-   END;
-
-      LINECNT + 6;
-      BRCNT + 1;
-      LINECNT + 1;
-      PUT  @2    BOXNO             $06.
-           @13   SDBNAME           $40.
-           @54   IDNUMBER          $20.;
-      LINECNT + 2;
-
-   IF LINECNT > 55 THEN DO; LINK NEWPAGE; LINECNT=0; END;
-
-   IF EOF THEN DO;
-      PUT @055 '                      ';
-      PUT @055 '****END OF REPORT ****';
-      PUT @055 '                      ';
-   END;
-   RETURN;
-
-   NEWPAGE:
-      PAGECNT +1;
-      LINECNT = 0;
-   /* LINECNT +7; */
-      PUT @1   'REPORT ID   : SDB/SCREEN/FULL'
-          @55  'PUBLIC BANK BERHAD'
-          @94  'PAGE        : ' PAGECNT   4.
-         /@1   'PROGRAM ID  : CISDBFRP'
-          @94  'REPORT DATE : '  "&RDATE"
-         /@1   'BRANCH      : 0000001'
-          @050 'SDB FULL DATABASE SCREENING'
-         /@050 '===========================' ;
-      PUT  @2    'BOX NO'
-           @13   'NAME (HIRER S NAME)'
-           @54   'CUSTOMER ID';
-      PUT @001 '----------------------------------------'
-          @041 '----------------------------------------'
-          @081 '----------------------------------------'
-          @121 '----------';
-   RETURN;
-RUN;
- /*----------------------------------------------------------------*/
- /* GENERATE REPORT                                                */
- /*----------------------------------------------------------------*/
-DATA _NULL_;
-  SET DWJ END=EOF; BY BRANCH BOXNO SDBNAME IDNUMBER;
+  SET COMP NOBS=TRN END=EOF; BY BRANCH BOXNO SDBNAME IDNUMBER;
   FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
   LINECNT = 0.;
 
@@ -151,14 +114,14 @@ DATA _NULL_;
     PAGECNT+1;
     LINECNT = 0;
 
-      PUT @1   'REPORT ID   : SDB/SCREEN/FULL'
+      PUT @1   'REPORT ID   : SDB/SCREEN/NEW'
           @55  'PUBLIC BANK BERHAD'
           @94  'PAGE        : ' PAGECNT   4.
-         /@1   'PROGRAM ID  : CISDBFRP'
+         /@1   'PROGRAM ID  : CISDBNRP'
           @94  'REPORT DATE : '  "&RDATE"
          /@1   'BRANCH      : ' BRANCH $5.
-          @050 'SDB FULL DATABASE SCREENING'
-         /@050 '===========================' ;
+          @050 'SDB NEW RECORDS SCREENING'
+         /@050 '==========================' ;
       PUT  @2    'BOX NO'
            @13   'NAME (HIRER S NAME)'
            @54   'CUSTOMER ID';
