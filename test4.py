@@ -1,15 +1,10 @@
-if first_page:
-    # --- First page, no spacing before ---
-    page_cnt += 1
-    print_header(f, branch, page_cnt, report_date)
-    current_branch = branch
-    line_cnt = 9
-    first_page = False
+import duckdb
+from CIS_PY_READER import get_hive_parquet
 
-elif branch != current_branch or line_cnt >= 55:
-    # --- Add spacing after each page before new one starts ---
-    f.write("\n" * 3)
-    page_cnt += 1
-    print_header(f, branch, page_cnt, report_date)
-    current_branch = branch
-    line_cnt = 9
+# Get previous (-1) and latest (0) parquet paths
+old_path, new_path = get_hive_parquet("CIS.SDB.MATCH.FULL", debug=True)
+
+# Create DuckDB tables
+con = duckdb.connect()
+con.execute(f"CREATE TABLE old AS SELECT * FROM read_parquet('{old_path}')")
+con.execute(f"CREATE TABLE new AS SELECT * FROM read_parquet('{new_path}')")
