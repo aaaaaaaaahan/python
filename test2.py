@@ -1,141 +1,78 @@
 import duckdb
 import pyarrow as pa
 import pyarrow.csv as csv
-import pyarrow.compute as pc
+import pyarrow.parquet as pq
 import datetime
 import os
+import sys
 
-# ============================================================
-# PATH CONFIGURATION
-# ============================================================
-yesterday_parquet = "/host/cis/parquet/CIS.SDB.MATCH.FULL_yesterday.parquet"
-today_parquet = "/host/cis/parquet/CIS.SDB.MATCH.FULL_today.parquet"
-output_txt = "/host/cis/output/CIS.SDB.MATCH.NRPT.txt"
+# =====================================
+# CONFIGURATION
+# =====================================
+input_parquet = "/host/cis/parquet/KWSP.EMPLOYER.FILE.parquet"
+output_csv = "/host/cis/output/KWSP.EMPLOYER.FILE.LOAD.csv"
 
-# ============================================================
-# BATCH DATE (today)
-# ============================================================
-report_date = datetime.date.today().strftime("%d/%m/%Y")
-
-# ============================================================
-# CREATE DUCKDB CONNECTION
-# ============================================================
+# =====================================
+# PROCESS WITH DUCKDB
+# =====================================
 con = duckdb.connect()
 
-# ============================================================
-# READ OLD (YESTERDAY) & NEW (TODAY) LISTS
-# ============================================================
-old_query = f"""
-    SELECT 
-        BOXNO,
-        SDBNAME,
-        IDNUMBER,
-        BRANCH
-    FROM read_parquet('{yesterday_parquet}')
-"""
-new_query = f"""
-    SELECT 
-        BOXNO,
-        SDBNAME,
-        IDNUMBER,
-        BRANCH
-    FROM read_parquet('{today_parquet}')
-"""
+# Read input Parquet file
+df = con.execute(f"SELECT * FROM read_parquet('{input_parquet}')").fetchdf()
 
-old_df = con.execute(old_query).arrow()
-new_df = con.execute(new_query).arrow()
+# Ensure correct column names (match SAS logic)
+# Assuming the parquet already has these fields, else adjust accordingly
+df["REC_ID"] = df["REC_ID"].astype(str).str.strip()
+df["EMPLYR_NO"] = df["EMPLYR_NO"].fillna(0).astype(int)
+df["EMPLYR_NAME1"] = df["EMPLYR_NAME1"].fillna("").astype(str).str.strip()
 
-# Remove duplicates
-old_df = pc.unique(old_df)
-new_df = pc.unique(new_df)
+# =====================================
+# VALIDATION (simulate SAS ABORT)
+# =====================================
+if df["REC_ID"].isnull().any() or (df["REC_ID"] == "").any():
+    sys.exit("ABORT 111: REC_ID missing")
 
-# ============================================================
-# FIND NEW RECORDS (TODAY BUT NOT IN YESTERDAY)
-# ============================================================
-con.register("old_tbl", old_df)
-con.register("new_tbl", new_df)
+if ((df["REC_ID"] == "01") & ((df["EMPLYR_NO"] == 0) | (df["EMPLYR_NAME1"] == ""))).any():
+    sys.exit("ABORT 222: Missing Employer Info for REC_ID=01")
 
-comp_arrow = con.execute("""
-    SELECT n.*
-    FROM new_tbl n
-    LEFT JOIN old_tbl o
-    ON n.BOXNO = o.BOXNO
-       AND n.SDBNAME = o.SDBNAME
-       AND n.IDNUMBER = o.IDNUMBER
-    WHERE o.BOXNO IS NULL
-    ORDER BY n.BRANCH, n.BOXNO, n.SDBNAME, n.IDNUMBER
-""").arrow()
+# Check last record
+last_rec = df.iloc[-1]
+if last_rec["REC_ID"] != "02":
+    sys.exit("ABORT 333: Last record is not 02")
 
-SELECT n.BOXNO, n.SDBNAME, n.IDNUMBER, n.BRANCH
-FROM new_nodup n
-LEFT JOIN old_nodup o
-  ON n.BOXNO = o.BOXNO
- AND n.SDBNAME = o.SDBNAME
- AND n.IDNUMBER = o.IDNUMBER
-WHERE o.BOXNO IS NULL
+# Check total count consistency (simulate SAS X counter)
+x_count = (df["REC_ID"] == "01").sum()
+if last_rec.get("TOTAL_REC", x_count) != x_count:
+    sys.exit("ABORT 444: TOTAL_REC mismatch")
 
+# =====================================
+# DERIVED & FIXED FIELDS
+# =====================================
+df["IND_ORG"] = "O"
+df["ROB_ROC"] = " "
+df["EMPLYR_NAME2"] = " "
 
-# ============================================================
-# REPORT GENERATION
-# ============================================================
-lines = []
-page_count = 1
-line_count = 0
-grand_total = 0
+# Clean up CR characters
+df["EMPLYR_NAME1"] = df["EMPLYR_NAME1"].str.replace("\r", "", regex=False)
+df["EMPLYR_NAME2"] = df["EMPLYR_NAME2"].str.replace("\r", "", regex=False)
 
-def write_page_header(branch, page):
-    return [
-        f"REPORT ID   : SDB/SCREEN/NEW{' ' * 35}PUBLIC BANK BERHAD{' ' * 20}PAGE : {page:04}",
-        f"PROGRAM ID  : CISDBNRP{' ' * 60}REPORT DATE : {report_date}",
-        f"BRANCH      : {branch or '00000'}{' ' * 10}SDB NEW RECORDS SCREENING",
-        " " * 50 + "==========================",
-        "  BOX NO    NAME (HIRER'S NAME)                     CUSTOMER ID",
-        "  ------------------------------------------------------------------------------"
-    ]
+# =====================================
+# OUTPUT WITH PYARROW
+# =====================================
+# Select only output columns in correct order
+out_cols = [
+    "REC_ID",
+    "IND_ORG",
+    "EMPLYR_NO",
+    "ROB_ROC",
+    "EMPLYR_NAME1",
+    "EMPLYR_NAME2",
+]
 
-if comp_arrow.num_rows == 0:
-    lines.append("\n" * 3)
-    lines += [
-        " " * 15 + "**********************************",
-        " " * 15 + "*                                *",
-        " " * 15 + "*       NO MATCHING RECORDS      *",
-        " " * 15 + "*                                *",
-        " " * 15 + "**********************************",
-    ]
-else:
-    comp_table = comp_arrow.to_pydict()
-    current_branch = None
-    branch_total = 0
+# Convert to Arrow Table
+table = pa.Table.from_pandas(df[out_cols])
 
-    for i in range(comp_arrow.num_rows):
-        boxno = comp_table["BOXNO"][i]
-        sdbname = comp_table["SDBNAME"][i]
-        idnum = comp_table["IDNUMBER"][i]
-        branch = comp_table["BRANCH"][i]
+# Write to CSV (similar to SAS FILE OUTFILE)
+csv.write_csv(table, output_csv)
 
-        # new page or new branch
-        if line_count == 0 or branch != current_branch or line_count >= 52:
-            if line_count != 0:
-                lines.append("\n" * 3)  # spacing between pages
-            lines += write_page_header(branch, page_count)
-            page_count += 1
-            line_count = 9
-            current_branch = branch
-
-        # write record
-        lines.append(f"  {boxno:<6}   {sdbname:<40} {idnum:<20}")
-        line_count += 1
-        branch_total += 1
-        grand_total += 1
-
-    lines.append("")
-    lines.append(f"   GRAND TOTAL OF ALL BRANCHES = {grand_total:9}")
-
-# ============================================================
-# OUTPUT TO TEXT FILE
-# ============================================================
-with open(output_txt, "w", encoding="utf-8") as f:
-    for line in lines:
-        f.write(line + "\n")
-
-print(f"Report generated successfully: {output_txt}")
+print(f"✅ KWSP processing complete: {output_csv}")
