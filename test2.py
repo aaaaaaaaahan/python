@@ -66,6 +66,15 @@ comp_arrow = con.execute("""
     ORDER BY n.BRANCH, n.BOXNO, n.SDBNAME, n.IDNUMBER
 """).arrow()
 
+SELECT n.BOXNO, n.SDBNAME, n.IDNUMBER, n.BRANCH
+FROM new_nodup n
+LEFT JOIN old_nodup o
+  ON n.BOXNO = o.BOXNO
+ AND n.SDBNAME = o.SDBNAME
+ AND n.IDNUMBER = o.IDNUMBER
+WHERE o.BOXNO IS NULL
+
+
 # ============================================================
 # REPORT GENERATION
 # ============================================================
