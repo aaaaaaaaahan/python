@@ -1,7 +1,4 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.csv as csv
-import pyarrow.parquet as pq
 import datetime
 import os
 import sys
@@ -10,69 +7,102 @@ import sys
 # CONFIGURATION
 # =====================================
 input_parquet = "/host/cis/parquet/KWSP.EMPLOYER.FILE.parquet"
-output_csv = "/host/cis/output/KWSP.EMPLOYER.FILE.LOAD.csv"
 
 # =====================================
 # PROCESS WITH DUCKDB
 # =====================================
 con = duckdb.connect()
 
-# Read input Parquet file
-df = con.execute(f"SELECT * FROM read_parquet('{input_parquet}')").fetchdf()
+# Read input Parquet file into DuckDB table
+con.execute(f"""
+    CREATE OR REPLACE TABLE kwsp AS 
+    SELECT * FROM read_parquet('{input_parquet}')
+""")
 
-# Ensure correct column names (match SAS logic)
-# Assuming the parquet already has these fields, else adjust accordingly
-df["REC_ID"] = df["REC_ID"].astype(str).str.strip()
-df["EMPLYR_NO"] = df["EMPLYR_NO"].fillna(0).astype(int)
-df["EMPLYR_NAME1"] = df["EMPLYR_NAME1"].fillna("").astype(str).str.strip()
+# Ensure expected columns exist
+required_cols = ["REC_ID", "EMPLYR_NO", "EMPLYR_NAME1"]
+for col in required_cols:
+    if col not in [c[0] for c in con.execute("DESCRIBE kwsp").fetchall()]:
+        sys.exit(f"ABORT 000: Missing required column {col}")
+
+# Clean and normalize columns
+con.execute("""
+    UPDATE kwsp
+    SET 
+        REC_ID = TRIM(CAST(REC_ID AS VARCHAR)),
+        EMPLYR_NO = COALESCE(CAST(EMPLYR_NO AS INTEGER), 0),
+        EMPLYR_NAME1 = TRIM(CAST(COALESCE(EMPLYR_NAME1, '') AS VARCHAR))
+""")
 
 # =====================================
 # VALIDATION (simulate SAS ABORT)
 # =====================================
-if df["REC_ID"].isnull().any() or (df["REC_ID"] == "").any():
+# Check missing REC_ID
+null_rec = con.execute("SELECT COUNT(*) FROM kwsp WHERE REC_ID IS NULL OR REC_ID = ''").fetchone()[0]
+if null_rec > 0:
     sys.exit("ABORT 111: REC_ID missing")
 
-if ((df["REC_ID"] == "01") & ((df["EMPLYR_NO"] == 0) | (df["EMPLYR_NAME1"] == ""))).any():
+# Check missing Employer Info for REC_ID=01
+missing_emp = con.execute("""
+    SELECT COUNT(*) FROM kwsp
+    WHERE REC_ID = '01' AND (EMPLYR_NO = 0 OR EMPLYR_NAME1 = '')
+""").fetchone()[0]
+if missing_emp > 0:
     sys.exit("ABORT 222: Missing Employer Info for REC_ID=01")
 
-# Check last record
-last_rec = df.iloc[-1]
-if last_rec["REC_ID"] != "02":
+# Check last record REC_ID
+last_rec_id = con.execute("SELECT REC_ID FROM kwsp ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+if last_rec_id != "02":
     sys.exit("ABORT 333: Last record is not 02")
 
-# Check total count consistency (simulate SAS X counter)
-x_count = (df["REC_ID"] == "01").sum()
-if last_rec.get("TOTAL_REC", x_count) != x_count:
+# Check TOTAL_REC consistency
+x_count = con.execute("SELECT COUNT(*) FROM kwsp WHERE REC_ID = '01'").fetchone()[0]
+try:
+    total_rec = con.execute("""
+        SELECT TOTAL_REC FROM kwsp ORDER BY rowid DESC LIMIT 1
+    """).fetchone()[0]
+except:
+    total_rec = x_count
+
+if total_rec != x_count:
     sys.exit("ABORT 444: TOTAL_REC mismatch")
 
 # =====================================
 # DERIVED & FIXED FIELDS
 # =====================================
-df["IND_ORG"] = "O"
-df["ROB_ROC"] = " "
-df["EMPLYR_NAME2"] = " "
+# Add or set default columns
+con.execute("""
+    ALTER TABLE kwsp ADD COLUMN IF NOT EXISTS IND_ORG VARCHAR DEFAULT 'O';
+""")
+con.execute("""
+    ALTER TABLE kwsp ADD COLUMN IF NOT EXISTS ROB_ROC VARCHAR DEFAULT ' ';
+""")
+con.execute("""
+    ALTER TABLE kwsp ADD COLUMN IF NOT EXISTS EMPLYR_NAME2 VARCHAR DEFAULT ' ';
+""")
 
-# Clean up CR characters
-df["EMPLYR_NAME1"] = df["EMPLYR_NAME1"].str.replace("\r", "", regex=False)
-df["EMPLYR_NAME2"] = df["EMPLYR_NAME2"].str.replace("\r", "", regex=False)
+# Clean carriage returns
+con.execute("""
+    UPDATE kwsp
+    SET 
+        EMPLYR_NAME1 = REPLACE(EMPLYR_NAME1, '\r', ''),
+        EMPLYR_NAME2 = REPLACE(EMPLYR_NAME2, '\r', '')
+""")
 
 # =====================================
-# OUTPUT WITH PYARROW
+# FINAL OUTPUT (no COPY)
 # =====================================
-# Select only output columns in correct order
-out_cols = [
-    "REC_ID",
-    "IND_ORG",
-    "EMPLYR_NO",
-    "ROB_ROC",
-    "EMPLYR_NAME1",
-    "EMPLYR_NAME2",
-]
+# Fetch and print the processed output
+df_out = con.execute("""
+    SELECT 
+        REC_ID,
+        IND_ORG,
+        EMPLYR_NO,
+        ROB_ROC,
+        EMPLYR_NAME1,
+        EMPLYR_NAME2
+    FROM kwsp
+""").fetchdf()
 
-# Convert to Arrow Table
-table = pa.Table.from_pandas(df[out_cols])
-
-# Write to CSV (similar to SAS FILE OUTFILE)
-csv.write_csv(table, output_csv)
-
-print(f"✅ KWSP processing complete: {output_csv}")
+print("✅ KWSP processing complete. Output preview:")
+print(df_out)
