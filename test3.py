@@ -1,90 +1,51 @@
-import duckdb
-from CIS_PY_READER import get_hive_parquet
-import datetime
+import os
+import re
+from datetime import datetime
+from typing import Tuple, List
 
 # ============================================================
-# DATE SETUP
+# BASE PARQUET ROOT FOLDER
 # ============================================================
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-report_date = datetime.date.today().strftime("%d-%m-%Y")
-
-# ============================================================
-# CONNECT TO DUCKDB
-# ============================================================
-con = duckdb.connect()
-sdb_rhl, _, _, _ = get_hive_parquet('CIS_SDB_MATCH_RHL')
-sdb_dwj, _, _, _ = get_hive_parquet('CIS_SDB_MATCH_DWJ')
+# You only need to define this once
+hive_base_path = "/host/cis/parquet"
 
 # ============================================================
-# LOAD & SORT DATA
+# FUNCTION: get_hive_parquet
 # ============================================================
-con.execute(f"""
-    CREATE TABLE combined AS
-    SELECT * FROM read_parquet('{sdb_rhl[0]}')
-    UNION ALL
-    SELECT * FROM read_parquet('{sdb_dwj[0]}')
-""")
+def get_hive_parquet(dataset_name: str, debug: bool = False) -> Tuple[str, str]:
+    """
+    Simulate SAS GDG behavior for Hive-style parquet folders.
+    Example: CIS.SDB.MATCH.FULL -> finds (-1) and (0)
+    Returns (previous_path, latest_path)
+    """
+    base_path = os.path.join(hive_base_path, dataset_name)
 
-con.execute("""
-    CREATE TABLE dwj AS
-    SELECT DISTINCT BOXNO, SDBNAME, IDNUMBER, BRANCH
-    FROM combined
-    ORDER BY BRANCH, BOXNO, SDBNAME, IDNUMBER
-""")
+    if not os.path.exists(base_path):
+        raise FileNotFoundError(f"Base parquet path not found: {base_path}")
 
-data = con.execute("SELECT * FROM dwj").fetchall()
+    dated_folders = []
 
-# ============================================================
-# OUTPUT REPORT
-# ============================================================
-output_txt = f"/host/cis/output/CIS_SDB_MATCH_FRPT_{report_date}.txt"
+    # Walk through all folders (Hive structure: year=YYYY/month=MM/day=DD)
+    for root, dirs, files in os.walk(base_path):
+        parquet_files = [os.path.join(root, f) for f in files if f.endswith(".parquet")]
+        if parquet_files:
+            match = re.search(r"year=(\d+).*month=(\d+).*day=(\d+)", root.replace("\\", "/"))
+            if match:
+                y, m, d = map(int, match.groups())
+                date_val = datetime(y, m, d)
+                dated_folders.append((date_val, parquet_files[0]))
 
-with open(output_txt, "w") as f:
-    if not data:
-        # No matching records case
-        f.write(" " * 15 + "**********************************\n")
-        f.write(" " * 15 + "*                                *\n")
-        f.write(" " * 15 + "*       NO MATCHING RECORDS      *\n")
-        f.write(" " * 15 + "*                                *\n")
-        f.write(" " * 15 + "**********************************\n")
-    else:
-        # Initialize counters
-        page_cnt = 0
-        line_cnt = 0
-        grand_total = 0
-        current_branch = None
+    # Sort by date (latest first)
+    dated_folders.sort(key=lambda x: x[0], reverse=True)
 
-        def print_header(f, branch, page_cnt, report_date):
-            """Print SAS-style page header"""
-            branch_display = branch if branch else "0000001"
-            f.write(f"{'REPORT ID   : SDB/SCREEN/FULL':<54}{'PUBLIC BANK BERHAD':<40}{'PAGE        : '}{page_cnt:>4}\n")
-            f.write(f"{'PROGRAM ID  : CISDBFRP':<94}{'REPORT DATE : ' + report_date}\n")
-            f.write(f"{'BRANCH      : ' + branch_display:<54}{'SDB FULL DATABASE SCREENING'}\n")
-            f.write(f"{'':<49}{'==========================='}\n")
-            f.write(f"{'BOX NO':<10}{'NAME (HIRER S NAME)':<40}{'CUSTOMER ID':<20}\n")
-            f.write(f"{'-'*40}{'-'*40}{'-'*40}\n")
+    if len(dated_folders) < 2:
+        raise ValueError(f"Not enough generations found for {dataset_name} (need at least 2 days).")
 
-        first_page = True
+    latest = dated_folders[0][1]   # (0)
+    previous = dated_folders[1][1] # (-1)
 
-        for row in data:
-            boxno, sdbname, idnumber, branch = row
+    if debug:
+        print(f"[DEBUG] Latest (0): {latest}")
+        print(f"[DEBUG] Previous (-1): {previous}")
 
-            # Start new page when branch changes or line limit reached
-            if first_page or branch != current_branch or line_cnt >= 55:
-                f.write("/n" * 3)
-                page_cnt += 1
-                print_header(f, branch, page_cnt, report_date)
-                current_branch = branch
-                line_cnt = 9
-                first_page = False
-
-            # Print each record
-            f.write(f"{' ' * 1}{boxno:<6}{' ' * 5}{sdbname:<40}{' ' * 2}{idnumber:<20}\n")
-            line_cnt += 1
-            grand_total += 1
-
-        # --- END OF REPORT footer ---
-        f.write(" " * 55 + "                      \n")
-        f.write(" " * 55 + "****END OF REPORT ****\n")
-        f.write(" " * 55 + "                      \n\n")
-        f.write(f"{' ' * 3}GRAND TOTAL OF ALL BRANCHES = {grand_total:>9}\n")
+    return previous, latest
