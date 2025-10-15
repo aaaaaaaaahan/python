@@ -3,88 +3,134 @@ duckdb for process input file
 pyarrow for output csv
 assumed all the input file ady convert to parquet can directly use it
 
+//CISDBNRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0108893
+//*********************************************************************
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS.SDB.MATCH.NRPT,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*********************************************************************
+//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS
+//* (1) IC MATCH, (2) NAME AND IC MATCH, (3) NAME AND (4) NAME AND DOB
+//*********************************************************************
+//MATCHREC EXEC SAS609
+//IEFR1ER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
+//OLDLST    DD DISP=SHR,DSN=CIS.SDB.MATCH.FULL(-1)
+//NEWLST    DD DISP=SHR,DSN=CIS.SDB.MATCH.FULL(0)
+//RPTFILE   DD DSN=CIS.SDB.MATCH.NRPT,
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(100,100),RLSE),
+//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*  OLD LIST                                                      */
+ /*----------------------------------------------------------------*/
+ DATA OLD;
+      INFILE OLDLST;
+      INPUT   @001  BOXNO        $06.
+              @007  SDBNAME      $40.
+              @050  IDNUMBER     $20.
+              @070  BRANCH       $05. ;
+   RUN;
+ PROC SORT  DATA=OLD NODUPKEY;BY BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=OLD(OBS=5);TITLE 'OLD LIST ONLY'; RUN;
+ /*----------------------------------------------------------------*/
+ /*  NEW LIST                                                      */
+ /*----------------------------------------------------------------*/
+ DATA NEW;
+      INFILE NEWLST;
+      INPUT   @001  BOXNO        $06.
+              @007  SDBNAME      $40.
+              @050  IDNUMBER     $20.
+              @070  BRANCH       $05. ;
+   RUN;
+ PROC SORT  DATA=NEW NODUPKEY;BY BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=NEW(OBS=5);TITLE 'NEW LIST ONLY'; RUN;
 
-//CISDOWJT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
-//**************************************************************        00040000
-//*  DELETE OLD  DATA FILE                                     *        00050000
-//**************************************************************        00060000
-//*DELETE   EXEC PGM=IEFBR14                                            00070000
-//*DD1      DD DSN=AMLA.DOWJONE.EXTRACT,                      00080007
-//*            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,0)
-//*
-//EXTRACT  EXEC SAS609
-//DOWJONE  DD DISP=SHR,DSN=UNLOAD.CIDOWJ1T.FB
-//OUTPUT   DD DSN=AMLA.DOWJONE.EXTRACT(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(500,500),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=300,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SYSIN    DD *
+ DATA COMP;
+      MERGE OLD(IN=O) NEW(IN=N);BY BOXNO SDBNAME IDNUMBER;
+      IF N AND (NOT O);
+      RUN;
+ PROC SORT  DATA=COMP NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;
+ PROC PRINT DATA=COMP(OBS=5);TITLE 'COM LIST ONLY'; RUN;
 
-DATA DOWJONE;
-   INFILE DOWJONE;
-        INPUT @01  DJ_NAME             $40.
-              @41  DJ_ID_NO            $40.
-              @81  DJ_PERSON_ID        $10.
-              @91  DJ_IND_ORG          $01.
-              @92  DJ_DESC1            $04.
-              @96  DJ_DOB_DOR          $10.
-              @106 DJ_NAME_TYPE        $10.
-              @116 DJ_ID_TYPE          $50.
-              @166 DJ_DATE_TYPE        $04.
-              @170 DJ_GENDER           $01.
-              @171 DJ_SANCTION_INDC    $01.
-              @172 DJ_OCCUP_INDC       $01.
-              @173 DJ_RLENSHIP_INDC    $01.
-              @174 DJ_OTHER_LIST_INDC  $01.
-              @175 DJ_ACTIVE_STATUS    $01.
-              @176 DJ_CITIZENSHIP      $02;
-
+ /*----------------------------------------------------------------*/
+ /*    SET DATES FOR REPORT                                        */
+ /*----------------------------------------------------------------*/
+DATA SRSDATE;
+   INFILE CTRLDATE;
+     INPUT @001  SRSYY    4.
+           @005  SRSMM    2.
+           @007  SRSDD    2.;
+   REPTDATE=MDY(SRSMM,SRSDD,SRSYY);
+   CALL SYMPUT('RDATE',PUT(REPTDATE,DDMMYY10.));
 RUN;
-PROC SORT DATA=DOWJONE; BY DJ_ID_NO ; RUN;
 
+ /*----------------------------------------------------------------*/
+ /* GENERATE REPORT                                                */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+   IF TRN=0 THEN DO;
+      BRANCH = '00000' ;
+      FILE RPTFILE PRINT HEADER=NEWPAGE;
+      PUT _PAGE_;
+      PUT  /@15    '**********************************';
+      PUT  /@15    '*                                *';
+      PUT  /@15    '*       NO MATCHING RECORDS      *';
+      PUT  /@15    '*                                *';
+      PUT  /@15    '**********************************';
+   END;
 
+   RETAIN TRN;
+  SET COMP NOBS=TRN END=EOF; BY BRANCH BOXNO SDBNAME IDNUMBER;
+  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
+  LINECNT = 0.;
 
-  DATA OUTPUT;
-   SET DOWJONE;
-   FILE OUTPUT;
-   BY DJ_ID_NO;
-        PUT @001   DJ_NAME      $40.
-            @041   '|'
-            @042   DJ_ID_NO     $40.
-            @082   '|'
-            @083   DJ_PERSON_ID $10.
-            @093   '|'
-            @094   DJ_IND_ORG   $01.
-            @095   '|'
-            @096   DJ_DESC1     $04.
-            @100   '|'
-            @101   DJ_DOB_DOR   $10.
-            @111   '|'
-            @112   DJ_NAME_TYPE $10.
-            @122   '|'
-            @123   DJ_ID_TYPE   $50.
-            @173   '|'
-            @174   DJ_DATE_TYPE $04.
-            @178   '|'
-            @179   DJ_GENDER    $01.
-            @180   '|'
-            @181   DJ_SANCTION_INDC    $01.
-            @182   '|'
-            @183   DJ_OCCUP_INDC       $01.
-            @184   '|'
-            @185   DJ_RLENSHIP_INDC    $01.
-            @186   '|'
-            @187   DJ_OTHER_LIST_INDC  $01.
-            @188   '|'
-            @189   DJ_ACTIVE_STATUS    $01.
-            @190   '|'
-            @191   DJ_CITIZENSHIP      $02.;
+  IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
+     PUT _PAGE_;
+  END;
 
-  RUN;
+    LINECNT + 6;
+    BRCNT + 1;
 
-  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
+  LINECNT + 1;
+  PUT  @2    BOXNO             $06.
+       @13   SDBNAME           $40.
+       @54   IDNUMBER          $20.;
+  BRCUST   + 1;
+  GRCUST   + 1;
+
+     IF EOF THEN DO;
+        PUT /@3    'GRAND TOTAL OF ALL BRANCHES = '
+             @35   GRCUST     9.;
+     END;
+      RETURN;
+
+  NEWPAGE :
+    PAGECNT+1;
+    LINECNT = 0;
+
+      PUT @1   'REPORT ID   : SDB/SCREEN/NEW'
+          @55  'PUBLIC BANK BERHAD'
+          @94  'PAGE        : ' PAGECNT   4.
+         /@1   'PROGRAM ID  : CISDBNRP'
+          @94  'REPORT DATE : '  "&RDATE"
+         /@1   'BRANCH      : ' BRANCH $5.
+          @050 'SDB NEW RECORDS SCREENING'
+         /@050 '==========================' ;
+      PUT  @2    'BOX NO'
+           @13   'NAME (HIRER S NAME)'
+           @54   'CUSTOMER ID';
+      PUT @001 '----------------------------------------'
+          @041 '----------------------------------------'
+          @081 '----------------------------------------'
+          @121 '----------';
+    LINECNT = 9;
+  RETURN;
+RUN;
