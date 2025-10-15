@@ -3,134 +3,60 @@ duckdb for process input file
 pyarrow for output csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CISDBNRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0108893
-//*********************************************************************
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.SDB.MATCH.NRPT,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*********************************************************************
-//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS
-//* (1) IC MATCH, (2) NAME AND IC MATCH, (3) NAME AND (4) NAME AND DOB
-//*********************************************************************
-//MATCHREC EXEC SAS609
-//IEFR1ER   DD DUMMY
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
-//OLDLST    DD DISP=SHR,DSN=CIS.SDB.MATCH.FULL(-1)
-//NEWLST    DD DISP=SHR,DSN=CIS.SDB.MATCH.FULL(0)
-//RPTFILE   DD DSN=CIS.SDB.MATCH.NRPT,
-//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//             SPACE=(CYL,(100,100),RLSE),
-//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTIONS NOCENTER;
- /*----------------------------------------------------------------*/
- /*  OLD LIST                                                      */
- /*----------------------------------------------------------------*/
- DATA OLD;
-      INFILE OLDLST;
-      INPUT   @001  BOXNO        $06.
-              @007  SDBNAME      $40.
-              @050  IDNUMBER     $20.
-              @070  BRANCH       $05. ;
+//CIKWSP01 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB36760
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=KWSP.EMPLOYER.FILE.LOAD,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//*- PROCESS ACCOUNT INFORMATION
+//*---------------------------------------------------------------------
+//KWSP01   EXEC SAS609
+//*WSPFILE DD DISP=SHR,DSN=KWSP.EMPLOYER.FILE.NEW
+//*WSPFILE DD DISP=SHR,DSN=KWSP.EMPLOYER.FILE.CUT5
+//KWSPFILE DD DISP=SHR,DSN=KWSP.EMPLOYER.FILE
+//OUTFILE  DD DSN=KWSP.EMPLOYER.FILE.LOAD,
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(TRK,(10,10),RLSE),
+//            DCB=(LRECL=118,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+ DATA KWSP;
+    INFILE KWSPFILE END=LAST;
+      INPUT @01 REC_ID         $02.
+            @03 EMPLYR_NO       19.
+            @03 TOTAL_REC       10.        /* ESMR 2013-1180 */
+            @22 EMPLYR_NAME1   $40. ;      /* ESMR 2013-1180 */
+    /*      @22 ROB_ROC        $15.           ESMR 2013-1180 */
+    /*      @37 EMPLYR_NAME1   $40.           ESMR 2013-1180 */
+    /*      @77 EMPLYR_NAME2   $40.;          ESMR 2013-1180 */
+            EMPLYR_NAME1 = LEFT(EMPLYR_NAME1);
+            IF REC_ID EQ '' THEN ABORT 111;
+            IF REC_ID EQ '01' AND (EMPLYR_NO EQ 0 OR EMPLYR_NAME1 EQ '')
+               THEN ABORT 222;
+            IF LAST AND REC_ID NE '02' THEN ABORT 333;
+            IF LAST AND REC_ID = '02' THEN DO;
+               IF TOTAL_REC NE X THEN ABORT 444;
+               DELETE;
+            END;
+            IF REC_ID = '01' THEN X+1;     /* ESMR 2013-1180 */
+            IND_ORG='O';
+ RUN;
+ PROC PRINT DATA=KWSP(OBS=15);TITLE 'KWSP FILE';RUN;
+
+ DATA _NULL_;
+   SET KWSP;
+   FILE OUTFILE;
+      ROB_ROC = ' ';            /* ESMR 2013-1180 */
+      EMPLYR_NAME2 = ' ' ;      /* ESMR 2013-1180 */
+      DELIM = '0D'X;
+      EMPLYR_NAME1 = COMPRESS(EMPLYR_NAME1,DELIM);
+      EMPLYR_NAME2 = COMPRESS(EMPLYR_NAME2,DELIM);
+      PUT @01 REC_ID         $02.
+          @03 IND_ORG        $01.
+          @04 EMPLYR_NO      Z19.
+          @23 ROB_ROC        $15.
+          @38 EMPLYR_NAME1   $40.
+          @78 EMPLYR_NAME2   $40.;
+   RETURN;
    RUN;
- PROC SORT  DATA=OLD NODUPKEY;BY BOXNO SDBNAME IDNUMBER;RUN;
- PROC PRINT DATA=OLD(OBS=5);TITLE 'OLD LIST ONLY'; RUN;
- /*----------------------------------------------------------------*/
- /*  NEW LIST                                                      */
- /*----------------------------------------------------------------*/
- DATA NEW;
-      INFILE NEWLST;
-      INPUT   @001  BOXNO        $06.
-              @007  SDBNAME      $40.
-              @050  IDNUMBER     $20.
-              @070  BRANCH       $05. ;
-   RUN;
- PROC SORT  DATA=NEW NODUPKEY;BY BOXNO SDBNAME IDNUMBER;RUN;
- PROC PRINT DATA=NEW(OBS=5);TITLE 'NEW LIST ONLY'; RUN;
-
- DATA COMP;
-      MERGE OLD(IN=O) NEW(IN=N);BY BOXNO SDBNAME IDNUMBER;
-      IF N AND (NOT O);
-      RUN;
- PROC SORT  DATA=COMP NODUPKEY;BY BRANCH BOXNO SDBNAME IDNUMBER;RUN;
- PROC PRINT DATA=COMP(OBS=5);TITLE 'COM LIST ONLY'; RUN;
-
- /*----------------------------------------------------------------*/
- /*    SET DATES FOR REPORT                                        */
- /*----------------------------------------------------------------*/
-DATA SRSDATE;
-   INFILE CTRLDATE;
-     INPUT @001  SRSYY    4.
-           @005  SRSMM    2.
-           @007  SRSDD    2.;
-   REPTDATE=MDY(SRSMM,SRSDD,SRSYY);
-   CALL SYMPUT('RDATE',PUT(REPTDATE,DDMMYY10.));
-RUN;
-
- /*----------------------------------------------------------------*/
- /* GENERATE REPORT                                                */
- /*----------------------------------------------------------------*/
-DATA _NULL_;
-   IF TRN=0 THEN DO;
-      BRANCH = '00000' ;
-      FILE RPTFILE PRINT HEADER=NEWPAGE;
-      PUT _PAGE_;
-      PUT  /@15    '**********************************';
-      PUT  /@15    '*                                *';
-      PUT  /@15    '*       NO MATCHING RECORDS      *';
-      PUT  /@15    '*                                *';
-      PUT  /@15    '**********************************';
-   END;
-
-   RETAIN TRN;
-  SET COMP NOBS=TRN END=EOF; BY BRANCH BOXNO SDBNAME IDNUMBER;
-  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
-  LINECNT = 0.;
-
-  IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
-     PUT _PAGE_;
-  END;
-
-    LINECNT + 6;
-    BRCNT + 1;
-
-  LINECNT + 1;
-  PUT  @2    BOXNO             $06.
-       @13   SDBNAME           $40.
-       @54   IDNUMBER          $20.;
-  BRCUST   + 1;
-  GRCUST   + 1;
-
-     IF EOF THEN DO;
-        PUT /@3    'GRAND TOTAL OF ALL BRANCHES = '
-             @35   GRCUST     9.;
-     END;
-      RETURN;
-
-  NEWPAGE :
-    PAGECNT+1;
-    LINECNT = 0;
-
-      PUT @1   'REPORT ID   : SDB/SCREEN/NEW'
-          @55  'PUBLIC BANK BERHAD'
-          @94  'PAGE        : ' PAGECNT   4.
-         /@1   'PROGRAM ID  : CISDBNRP'
-          @94  'REPORT DATE : '  "&RDATE"
-         /@1   'BRANCH      : ' BRANCH $5.
-          @050 'SDB NEW RECORDS SCREENING'
-         /@050 '==========================' ;
-      PUT  @2    'BOX NO'
-           @13   'NAME (HIRER S NAME)'
-           @54   'CUSTOMER ID';
-      PUT @001 '----------------------------------------'
-          @041 '----------------------------------------'
-          @081 '----------------------------------------'
-          @121 '----------';
-    LINECNT = 9;
-  RETURN;
-RUN;
