@@ -1,7 +1,8 @@
-FYI,
-PYARROW is suitable for small dataset below than 10 million raw data.
-DUCKDB is suitable for us to process our dataset. And the performance will better than PYARROW when process with the high value dataset.
+FYI:
+PyArrow is suitable for processing smaller datasets, typically below 10 million records.
+DuckDB is more suitable for our use case, as it provides better performance when handling large datasets.
 
-Conclusion for the CIAMLHRC:
-In my code got .arrow() this is one of the PYARROW function.
-PYARROW is using the RAM to process the data. So in this case CIAMLHRC is holding the RAM to cause the whole flow become slow performance compare with last week.
+Conclusion for the CIAMLHRC job:
+In my code, the .arrow() function is a DuckDB method that converts query results into a PyArrow Table.
+Since PyArrow stores data in memory (RAM), this operation causes the CIAMLHRC job to consume a large amount of memory.
+As a result, the overall workflow performance becomes slower compared to last week.
