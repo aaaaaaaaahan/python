@@ -3,60 +3,69 @@ duckdb for process input file
 pyarrow for output csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIKWSP01 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB36760
+
+//CIFCLBFL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB29022
 //*---------------------------------------------------------------------
 //DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=KWSP.EMPLOYER.FILE.LOAD,
+//DEL1     DD DSN=PERKESO.FCLBFILE.FULLLOAD,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*---------------------------------------------------------------------
-//*- PROCESS ACCOUNT INFORMATION
+//*- PROCESS EMPLOYER INFORMATION (FULL FILE)
 //*---------------------------------------------------------------------
-//KWSP01   EXEC SAS609
-//*WSPFILE DD DISP=SHR,DSN=KWSP.EMPLOYER.FILE.NEW
-//*WSPFILE DD DISP=SHR,DSN=KWSP.EMPLOYER.FILE.CUT5
-//KWSPFILE DD DISP=SHR,DSN=KWSP.EMPLOYER.FILE
-//OUTFILE  DD DSN=KWSP.EMPLOYER.FILE.LOAD,
+//FCLBFULL EXEC SAS609
+//FCLBFILE DD DISP=SHR,DSN=PERKESO.FCLBFILE.FULL
+//OUTFILE  DD DSN=PERKESO.FCLBFILE.FULLLOAD,
 //            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(TRK,(10,10),RLSE),
-//            DCB=(LRECL=118,BLKSIZE=0,RECFM=FB)
+//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
+//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
- DATA KWSP;
-    INFILE KWSPFILE END=LAST;
-      INPUT @01 REC_ID         $02.
-            @03 EMPLYR_NO       19.
-            @03 TOTAL_REC       10.        /* ESMR 2013-1180 */
-            @22 EMPLYR_NAME1   $40. ;      /* ESMR 2013-1180 */
-    /*      @22 ROB_ROC        $15.           ESMR 2013-1180 */
-    /*      @37 EMPLYR_NAME1   $40.           ESMR 2013-1180 */
-    /*      @77 EMPLYR_NAME2   $40.;          ESMR 2013-1180 */
-            EMPLYR_NAME1 = LEFT(EMPLYR_NAME1);
-            IF REC_ID EQ '' THEN ABORT 111;
-            IF REC_ID EQ '01' AND (EMPLYR_NO EQ 0 OR EMPLYR_NAME1 EQ '')
-               THEN ABORT 222;
-            IF LAST AND REC_ID NE '02' THEN ABORT 333;
-            IF LAST AND REC_ID = '02' THEN DO;
-               IF TOTAL_REC NE X THEN ABORT 444;
-               DELETE;
-            END;
-            IF REC_ID = '01' THEN X+1;     /* ESMR 2013-1180 */
-            IND_ORG='O';
+OPTION NOCENTER;
+ DATA FCLBFULL;
+    RETAIN X;
+    INFILE FCLBFILE END=LAST;
+      INPUT @01    RECORD_TYPE     $1.        /* VALUE H , D , F */
+            @02    NEW_EMPL_CODE   $12.
+            @02    TOTAL_REC       $7.        /* FOR FOOTER TOTAL*/
+            @14    EMPL_NAME       $100.      /* TRUNCATE TO 40 */
+            @114   NOTICEID        $17.
+            @131   AMOUNT          $14.;
+      IF RECORD_TYPE = 'H' THEN DELETE;
+      IF RECORD_TYPE = 'D' THEN X+1;
+      IF RECORD_TYPE = 'F' THEN DO;
+         TOTAL_REC_NUM = TOTAL_REC * 1;
+         IF TOTAL_REC_NUM NE X THEN ABORT 88;
+      END;
+
+      /* ----------------------------------------- */
+      /* INVALID NOTICE ID .NO RUNNING NUMBER      */
+      /* ----------------------------------------- */
+      IF SUBSTR(NOTICEID,15,3) = '   ' THEN DELETE;
+
+      /* ------------------------- */
+      /* CHECK FOR INCOMPLETE FILE */
+      /* ------------------------- */
+      IF RECORD_TYPE = 'F' THEN F+1;
+      IF LAST AND F = 0 THEN ABORT 77;
+
  RUN;
- PROC PRINT DATA=KWSP(OBS=15);TITLE 'KWSP FILE';RUN;
+ PROC PRINT DATA=FCLBFULL(OBS=100);TITLE 'FCLB FILE';RUN;
+ PROC SORT  DATA=FCLBFULL NODUPKEY ;BY NEW_EMPL_CODE
+                                       EMPL_NAME
+                                       NOTICEID
+                                       AMOUNT; RUN;
+ PROC SORT  DATA=FCLBFULL;BY NEW_EMPL_CODE NOTICEID EMPL_NAME AMOUNT;
+ RUN;
 
  DATA _NULL_;
-   SET KWSP;
+   SET FCLBFULL;BY NEW_EMPL_CODE NOTICEID EMPL_NAME AMOUNT;
    FILE OUTFILE;
-      ROB_ROC = ' ';            /* ESMR 2013-1180 */
-      EMPLYR_NAME2 = ' ' ;      /* ESMR 2013-1180 */
-      DELIM = '0D'X;
-      EMPLYR_NAME1 = COMPRESS(EMPLYR_NAME1,DELIM);
-      EMPLYR_NAME2 = COMPRESS(EMPLYR_NAME2,DELIM);
-      PUT @01 REC_ID         $02.
-          @03 IND_ORG        $01.
-          @04 EMPLYR_NO      Z19.
-          @23 ROB_ROC        $15.
-          @38 EMPLYR_NAME1   $40.
-          @78 EMPLYR_NAME2   $40.;
+      /* POSITION FOR NAME AND NOTICEID IS SWITCHED AS   */
+      /* IS BEING USED AS PRIMARY KEY FOR CIFCLBTT TABLE */
+      IF RECORD_TYPE = 'F' THEN DELETE;
+      PUT @001  NEW_EMPL_CODE   $12.
+          @013  NOTICEID        $17.
+          @030  EMPL_NAME       $100.
+          @130  AMOUNT          $14.;
    RETURN;
    RUN;
