@@ -1,108 +1,95 @@
 import duckdb
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
 import datetime
-import os
 import sys
+import os
 
-# =====================================
+# =====================================================
 # CONFIGURATION
-# =====================================
-input_parquet = "/host/cis/parquet/KWSP.EMPLOYER.FILE.parquet"
+# =====================================================
+input_parquet = "/path/to/PERKESO.FCLBFILE.FULL.parquet"  # Input Parquet file
+output_csv = "/path/to/PERKESO.FCLBFILE.FULLLOAD.csv"     # Output CSV file
 
-# =====================================
-# PROCESS WITH DUCKDB
-# =====================================
+# =====================================================
+# PROCESS FILE USING DUCKDB
+# =====================================================
 con = duckdb.connect()
 
-# Read input Parquet file into DuckDB table
+# Read parquet into DuckDB
 con.execute(f"""
-    CREATE OR REPLACE TABLE kwsp AS 
+    CREATE TABLE fclbfull AS 
     SELECT * FROM read_parquet('{input_parquet}')
 """)
 
-# Ensure expected columns exist
-required_cols = ["REC_ID", "EMPLYR_NO", "EMPLYR_NAME1"]
-for col in required_cols:
-    if col not in [c[0] for c in con.execute("DESCRIBE kwsp").fetchall()]:
-        sys.exit(f"ABORT 000: Missing required column {col}")
-
-# Clean and normalize columns
+# =====================================================
+# FILTERING & VALIDATION (same as SAS logic)
+# =====================================================
+# Remove header and footer
 con.execute("""
-    UPDATE kwsp
-    SET 
-        REC_ID = TRIM(CAST(REC_ID AS VARCHAR)),
-        EMPLYR_NO = COALESCE(CAST(EMPLYR_NO AS INTEGER), 0),
-        EMPLYR_NAME1 = TRIM(CAST(COALESCE(EMPLYR_NAME1, '') AS VARCHAR))
+    DELETE FROM fclbfull WHERE record_type = 'H'
 """)
 
-# =====================================
-# VALIDATION (simulate SAS ABORT)
-# =====================================
-# Check missing REC_ID
-null_rec = con.execute("SELECT COUNT(*) FROM kwsp WHERE REC_ID IS NULL OR REC_ID = ''").fetchone()[0]
-if null_rec > 0:
-    sys.exit("ABORT 111: REC_ID missing")
-
-# Check missing Employer Info for REC_ID=01
-missing_emp = con.execute("""
-    SELECT COUNT(*) FROM kwsp
-    WHERE REC_ID = '01' AND (EMPLYR_NO = 0 OR EMPLYR_NAME1 = '')
+# Count data records
+x = con.execute("""
+    SELECT COUNT(*) FROM fclbfull WHERE record_type = 'D'
 """).fetchone()[0]
-if missing_emp > 0:
-    sys.exit("ABORT 222: Missing Employer Info for REC_ID=01")
 
-# Check last record REC_ID
-last_rec_id = con.execute("SELECT REC_ID FROM kwsp ORDER BY rowid DESC LIMIT 1").fetchone()[0]
-if last_rec_id != "02":
-    sys.exit("ABORT 333: Last record is not 02")
+# Get footer total record
+footer_total = con.execute("""
+    SELECT CAST(total_rec AS INTEGER) 
+    FROM fclbfull 
+    WHERE record_type = 'F'
+""").fetchone()
 
-# Check TOTAL_REC consistency
-x_count = con.execute("SELECT COUNT(*) FROM kwsp WHERE REC_ID = '01'").fetchone()[0]
-try:
-    total_rec = con.execute("""
-        SELECT TOTAL_REC FROM kwsp ORDER BY rowid DESC LIMIT 1
-    """).fetchone()[0]
-except:
-    total_rec = x_count
+if footer_total:
+    total_rec_num = footer_total[0]
+    if total_rec_num != x:
+        print(f"ERROR: Footer total ({total_rec_num}) does not match data record count ({x}).")
+        sys.exit(88)
+else:
+    print("ERROR: No footer record found.")
+    sys.exit(77)
 
-if total_rec != x_count:
-    sys.exit("ABORT 444: TOTAL_REC mismatch")
-
-# =====================================
-# DERIVED & FIXED FIELDS
-# =====================================
-# Add or set default columns
+# Delete footer records
 con.execute("""
-    ALTER TABLE kwsp ADD COLUMN IF NOT EXISTS IND_ORG VARCHAR DEFAULT 'O';
-""")
-con.execute("""
-    ALTER TABLE kwsp ADD COLUMN IF NOT EXISTS ROB_ROC VARCHAR DEFAULT ' ';
-""")
-con.execute("""
-    ALTER TABLE kwsp ADD COLUMN IF NOT EXISTS EMPLYR_NAME2 VARCHAR DEFAULT ' ';
+    DELETE FROM fclbfull WHERE record_type = 'F'
 """)
 
-# Clean carriage returns
+# Remove invalid NOTICEID (missing last 3 chars)
 con.execute("""
-    UPDATE kwsp
-    SET 
-        EMPLYR_NAME1 = REPLACE(EMPLYR_NAME1, '\r', ''),
-        EMPLYR_NAME2 = REPLACE(EMPLYR_NAME2, '\r', '')
+    DELETE FROM fclbfull 
+    WHERE substr(noticeid, 15, 3) = '   '
 """)
 
-# =====================================
-# FINAL OUTPUT (no COPY)
-# =====================================
-# Fetch and print the processed output
-df_out = con.execute("""
+# =====================================================
+# SORTING (two sorts like SAS)
+# =====================================================
+con.execute("""
+    CREATE TABLE fclbfull_sorted AS
+    SELECT DISTINCT * FROM fclbfull
+    ORDER BY new_empl_code, noticeid, empl_name, amount
+""")
+
+# =====================================================
+# EXPORT TO CSV USING PYARROW
+# =====================================================
+# Fetch as Arrow Table
+arrow_table = con.execute("""
     SELECT 
-        REC_ID,
-        IND_ORG,
-        EMPLYR_NO,
-        ROB_ROC,
-        EMPLYR_NAME1,
-        EMPLYR_NAME2
-    FROM kwsp
-""").fetchdf()
+        new_empl_code AS NEW_EMPL_CODE,
+        noticeid AS NOTICEID,
+        empl_name AS EMPL_NAME,
+        amount AS AMOUNT
+    FROM fclbfull_sorted
+""").arrow()
 
-print("✅ KWSP processing complete. Output preview:")
-print(df_out)
+# Write to CSV (fixed columns, no header)
+csv.write_csv(
+    arrow_table,
+    output_csv,
+    write_options=csv.WriteOptions(include_header=False, delimiter='|')  # You can change delimiter if needed
+)
+
+print(f"✅ Output file created successfully: {output_csv}")
