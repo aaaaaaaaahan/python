@@ -1,54 +1,27 @@
-# ============================================================
-# FUNCTION: Get Current and Previous generation parquet 
-# ============================================================
-def get_prev_latest_parquet(dataset_name: str, debug: bool = False) -> Tuple[str, str]:
-    """
-    Simulate SAS GDG behavior for Hive-style parquet folders.
-    Example: CIS.SDB.MATCH.FULL -> finds (-1) and (0)
-    Returns (previous_path, latest_path)
-    """
-    base_path = os.path.join(python_hive, dataset_name)
-
-    if not os.path.exists(base_path):
-        raise FileNotFoundError(f"Base parquet path not found: {base_path}")
-
-    dated_folders = []
-
-    # Walk through Hive structure: year=YYYY/month=MM/day=DD/
-    for root, dirs, files in os.walk(base_path):
-        parquet_files = [os.path.join(root, f) for f in files if f.endswith(".parquet")]
-        if not parquet_files:
-            continue
-
-        # Extract year, month, day from folder path
-        match = re.search(r"year=(\d+).*month=(\d+).*day=(\d+)", root.replace("\\", "/"))
-        if not match:
-            continue
-
-        try:
-            y, m, d = map(int, match.groups())
-            date_val = datetime(y, m, d)
-            # Always pick the first parquet file found for that date
-            dated_folders.append((date_val, parquet_files[0]))
-        except ValueError:
-            continue  # skip invalid folder names
-
-    if not dated_folders:
-        raise FileNotFoundError(f"No parquet files found under {base_path}")
-
-    # Sort by date (latest first)
-    dated_folders.sort(key=lambda x: x[0], reverse=True)
-
-    if len(dated_folders) < 2:
-        raise ValueError(f"Not enough generations found for {dataset_name} (need at least 2 dated folders).")
-
-    # Select latest (0) and previous (-1)
-    latest = dated_folders[0][1]
-    previous = dated_folders[1][1]
-
-    if debug:
-        print(f"[DEBUG][GDG] Base Folder: {base_path}")
-        print(f"[DEBUG][GDG] Latest (0): {latest}")
-        print(f"[DEBUG][GDG] Previous (-1): {previous}")
-
-    return previous, latest
+1	import duckdb
+2	from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
+3	import datetime
+4	today = datetime.date.today()
+5	batch_date = today - datetime.timedelta(days=1)
+6	today_year, today_month, today_day = today.year, today.month, today.day
+7	year, month, day = batch_date.year, batch_date.month, batch_date.day
+8	con = duckdb.connect()
+9	custout = con.execute(f"""
+10	           '{batch_date.strftime("%Y%m%d")}' AS CUSTMNTDATE
+11	    FROM '{host_parquet_path("ALLCUST_FB.parquet")}'
+12	masscls = """
+13	""".format(year=year,month=month,day=day)
+14	masscls_bnk = """
+15	""".format(year=year,month=month,day=day)
+16	verify = """
+17	""".format(year=year,month=month,day=day)
+18	    "AMLHRC_EXTRACT_MASSCLS"            : masscls,
+19	    "AMLHRC_EXTRACT_MASSCLS_BNKSTFF"    : masscls_bnk,
+20	    "AMLHRC_EXTRACT_VERIFY"             : verify
+21	queries = {
+22	for name, query in queries.items():
+23	    parquet_path = parquet_output_path(name)
+24	    csv_path = csv_output_path(name)
+25	    con.execute(f"""
+26	    COPY ({query})
+27	    TO '{parquet_path}'
