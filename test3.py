@@ -2,16 +2,6 @@ import duckdb
 from CIS_PY_READER_PROD import host_parquet_path,parquet_output_path,csv_output_path
 import datetime
 
-#---------------------------------------------------------------------#
-# Original Program: CIAMLHRC                                          #
-#---------------------------------------------------------------------#
-# ESMR2024-1681                                                       #
-# -MASS CLOSE ODD ALERTS GENERATED ON CIS WITH HRC 002 AND 011 ONLY   #
-#                                                                     #
-# NOTE !!!  OUTPUT  TO 'CISU' IF FOR UAT                              #
-# NOTE !!!  OUTPUT  TO 'CIS' IF FOR PRODUCTION                        #
-#---------------------------------------------------------------------#
-
 # =========================
 #   DATE HANDLING
 # =========================
