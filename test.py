@@ -3,67 +3,56 @@ duckdb for process input file
 pyarrow for output csv
 assumed all the input file ady convert to parquet can directly use it
 
-
-//CIFCEISF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB29022
+//CIMYGSTD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB06679
 //*---------------------------------------------------------------------
 //DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=PERKESO.FCLBEISC.FULLLOAD,
+//DEL1     DD DSN=MYGST.DELTA.LOAD,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*---------------------------------------------------------------------
-//FCLBFULL EXEC SAS609
-//FCLBEISC DD DISP=SHR,DSN=PERKESO.FCLBEISC.FULL(0)
-//OUTFILE  DD DSN=PERKESO.FCLBEISC.FULLLOAD,
+//*- PROCESS ACCOUNT INFORMATION
+//*---------------------------------------------------------------------
+//GSTDELTA EXEC SAS609
+//MYGST    DD DISP=SHR,DSN=MYGST.DELTA
+//OUTFILE  DD DSN=MYGST.DELTA.LOAD,
 //            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=143,BLKSIZE=0,RECFM=FB)
+//            UNIT=SYSDA,SPACE=(CYL,(300,100),RLSE),
+//            DCB=(LRECL=226,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-OPTION NOCENTER;
- DATA FCLBFULL;
-    RETAIN X;
-    INFILE FCLBEISC END=LAST;
-      INPUT @01    RECORD_TYPE     $1.        /* VALUE H , D , F */
-            @02    NEW_EMPL_CODE   $12.
-            @02    TOTAL_REC       $7.        /* FOR FOOTER TOTAL*/
-            @14    EMPL_NAME       $100.      /* TRUNCATE TO 40 */
-            @114   NOTICEID        $17.
-            @131   AMOUNT          $14.;
-      IF RECORD_TYPE = 'H' THEN DELETE;
-      IF RECORD_TYPE = 'D' THEN X+1;
-      IF RECORD_TYPE = 'F' THEN DO;
-         TOTAL_REC_NUM = TOTAL_REC * 1;
-         IF TOTAL_REC_NUM NE X THEN ABORT 88;
-      END;
+ DATA GST;
+   INFILE MYGST DELIMITER = "|"  MISSOVER DSD LRECL=250;
+   INFORMAT IDENTIFIER               $1.  ;
+   INFORMAT MYGST_ACCTNO             $12. ;
+   INFORMAT TAXPAYER_ID              $50. ;
+   INFORMAT TAXPAYER_IDTYPE          $6.  ;
+   INFORMAT TAXPAYER_NAME            $150.;
+   INFORMAT REGISTER_DATE            $8.  ;
 
-      /* ----------------------------------------- */
-      /* INVALID NOTICE ID .NO RUNNING NUMBER      */
-      /* ----------------------------------------- */
-      IF SUBSTR(NOTICEID,15,3) = '   ' THEN DELETE;
+     FORMAT IDENTIFIER               $1.  ;
+     FORMAT MYGST_ACCTNO             $12. ;
+     FORMAT TAXPAYER_ID              $50. ;
+     FORMAT TAXPAYER_IDTYPE          $6.  ;
+     FORMAT TAXPAYER_NAME            $150.;    /* ORIGINAL 255 */
+     FORMAT REGISTER_DATE            $8.  ;
 
-      /* ------------------------- */
-      /* CHECK FOR INCOMPLETE FILE */
-      /* ------------------------- */
-      IF RECORD_TYPE = 'F' THEN F+1;
-      IF LAST AND F = 0 THEN ABORT 77;
-
+      INPUT  IDENTIFIER       $
+             MYGST_ACCTNO     $
+             TAXPAYER_ID      $
+             TAXPAYER_IDTYPE  $
+             TAXPAYER_NAME    $
+             REGISTER_DATE    $ ;
+      IF IDENTIFIER = 'B';
  RUN;
- PROC PRINT DATA=FCLBFULL(OBS=100);TITLE 'FCLB FILE';RUN;
- PROC SORT  DATA=FCLBFULL NODUPKEY ;BY NEW_EMPL_CODE
-                                       EMPL_NAME
-                                       NOTICEID
-                                       AMOUNT; RUN;
- PROC SORT  DATA=FCLBFULL;BY NEW_EMPL_CODE NOTICEID EMPL_NAME AMOUNT;
- RUN;
+ PROC PRINT DATA=GST(OBS=15);TITLE 'GST FILE';RUN;
 
  DATA _NULL_;
-   SET FCLBFULL;BY NEW_EMPL_CODE NOTICEID EMPL_NAME AMOUNT;
+   SET GST;
    FILE OUTFILE;
-      /* POSITION FOR NAME AND NOTICEID IS SWITCHED AS   */
-      /* IS BEING USED AS PRIMARY KEY FOR CIFCEIST TABLE */
-      IF RECORD_TYPE = 'F' THEN DELETE;
-      PUT @001  NEW_EMPL_CODE   $12.
-          @013  NOTICEID        $17.
-          @030  EMPL_NAME       $100.
-          @130  AMOUNT          $14.;
+      PUT @001  MYGST_ACCTNO          $12.
+          @013  TAXPAYER_ID           $50.
+          @063  TAXPAYER_IDTYPE       $6.
+          @069  TAXPAYER_NAME         $150.
+          @219  REGISTER_DATE         $8.  ;
+
    RETURN;
    RUN;
