@@ -1,102 +1,113 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.csv as csv
-import pyarrow.parquet as pq
-import os
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
 import datetime
+import sys
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-input_parquet = "/host/cis/parquet/PERKESO_FCLBEISC_FULL.parquet"
-output_csv = "/host/cis/output/PERKESO_FCLBEISC_FULLLOAD.csv"
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 
-# ============================================================
-# DUCKDB PROCESSING
-# ============================================================
-con = duckdb.connect(database=':memory:')
+# =====================================================
+# PROCESS FILE USING DUCKDB
+# =====================================================
+con = duckdb.connect()
 
 # Read parquet into DuckDB
 con.execute(f"""
-    CREATE TABLE fclb AS 
+    CREATE TABLE fclbfull AS 
     SELECT 
-        record_type,
-        new_empl_code,
-        total_rec,
-        empl_name,
-        noticeid,
-        amount
-    FROM read_parquet('{input_parquet}')
+        RECORD_TYPE,  
+        NEW_EMPL_CODE,
+        TOTAL_REC,    
+        EMPL_NAME,    
+        NOTICEID,     
+        AMOUNT        
+    FROM '{host_parquet_path("PERKESO_FCLBFILE_FULL.parquet")}'
 """)
 
-# ============================================================
-# 1. FILTER HEADERS AND FOOTERS
-# ============================================================
-# Remove Header
-con.execute("DELETE FROM fclb WHERE record_type = 'H'")
+# =====================================================
+# FILTERING & VALIDATION (same as SAS logic)
+# =====================================================
+# Remove header and footer
+con.execute("""
+    DELETE FROM fclbfull WHERE record_type = 'H'
+""")
 
-# Count Data Records
-data_count = con.execute("SELECT COUNT(*) FROM fclb WHERE record_type = 'D'").fetchone()[0]
+# Count data records
+x = con.execute("""
+    SELECT COUNT(*) FROM fclbfull WHERE record_type = 'D'
+""").fetchone()[0]
 
-# ============================================================
-# 2. VALIDATE FOOTER TOTAL
-# ============================================================
+# Get footer total record
 footer_total = con.execute("""
     SELECT CAST(total_rec AS INTEGER) 
-    FROM fclb WHERE record_type = 'F'
+    FROM fclbfull 
+    WHERE record_type = 'F'
 """).fetchone()
 
 if footer_total:
-    footer_total = footer_total[0]
-    if footer_total != data_count:
-        raise ValueError(f"Record count mismatch! Expected {footer_total}, found {data_count}. (Abort 88)")
+    total_rec_num = footer_total[0]
+    if total_rec_num != x:
+        print(f"ERROR: Footer total ({total_rec_num}) does not match data record count ({x}).")
+        sys.exit(88)
 else:
-    raise ValueError("No footer record found! (Abort 77)")
+    print("ERROR: No footer record found.")
+    sys.exit(77)
 
-# ============================================================
-# 3. REMOVE FOOTER RECORD
-# ============================================================
-con.execute("DELETE FROM fclb WHERE record_type = 'F'")
-
-# ============================================================
-# 4. INVALID NOTICE ID CHECK
-# ============================================================
-# Remove records with blank last 3 chars of NOTICEID
+# Delete footer records
 con.execute("""
-    DELETE FROM fclb 
-    WHERE SUBSTR(noticeid, 15, 3) = '   '
+    DELETE FROM fclbfull WHERE record_type = 'F'
 """)
 
-# ============================================================
-# 5. SORT RECORDS
-# ============================================================
-sorted_table = con.execute("""
-    SELECT DISTINCT new_empl_code, noticeid, empl_name, amount
-    FROM fclb
+# Remove invalid NOTICEID (missing last 3 chars)
+con.execute("""
+    DELETE FROM fclbfull 
+    WHERE substr(noticeid, 15, 3) = '   '
+""")
+
+# =====================================================
+# SORTING (two sorts like SAS)
+# =====================================================
+# POSITION FOR NAME AND NOTICEID IS SWITCHED AS  
+# IS BEING USED AS PRIMARY KEY FOR CIFCLBTT TABLE
+con.execute("""
+    CREATE TABLE fclbfull_sorted AS
+    SELECT DISTINCT  
+        NEW_EMPL_CODE,
+        NOTICEID, 
+        EMPL_NAME,        
+        AMOUNT 
+    FROM fclbfull
     ORDER BY new_empl_code, noticeid, empl_name, amount
-""").arrow()
+""")
 
-# ============================================================
-# 6. OUTPUT FILE (CSV)
-# ============================================================
-# Align columns according to SAS PUT statement (fixed order)
-# Positions:
-# @001  NEW_EMPL_CODE   $12.
-# @013  NOTICEID        $17.
-# @030  EMPL_NAME       $100.
-# @130  AMOUNT          $14.
+# =====================================================
+# Output
+# =====================================================
+final = """
+    SELECT 
+        *
+        ,{year1} AS year
+        ,{month1} AS month
+        ,{day1} AS day
+    FROM fclbfull_sorted
+""".format(year1=year1,month1=month1,day1=day1)
 
-formatted_rows = []
-for row in sorted_table.to_pylist():
-    new_empl_code = str(row["new_empl_code"] or "").ljust(12)
-    noticeid = str(row["noticeid"] or "").ljust(17)
-    empl_name = str(row["empl_name"] or "").ljust(100)
-    amount = str(row["amount"] or "").rjust(14)
-    formatted_rows.append(new_empl_code + noticeid + empl_name + amount)
+queries = {
+    "PERKESO_FCLBEISC_FULLLOAD"            : final
+}
 
-# Write to CSV (fixed-width style, single column)
-table = pa.table({'record': formatted_rows})
-csv.write_csv(table, output_csv)
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-print(f"✅ Output written to {output_csv}")
-print(f"Total valid records: {len(formatted_rows)}")
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
