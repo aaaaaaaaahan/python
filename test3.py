@@ -1,14 +1,56 @@
-for name, query in queries.items():
-    arrow_table = con.execute(query).arrow()
+import duckdb
+import pyarrow as pa
+import pyarrow.csv as csv
+import pyarrow.parquet as pq
+import os
+from datetime import datetime
 
-    pq.write_to_dataset(
-        table=arrow_table,
-        root_path=parquet_output_path(name),
-        partition_cols=['year', 'month', 'day'],
-        compression='snappy'
-    )
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+host_input_path = "/host/cis/parquet"  # input parquet folder
+parquet_input = f"{host_input_path}/MYGST_DELTA.parquet"  # assumed converted parquet
+csv_output_path = "/host/cis/output"
+output_csv = f"{csv_output_path}/MYGST_DELTA_LOAD.csv"
 
-    csv.write_csv(
-        arrow_table,
-        f"{csv_output_path(name)}{name}_{year1}{month1:02}{day1:02}.csv"
-    )
+# Ensure output directory exists
+os.makedirs(csv_output_path, exist_ok=True)
+
+# ==========================================================
+# DUCKDB PROCESSING
+# ==========================================================
+con = duckdb.connect()
+
+# Register the parquet file for query
+con.register("mygst_parquet", parquet_input)
+
+# Equivalent to SAS IF IDENTIFIER='B';
+query = """
+SELECT 
+    MYGST_ACCTNO,
+    TAXPAYER_ID,
+    TAXPAYER_IDTYPE,
+    TAXPAYER_NAME,
+    REGISTER_DATE
+FROM mygst_parquet
+WHERE IDENTIFIER = 'B'
+"""
+
+# Execute the query
+result_arrow = con.execute(query).arrow()
+
+# ==========================================================
+# OPTIONAL: PREVIEW FIRST 15 ROWS (Equivalent to PROC PRINT)
+# ==========================================================
+print("Preview first 15 rows:")
+print(result_arrow.slice(0, 15).to_pandas())
+
+# ==========================================================
+# WRITE OUTPUT USING PYARROW
+# ==========================================================
+csv.write_csv(
+    result_arrow,
+    output_csv
+)
+
+print(f"✅ Output CSV generated: {output_csv}")
