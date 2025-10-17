@@ -1,6 +1,11 @@
+from typing import List, Union
+import os
+import re
+from datetime import datetime
+
 def get_gdg_generations(
     dataset_name: str,
-    generations: int | List[int] | str = 2,
+    generations: Union[int, List[int], str] = 2,
     debug: bool = False
 ) -> List[str]:
     """
