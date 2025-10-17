@@ -1,8 +1,10 @@
-FYI:
-PyArrow is suitable for processing smaller datasets, typically below 10 million records.
-DuckDB is more suitable for our use case, as it provides better performance when handling large datasets.
-
-Conclusion for the CIAMLHRC job:
-In my code, the .arrow() function is a DuckDB method that converts query results into a PyArrow Table.
-Since PyArrow stores data in memory (RAM), this operation causes the CIAMLHRC job to consume a large amount of memory.
-As a result, the overall workflow performance becomes slower compared to last week.
+H|100000000010|TXP0012354|PAS|JULIET SOLUTIONS|20231002
+B|100000000001|TXP0012345|IC|ALPHA ENGINEERING SDN BHD|20230115
+B|100000000002|TXP0012346|BRN|BETA SERVICES ENTERPRISE|20230220
+D|100000000009|TXP0012353|IC|INDIGO RESOURCES|20230915
+B|100000000003|TXP0012347|PAS|CHARLIE CONSTRUCTION WORKS|20230318
+B|100000000004|TXP0012348|IC|DELTA TECHNOLOGIES|20230425
+F|999999999999||||         
+B|100000000005|TXP0012349|BRN|ECHO TRADING SDN BHD|20230509
+B|100000000006|TXP0012350|PAS|FOXTROT GLOBAL|20230630
+B|100000000007|TXP0012351|IC|GOLF MANUFACTURING|20230710
