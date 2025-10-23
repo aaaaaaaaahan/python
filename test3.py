@@ -1,71 +1,12 @@
-# ============================================================
-# FUNCTION: host_parquet_path_enhanced
-# ============================================================
-def host_parquet_path_enhanced(
-    filename: str,
-    generations: Union[int, str] = 1,
-    debug: bool = False
-) -> List[str]:
-    """
-    Enhanced version of host_parquet_path:
-    Retrieve the latest and previous available dated parquet files.
-
-    Parameters:
-      filename: base file name (e.g. data_test.parquet)
-      generations:
-        * int  -> number of generations (1 = latest only, 2 = latest+previous, etc.)
-        * 'all' -> return all generations (latest + all previous)
-      debug: if True, print debug info
-
-    Returns:
-      List of parquet file paths (ordered from newest to oldest)
-
-    Example:
-      host_parquet_path_enhanced("data_test.parquet", generations=2)
-        -> [latest_file, previous_file]
-      host_parquet_path_enhanced("data_test.parquet", generations='all')
-        -> [latest_file, prev1, prev2, prev3, ...]
-    """
-    base, ext = os.path.splitext(filename)
-
-    # exact match first
-    full_path = os.path.join(host_input, filename)
-    if os.path.exists(full_path):
-        return [full_path]
-
-    # --- find all files that match base_YYYYMMDD.parquet ---
-    pattern = re.compile(rf"^{re.escape(base)}_(\d{{8}}){re.escape(ext)}$")
-    candidates = []
-    for f in os.listdir(host_input):
-        match = pattern.match(f)
-        if match:
-            date_str = match.group(1)
-            try:
-                date_val = datetime.strptime(date_str, "%Y%m%d")
-                candidates.append((date_val, f))
-            except ValueError:
-                continue
-
-    if not candidates:
-        raise FileNotFoundError(f"No file found for base '{base}' in {host_input}")
-
-    # --- sort descending by date ---
-    candidates.sort(key=lambda x: x[0], reverse=True)
-
-    # --- determine how many generations to return ---
-    if isinstance(generations, str) and generations.lower() == "all":
-        selected = candidates
-    elif isinstance(generations, int) and generations > 0:
-        selected = candidates[:generations]
-    else:
-        raise ValueError("Invalid 'generations' argument. Use positive int or 'all'.")
-
-    # --- build full paths ---
-    selected_paths = [os.path.join(host_input, f[1]) for f in selected]
-
-    if debug:
-        print(f"[DEBUG] Found {len(candidates)} total generations for '{base}'")
-        for i, (dt, f) in enumerate(selected):
-            print(f"  -> Gen({i}): {f} ({dt.strftime('%Y-%m-%d')})")
-
-    return selected_paths
+H000000000000HEADER RECORD FOR PERKESO EMPLOYER FILE                                                                                   
+D123456789001EMP000001EMPLOYER ONE BERHAD                                                      ACR0000010000000001     0000000000123456     
+D123456789002EMP000002EMPLOYER TWO SDN BHD                                                     ACR0000010000000002     0000000000234567     
+D123456789003EMP000003EMPLOYER THREE SDN BHD                                                   ACR0000010000000003     0000000000345678     
+D123456789004EMP000004EMPLOYER FOUR BERHAD                                                     ACR0000010000000004     0000000000456789     
+D123456789005EMP000005EMPLOYER FIVE ENTERPRISE                                                 XXX0000010000000005     0000000000567890     
+D123456789006EMP000006EMPLOYER SIX BERHAD                                                      ACR0000010000000006     0000000000678901     
+D123456789007EMP000007EMPLOYER SEVEN SDN BHD                                                   ACR0000010000000007     0000000000789012     
+D123456789008EMP000008EMPLOYER EIGHT SDN BHD                                                   ACR0000010000000008     0000000000890123     
+D123456789009EMP000009EMPLOYER NINE CORPORATION                                                ACR0000010000000009     0000000000901234     
+D123456789010EMP000010EMPLOYER TEN PLT                                                         ACR0000010000000010     0000000001012345     
+F0000010                                                                                       
