@@ -13,7 +13,7 @@ year1, month1, day1 = batch_date.year, batch_date.month, batch_date.day
 # DUCKDB Connection
 # =====================================================
 con = duckdb.connect()
-emplfile = host_latest_prev_parquet('PERKESO_EMPLFILE_FULL', generations=10)
+emplfile = host_latest_prev_parquet('PERKESO_EMPLFILE_FULL.parquet', generations=10)
 
 # =====================================================
 # PART 1 - VALIDATION ONLY (NO OUTPUT)
