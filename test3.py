@@ -1,73 +1,71 @@
-import os
-import re
-from datetime import datetime
-from typing import List
-
-def get_hive_parquet(dataset_name: str, generations: int | List[int] | str = 1, debug: bool = False) -> List[str]:
+# ============================================================
+# FUNCTION: host_parquet_path_enhanced
+# ============================================================
+def host_parquet_path_enhanced(
+    filename: str,
+    generations: Union[int, str] = 1,
+    debug: bool = False
+) -> List[str]:
     """
-    Enhanced version of get_hive_parquet():
-    - Scans available parquet folders (even if not daily)
-    - Returns latest and previous generations safely
-    - Supports abc[0], abc[1], ...
-    
+    Enhanced version of host_parquet_path:
+    Retrieve the latest and previous available dated parquet files.
+
     Parameters:
-        dataset_name : str
-            Dataset folder name under /host/dp/parquet
-        generations : int | List[int] | str
-            - 1 → latest only
-            - 3 → latest + 2 previous
-            - 'latest' or [0] → same as 1
-            - [0,1,3] → pick specific generations (latest, prev, 3rd prev)
-        debug : bool
-            If True, print debug info
+      filename: base file name (e.g. data_test.parquet)
+      generations:
+        * int  -> number of generations (1 = latest only, 2 = latest+previous, etc.)
+        * 'all' -> return all generations (latest + all previous)
+      debug: if True, print debug info
+
+    Returns:
+      List of parquet file paths (ordered from newest to oldest)
+
+    Example:
+      host_parquet_path_enhanced("data_test.parquet", generations=2)
+        -> [latest_file, previous_file]
+      host_parquet_path_enhanced("data_test.parquet", generations='all')
+        -> [latest_file, prev1, prev2, prev3, ...]
     """
+    base, ext = os.path.splitext(filename)
 
-    base_path = f"/host/dp/parquet/{dataset_name}"
-    if not os.path.exists(base_path):
-        raise FileNotFoundError(f"Dataset path not found: {base_path}")
+    # exact match first
+    full_path = os.path.join(host_input, filename)
+    if os.path.exists(full_path):
+        return [full_path]
 
-    # Find all folders matching year=YYYY/month=MM/day=DD
-    parquet_files = []
-    date_pattern = re.compile(r"year=(\d{4})/month=(\d{1,2})/day=(\d{1,2})")
+    # --- find all files that match base_YYYYMMDD.parquet ---
+    pattern = re.compile(rf"^{re.escape(base)}_(\d{{8}}){re.escape(ext)}$")
+    candidates = []
+    for f in os.listdir(host_input):
+        match = pattern.match(f)
+        if match:
+            date_str = match.group(1)
+            try:
+                date_val = datetime.strptime(date_str, "%Y%m%d")
+                candidates.append((date_val, f))
+            except ValueError:
+                continue
 
-    for root, _, files in os.walk(base_path):
-        for f in files:
-            if f.endswith(".parquet"):
-                match = date_pattern.search(root)
-                if match:
-                    y, m, d = map(int, match.groups())
-                    dt = datetime(y, m, d)
-                    parquet_files.append((dt, os.path.join(root, f)))
+    if not candidates:
+        raise FileNotFoundError(f"No file found for base '{base}' in {host_input}")
 
-    if not parquet_files:
-        raise FileNotFoundError(f"No parquet files found under {base_path}")
+    # --- sort descending by date ---
+    candidates.sort(key=lambda x: x[0], reverse=True)
 
-    # Sort by date (latest first)
-    parquet_files.sort(key=lambda x: x[0], reverse=True)
-
-    # Extract only paths
-    sorted_files = [p for _, p in parquet_files]
-
-    if debug:
-        print(f"[DEBUG] Found total {len(sorted_files)} parquet files for {dataset_name}.")
-        for i, (dt, p) in enumerate(parquet_files):
-            print(f"  [{i}] {dt.strftime('%Y-%m-%d')} → {p}")
-
-    # Handle generations argument
-    if isinstance(generations, str) and generations.lower() == "latest":
-        selected_indices = [0]
-    elif isinstance(generations, int):
-        selected_indices = list(range(min(generations, len(sorted_files))))
-    elif isinstance(generations, list):
-        selected_indices = [i for i in generations if i < len(sorted_files)]
+    # --- determine how many generations to return ---
+    if isinstance(generations, str) and generations.lower() == "all":
+        selected = candidates
+    elif isinstance(generations, int) and generations > 0:
+        selected = candidates[:generations]
     else:
-        raise ValueError("Invalid 'generations' value")
+        raise ValueError("Invalid 'generations' argument. Use positive int or 'all'.")
 
-    selected_files = [sorted_files[i] for i in selected_indices]
+    # --- build full paths ---
+    selected_paths = [os.path.join(host_input, f[1]) for f in selected]
 
     if debug:
-        print(f"[DEBUG] Selected indices: {selected_indices}")
-        for i, path in enumerate(selected_files):
-            print(f"  → {path}")
+        print(f"[DEBUG] Found {len(candidates)} total generations for '{base}'")
+        for i, (dt, f) in enumerate(selected):
+            print(f"  -> Gen({i}): {f} ({dt.strftime('%Y-%m-%d')})")
 
-    return selected_files
+    return selected_paths
