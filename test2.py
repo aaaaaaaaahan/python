@@ -1,1 +1,1 @@
-/host/dp/parquet/year=2025/month=10/day=21/xyz.parquet
+ypeError: unsupported operand type(s) for |: 'type' and '_GenericAlias'
