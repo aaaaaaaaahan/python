@@ -1,153 +1,153 @@
 import duckdb
-import datetime
 import pyarrow.parquet as pq
 import pyarrow as pa
-import pandas as pd
 import os
 
 # ============================================================
-# CONFIGURATION
+# PATH CONFIGURATION
 # ============================================================
-input_path = "/host/cis/parquet/input"
-output_path = "/host/cis/output"
+input_paths = [
+    '/host/cis/parquet/sas_parquet/PBCS_ACCT33.parquet',
+    '/host/cis/parquet/sas_parquet/PBCS_ACCT34.parquet',
+    '/host/cis/parquet/sas_parquet/PBCS_ACCT54.parquet',
+    '/host/cis/parquet/sas_parquet/PBCS_ACCT55.parquet'
+]
 
-ctrl_file = f"{input_path}/CTRLDATE.parquet"
-desc_file = f"{input_path}/CIRHODCT.parquet"
-ctrl_tbl_file = f"{input_path}/CIRHOBCT.parquet"
-dtl_tbl_file = f"{input_path}/CIRHOLDT.parquet"
+output_base = '/host/cis/output/creditcd'
+os.makedirs(output_base, exist_ok=True)
 
-out_parquet = f"{output_path}/RHOLD_LIST_TOPURGE.parquet"
-out_csv = f"{output_path}/RHOLD_LIST_TOPURGE.csv"
-
-# ============================================================
-# CONNECT DUCKDB
-# ============================================================
-con = duckdb.connect(database=':memory:')
+parquet_out = f'{output_base}/acctbal.parquet'
+csv_out = f'{output_base}/acctbal.csv'
 
 # ============================================================
-# STEP 1: LOAD DATES
+# DUCKDB CONNECTION
 # ============================================================
-today = datetime.date.today()
-db2date = today.strftime("%Y-%m-%d")
-todaysas = today.strftime("%Y%m%d")
+con = duckdb.connect()
 
-print(f"DB2DATE={db2date}")
-
-# ============================================================
-# STEP 2: LOAD DESCRIPTION DATA
-# ============================================================
+# UNION ALL INPUT FILES
 con.execute(f"""
-CREATE OR REPLACE TABLE CIRHODCT AS 
-SELECT * FROM read_parquet('{desc_file}')
+CREATE OR REPLACE TABLE acct_raw AS
+SELECT * FROM read_parquet({input_paths})
 """)
 
-# Split into CLASS, DEPT, NATURE
+# ============================================================
+# DATA TRANSFORMATION
+# ============================================================
+# Simulate SAS data step logic
 con.execute("""
-CREATE OR REPLACE TABLE CLASS AS
-SELECT KEY_CODE AS CLASS_CODE, KEY_DESCRIBE AS CLASS_DESC
-FROM CIRHODCT WHERE KEY_ID = 'CLASS '
+CREATE OR REPLACE TABLE acctf1 AS
+SELECT
+    RIGHT('0000000000000000' || CAST(SUBSTRING(PRIMCARD, 1, 16) AS VARCHAR), 16) AS PRIMCARD,
+    RIGHT('0000000000000000' || CAST(SUBSTRING(GUARNTOR, 1, 16) AS VARCHAR), 16) AS GUARNTOR,
+    OUTSTBAL,
+    CASE WHEN OUTSTBALS = '-' THEN OUTSTBAL * -1 ELSE OUTSTBAL END AS OUTSTBAL_FIX,
+    CASE WHEN AUTHLIMS = '-' THEN AUTHLIM * -1 ELSE AUTHLIM END AS AUTHLIM_FIX,
+    AUTHLIM,
+    AUTHLIMS,
+    PRODTYPE,
+    SUBSTRING(PRIMCARD, 1, 14) AS CARDACCT,
+    CASE 
+        WHEN GUARNTOR IS NOT NULL AND GUARNTOR <> '0000000000000000'
+        THEN GUARNTOR
+        ELSE PRIMCARD
+    END AS SORT_KEY,
+    OUTSTBAL + AUTHLIM AS TOTALBAL
+FROM acct_raw
+WHERE PRIMCARD <> '0000000000000000'
+""")
+
+# ============================================================
+# AGGREGATE PRIMARY BALANCE
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE acctf2 AS
+SELECT
+    CARDACCT,
+    SUM(OUTSTBAL_FIX + AUTHLIM_FIX) AS PRIMBAL,
+    COUNT(*) AS FREQ
+FROM acctf1
+GROUP BY CARDACCT
+""")
+
+# ============================================================
+# MERGE SUMMARY BACK TO DETAIL
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE temp1 AS
+SELECT f1.*, f2.PRIMBAL
+FROM acctf1 f1
+LEFT JOIN acctf2 f2 USING (CARDACCT)
+""")
+
+# ============================================================
+# OUTPUT DATASET (TEMPOUT)
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE tempoUT AS
+SELECT
+    '033' AS RECORD_TYPE,
+    PRIMPROD,
+    PRIMCARD,
+    SUPPCARD,
+    OUTSTBAL_FIX AS OUTSTBAL,
+    AUTHLIM_FIX AS AUTHLIM,
+    OUTSTBAL_FIX + AUTHLIM_FIX AS TOTALBAL,
+    CASE 
+        WHEN PRODTYPE IN ('C','D') THEN PRIMBAL * -1
+        ELSE PRIMBAL
+    END AS PRIMBAL,
+    PRODTYPE,
+    'UNQ' AS INDICATOR
+FROM temp1
+""")
+
+# ============================================================
+# UNIQUE / DUPLICATE SPLIT (ICETOOL equivalent)
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE acctbal_unq AS
+SELECT DISTINCT ON (CARDACCT) *
+FROM tempoUT
 """)
 
 con.execute("""
-CREATE OR REPLACE TABLE NATURE AS
-SELECT KEY_CODE AS NATURE_CODE, KEY_DESCRIBE AS NATURE_DESC
-FROM CIRHODCT WHERE KEY_ID = 'NATURE'
+CREATE OR REPLACE TABLE acctbal_dup AS
+SELECT t.*
+FROM tempoUT t
+JOIN (
+    SELECT CARDACCT FROM tempoUT GROUP BY CARDACCT HAVING COUNT(*) > 1
+) d USING (CARDACCT)
 """)
 
+# Update duplicate indicator
 con.execute("""
-CREATE OR REPLACE TABLE DEPT AS
-SELECT KEY_CODE AS DEPT_CODE, KEY_DESCRIBE AS DEPT_DESC
-FROM CIRHODCT WHERE KEY_ID = 'DEPT  '
+CREATE OR REPLACE TABLE acctbal_dup2 AS
+SELECT
+    RECORD_TYPE, PRIMPROD, PRIMCARD, SUPPCARD,
+    OUTSTBAL, AUTHLIM, TOTALBAL, PRIMBAL, PRODTYPE,
+    'DUP' AS INDICATOR
+FROM acctbal_dup
 """)
 
 # ============================================================
-# STEP 3: CONTROL LIST
+# COMBINE UNIQUE + DUPLICATE & OMIT SUPP CARDS
 # ============================================================
-con.execute(f"""
-CREATE OR REPLACE TABLE CIRHOBCT AS 
-SELECT * FROM read_parquet('{ctrl_tbl_file}')
-""")
-
-# Apply SAS filter logic
 con.execute("""
-CREATE OR REPLACE TABLE CONTROL AS
-SELECT * FROM CIRHOBCT
-WHERE (
- (CLASS_CODE = 'CLS0000003' 
-  AND NATURE_CODE IN (
-    'NAT0000011','NAT0000012','NAT0000013','NAT0000014','NAT0000015','NAT0000016','NAT0000017',
-    'NAT0000018','NAT0000019','NAT0000020','NAT0000021','NAT0000022','NAT0000025','NAT0000026',
-    'NAT0000046','NAT0000047','NAT0000048','NAT0000049','NAT0000050','NAT0000051','NAT0000052',
-    'NAT0000053','NAT0000054','NAT0000055','NAT0000056','NAT0000057','NAT0000058','NAT0000059',
-    'NAT0000060','NAT0000061','NAT0000062')
-  AND DEPT_CODE IN ('BRD','PBCSS')
- )
- OR
- (CLASS_CODE = 'CLS0000004'
-  AND NATURE_CODE IN ('NAT0000027','NAT0000028')
-  AND DEPT_CODE = 'AMLCFT')
-)
-""")
-
-# ============================================================
-# STEP 4: DETAIL LIST
-# ============================================================
-con.execute(f"""
-CREATE OR REPLACE TABLE CIRHOLDT AS 
-SELECT * FROM read_parquet('{dtl_tbl_file}')
-""")
-
-con.execute(f"""
-CREATE OR REPLACE TABLE DETAIL AS
-SELECT *,
-       '{db2date}' AS PURGEDATE,
-       CAST(DTL_LASTMNT_DATE AS DATE) AS LAST_DATE
-FROM CIRHOLDT
-""")
-
-# Purge logic (simulate SAS one-year / two-year)
-con.execute(f"""
-CREATE OR REPLACE TABLE DETAIL_FILTERED AS
+CREATE OR REPLACE TABLE acctbal_prim AS
 SELECT *
-FROM DETAIL
-WHERE (
-  (CLASS_ID = '0000000075' AND DATE_ADD(LAST_DATE, INTERVAL 365 DAY) < '{db2date}')
-  OR (DATE_ADD(LAST_DATE, INTERVAL 732 DAY) < '{db2date}')
+FROM (
+    SELECT * FROM acctbal_unq
+    UNION ALL
+    SELECT * FROM acctbal_dup2
 )
+WHERE (SUPPCARD IS NULL OR TRIM(SUPPCARD) = '')
+ORDER BY CARDACCT
 """)
 
 # ============================================================
-# STEP 5: MERGE DETAIL + CONTROL
+# EXPORT OUTPUTS
 # ============================================================
-con.execute("""
-CREATE OR REPLACE TABLE FIRST AS
-SELECT d.*, c.GUIDE_CODE, c.CLASS_CODE, c.NATURE_CODE, c.DEPT_CODE
-FROM DETAIL_FILTERED d
-JOIN CONTROL c USING (CLASS_ID)
-""")
+con.execute(f"COPY acctbal_prim TO '{parquet_out}' (FORMAT 'parquet')")
+con.execute(f"COPY acctbal_prim TO '{csv_out}' (HEADER TRUE)")
 
-# ============================================================
-# STEP 6: JOIN WITH DESCRIPTION TABLES
-# ============================================================
-con.execute("""
-CREATE OR REPLACE TABLE FULL_DESC AS
-SELECT f.*,
-       cls.CLASS_DESC,
-       nat.NATURE_DESC,
-       dep.DEPT_DESC
-FROM FIRST f
-LEFT JOIN CLASS cls USING (CLASS_CODE)
-LEFT JOIN NATURE nat USING (NATURE_CODE)
-LEFT JOIN DEPT dep USING (DEPT_CODE)
-""")
-
-# ============================================================
-# STEP 7: OUTPUT
-# ============================================================
-# Export to Parquet and CSV
-con.execute(f"COPY FULL_DESC TO '{out_parquet}' (FORMAT PARQUET)")
-con.execute(f"COPY FULL_DESC TO '{out_csv}' (HEADER, DELIMITER ',')")
-
-print(f"✅ Process completed successfully.")
-print(f"Output Parquet: {out_parquet}")
-print(f"Output CSV: {out_csv}")
+print(f"✅ ETL complete. Output saved to:\n{parquet_out}\n{csv_out}")
