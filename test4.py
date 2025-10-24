@@ -57,22 +57,16 @@ def host_latest_prev_parquet(
     Enhanced version of host_parquet_path:
     Retrieve the latest and previous available dated parquet files.
 
-    Parameters:
-      filename: base file name (e.g. data_test.parquet)
-      generations:
-        * int  -> number of generations (1 = latest only, 2 = latest+previous, etc.)
-        * 'all' -> return all generations (latest + all previous)
-      debug: if True, print debug info
-
-    Returns:
-      List of parquet file paths (ordered from newest to oldest)
+    You can now call with or without '.parquet' extension.
 
     Example:
-      host_parquet_path_enhanced("data_test.parquet", generations=2)
-        -> [latest_file, previous_file]
-      host_parquet_path_enhanced("data_test.parquet", generations='all')
-        -> [latest_file, prev1, prev2, prev3, ...]
+      host_latest_prev_parquet("data_test", generations=2)
+      host_latest_prev_parquet("data_test.parquet", generations=2)
     """
+    # Ensure file has .parquet extension
+    if not filename.endswith(".parquet"):
+        filename += ".parquet"
+
     base, ext = os.path.splitext(filename)
 
     # exact match first
