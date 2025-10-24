@@ -1,136 +1,145 @@
 convert program to python with duckdb and pyarrow
-duckdb for process input file
+duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CISOCSOF JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB10981
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.PERKESO.EMPLFILE.FULLLOAD,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL2     DD DSN=RBP2.B033.PERKESO.EMPLFILE.FULLLOAD.UNQ,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//*- PROCESS EMPLOYER INFORMATION (VALIDATE FILE ONLY)
-//*---------------------------------------------------------------------
-//VALIDATE EXEC SAS609
-//EMPLFILE DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(0)
+//CISIGNA1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB57991
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=WINDOW.SIGNATOR.LOAD,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//*        CURRENT ACCOUNT
+//SIGNATOR DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0501
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0502
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0503
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0504
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0505
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0506
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0507
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0508
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0509
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0510
+//*        FIXED DEPOSIT
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0501
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0502
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0503
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0504
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0505
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0506
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0507
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0508
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0509
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.FD0510
+//*        SAVINGS
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0501
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0502
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0503
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0504
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0505
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0506
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0507
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0508
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0509
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0510
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0511
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0512
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0513
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0514
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0515
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0516
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0517
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0518
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0519
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0520
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0521
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0522
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0523
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0524
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0525
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0526
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0527
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0528
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0529
+//         DD DISP=SHR,DSN=WINDOW.SIGNATOR.SA0530
+//PBBRANCH  DD DISP=SHR,DSN=PBB.BRANCH
+//OUTFILE  DD DSN=WINDOW.SIGNATOR.LOAD,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(1000,1000),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=89,BLKSIZE=0,RECFM=FB)
+//*235128     DCB=(LRECL=88,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-OPTION NOCENTER;
- DATA EMPLFULL;
-    RETAIN X Y;
-    INFILE EMPLFILE END=LAST EOF=EOFRTN;
-      INPUT @01  RECORD_TYPE     $1.        /* VALUE H , D , F */
-            @02  NEW_EMPL_CODE   $12.
-            @02  TOTAL_REC       $7.
-            @14  OLD_EMPL_CODE   $9.
-            @23  EMPL_NAME       $100.      /* TRUNCATE TO 40 */
-            @123 ACR_RECEIPT_NO  $20.       /* ESMR 2017-2133*/
-            @143 ACR_AMOUNT      $20.;      /* ESMR 2019-685 */
-      IF RECORD_TYPE = 'H' THEN DELETE;
-      IF RECORD_TYPE = 'D' THEN X+1;
-      IF RECORD_TYPE = 'F' THEN DO;
-         Y+TOTAL_REC;                       /*TOTAL OF FOOTER*/
-         TOTAL_REC_NUM = Y * 1;             /* ESMR 2017-2133*/
-         IF TOTAL_REC_NUM NE X THEN ABORT 88;
-      END;
-      /* ------------------------- */
-      /* CHECK FOR INCOMPLETE FILE */
-      /* ------------------------- */
-      IF RECORD_TYPE = 'F' THEN F+1;
-      IF LAST AND F = 0 THEN ABORT 77;
-      IF RECORD_TYPE IN (' ','F') THEN DELETE;
 
-      /*-----------------------------------------------*/
-      /* CHECK FOR ACR OR ECR CODE                     */
-      /*-----------------------------------------------*/
-      IF RECORD_TYPE = 'D' AND SUBSTR(ACR_RECEIPT_NO,1,3) NE 'ACR'
-      THEN ABORT 55;
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+  /*----------------------------------------------------------------*/
+  /*    SIGNATORY FILE                                              */
+  /*----------------------------------------------------------------*/
+DATA SIGNATORY ;
+   INFILE SIGNATOR;
+       INPUT @01 BANKNO        $3.
+             @04 ACCTNO        $11.
+             @15 SEQNO          3.
+             @18 NAME          $40.
+             @58 MANDATEE_INDC $1.
+             @59 IDS           $15.
+             @87 STATUS        $1.
+             @90 BRANCHNO      $3.
+             @93 INDORG_INDC   $1.;         /* SMR 2023-5128 */
+             IF STATUS = 'A';
+             IF IDS   = '' THEN DELETE;
+             IF NAME  = '' THEN DELETE;
+             SIGNATORY_INDC = 'Y';
+             IF   (SUBSTR(IDS,7,1) = '-'
+             AND   SUBSTR(IDS,10,1) = '-')  THEN DO ;
+                   IDS=COMPRESS(IDS,'-');
+             END;
+             IF MANDATEE_INDC = ' ' THEN MANDATEE_INDC = 'N';
+RUN;
+PROC SORT  DATA=SIGNATORY ;BY BRANCHNO;RUN;
+PROC PRINT DATA=SIGNATORY(OBS=10);TITLE 'SIGNATORY';
+RUN;
 
-    EOFRTN:
-      IF _N_ = 1  THEN ABORT 66;
+  /*----------------------------------------------------------------*/
+  /*    BRANCH FILE PBBRANCH                                        */
+  /*----------------------------------------------------------------*/
+  DATA PBBBRCH ;
+     INFILE PBBRANCH MISSOVER;
+     INPUT @02 BRANCHNO   $3.
+           @06 ACCTBRABBR $3.;
+  RUN;
+  PROC SORT  DATA=PBBBRCH ;BY BRANCHNO;RUN;
+  PROC PRINT DATA=PBBBRCH(OBS=5);TITLE 'PBB BRANCH FILE';RUN;
 
- RUN;
+  DATA MERGE1;
+     MERGE SIGNATORY(IN=A) PBBBRCH(IN=B);BY BRANCHNO;
+     IF A AND B;
+  RUN;
+  PROC SORT  DATA=MERGE1 ;BY ACCTNO  ;RUN;
+  PROC PRINT DATA=MERGE1(OBS=5);TITLE 'SIGNATORY MERGE';RUN;
 
-//**********************************************************************
-//* PROCESS THE 9 FILES TO CATER FOR CEK TAK LAKU
-//**********************************************************************
-//CEKXLAKU EXEC SAS609
-//NEWFILES DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(0)
-//OLDFILES DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-1)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-2)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-3)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-4)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-5)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-6)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-7)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-8)
-//         DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULL(-9)
-//* FILE SIZE LONGER FOR THE LAST INDICATOR (FOR SORTING PURPOSE)
-//ALLFILES DD DSN=RBP2.B033.PERKESO.EMPLFILE.FULLLOAD,
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(200,100),RLSE),
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTION NOCENTER;
- DATA NEWFILES;
-    INFILE NEWFILES;
-      INPUT @01  RECORD_TYPE     $1.        /* VALUE H , D , F */
-            @02  NEW_EMPL_CODE   $12.
-            @14  OLD_EMPL_CODE   $9.
-            @23  EMPL_NAME       $100.      /* TRUNCATE TO 40 */
-            @123 ACR_RECEIPT_NO  $20.       /* ESMR 2017-2133*/
-            @143 ACR_AMOUNT      $20.;      /* ESMR 2019-685 */
-      IF RECORD_TYPE = 'D';
-      LAST_INDICATOR = 'A';
- RUN;
- PROC PRINT DATA=NEWFILES(OBS=10);TITLE 'NEW FILE';RUN;
-
- DATA OLDFILES;
-    INFILE OLDFILES;
-      INPUT @01  RECORD_TYPE     $1.        /* VALUE H , D , F */
-            @02  NEW_EMPL_CODE   $12.
-            @14  OLD_EMPL_CODE   $9.
-            @23  EMPL_NAME       $100.      /* TRUNCATE TO 40 */
-            @123 ACR_RECEIPT_NO  $20.       /* ESMR 2017-2133*/
-            @143 ACR_AMOUNT      $20.;      /* ESMR 2019-685 */
-      IF RECORD_TYPE = 'D';
-      LAST_INDICATOR = 'B';
- RUN;
- PROC PRINT DATA=OLDFILES(OBS=10);TITLE 'OLD FILE';RUN;
-
- DATA ALLFILES;
-   SET NEWFILES OLDFILES;
- RUN;
- PROC SORT  DATA=ALLFILES ;BY NEW_EMPL_CODE
-                              ACR_RECEIPT_NO
-                              LAST_INDICATOR ; RUN;
- PROC PRINT DATA=ALLFILES(OBS=100);TITLE 'ALL FILE';RUN;
-
- DATA _NULL_;
-   SET ALLFILES;
-   FILE ALLFILES;
-      PUT @001 NEW_EMPL_CODE   $12.
-          @013 ACR_RECEIPT_NO  $20.
-          @033 OLD_EMPL_CODE   $9.
-          @042 EMPL_NAME       $100.
-          @142 ACR_AMOUNT      $20.
-          @200 LAST_INDICATOR  $1.   /* OLDNEW RECORD INDICATOR */
-          ;
-   RETURN;
-   RUN;
-//**********************************************************************
-//* EJS A2018-5906
-//* REMOVE DUPLICATE PRIOR TO LOADING DATABASE
-//**********************************************************************
-//UNQREC   EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=RBP2.B033.PERKESO.EMPLFILE.FULLLOAD
-//OUTDD01  DD DSN=RBP2.B033.PERKESO.EMPLFILE.FULLLOAD.UNQ,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(500,300),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=161,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-   SELECT FROM(INDD01) TO(OUTDD01) ON(1,32,CH) FIRST
+DATA OUT;
+  SET MERGE1;
+  FILE OUTFILE;
+        IF SIGNATORY_INDC = ' ' THEN SIGNATORY_INDC = 'N';
+        IF MANDATEE_INDC  = ' ' THEN MANDATEE_INDC  = 'N';
+        PUT @01 BANKNO            $3.
+            @04 ACCTNO            $11.
+            @15 SEQNO             Z5.
+            @20 NAME              $40.
+            @60 IDS               $15.
+            @75 SIGNATORY_INDC    $1.
+            @76 MANDATEE_INDC     $1.
+            @77 NOMINEE_INDC      $1.
+            @78 STATUS            $1.
+            @79 BRANCHNO          $5.
+            @84 ACCTBRABBR        $3.
+            @89 INDORG_INDC       $1.;
+  RETURN;
+  RUN;
