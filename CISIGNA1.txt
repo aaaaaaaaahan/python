@@ -1,147 +1,239 @@
-//CISIGNA1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB57991
-//*--------------------------------------------------------------------
-//* ESMR 2011-2388 SIGNATURE MANANGEMENT SYSTEM
-//* ESMR 2012-1070 ADDITIONAL FILES FROM WINBDS
-//* EJS A2012-17402 CHANGE FTP TO SFTP (SFTP CANNOT USE '#' SIGN)
-//* ESMR2021-2344 - INCLUDE NEW FIELD (INDORG) IN OUTPUT - SMR DROP
-//* ESMR2023-5128 - INCLUDE NEW FIELD (INDORG) IN OUTPUT
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.WINDOW.SIGNATOR.LOAD,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//*        CURRENT ACCOUNT
-//SIGNATOR DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0501
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0502
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0503
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0504
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0505
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0506
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0507
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0508
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0509
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.CA0510
-//*        FIXED DEPOSIT
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0501
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0502
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0503
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0504
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0505
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0506
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0507
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0508
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0509
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.FD0510
-//*        SAVINGS
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0501
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0502
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0503
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0504
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0505
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0506
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0507
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0508
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0509
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0510
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0511
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0512
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0513
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0514
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0515
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0516
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0517
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0518
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0519
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0520
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0521
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0522
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0523
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0524
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0525
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0526
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0527
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0528
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0529
-//         DD DISP=SHR,DSN=RBP2.B033.WINDOW.SIGNATOR.SA0530
-//PBBRANCH  DD DISP=SHR,DSN=RBP2.B033.PBB.BRANCH
-//OUTFILE  DD DSN=RBP2.B033.WINDOW.SIGNATOR.LOAD,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(1000,1000),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=89,BLKSIZE=0,RECFM=FB)
-//*235128     DCB=(LRECL=88,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+//CIRHPRG1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB58004
+//*---------------------------------------------------------------------
+//*- ESMR 2013-1060  DAILY EXTRACTION OF SPECIFIC CLASSIFICATION
+//*-                 AND NATURE OF ENTRIES FOR PURGING
+//*- REFER TO EMAIL DATED 11/06/13 SENT BY AML/NG MEE WUN (REQUESTER)
+//*- DO NOT PURGE FOR PBCSS DEPARTMENT WITH CLS0000003 AND NAT0000024
+//*- ESMR 2014-669 EXCLUDE PURGING OF CLS0000003 AND NAT0000023
+//*- ESMR 2014-2853 PURGE OF CLS0000004 AND NAT0000044 FOR ONE YEAR
+//*- ESMR 2014-2399 2014-2467 BRDLAW/BRDLEGAL/BRDFRD TO BRD
+//*- ESMR 2016-476 REVERT BACK CLS0000004 AND NAT0000044TO NOT BE PURGE
+//*- ESMR 2017-2378 ENHANCE THE RHOLD SYSTEM - TO PURGE THE NAMES
+//*-      MAINTAINED FOR INVESTIGATION ON SUSPECTS BY LAW ENFORCEMENT
+//*-      AGENCY AFTER 2 YEARES OF MAINTENANCE.
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DLT1     DD DSN=RBP2.B033.RHOLD.LIST.TOPURGE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* EXTRACTION OF PURGING RECORDS IN RHOLD TABLE
+//*---------------------------------------------------------------------
+//RHOLDLST EXEC SAS609
+//IEFRDER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//CIRHOBCT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHOBCT.FB
+//CIRHODCT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHODCT.FB
+//CIRHOLDT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHOLDT.FB
+//OUTFILE   DD DSN=RBP2.B033.RHOLD.LIST.TOPURGE,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(5,20),RLSE),
+//             DCB=(LRECL=835,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
 OPTIONS NODATE NONUMBER NOCENTER;
 TITLE;
-  /*----------------------------------------------------------------*/
-  /*    SIGNATORY FILE                                              */
-  /*----------------------------------------------------------------*/
-DATA SIGNATORY ;
-   INFILE SIGNATOR;
-       INPUT @01 BANKNO        $3.
-             @04 ACCTNO        $11.
-             @15 SEQNO          3.
-             @18 NAME          $40.
-             @58 MANDATEE_INDC $1.
-             @59 IDS           $15.
-             @87 STATUS        $1.
-             @90 BRANCHNO      $3.
-             @93 INDORG_INDC   $1.;         /* SMR 2023-5128 */
-             IF STATUS = 'A';
-             IF IDS   = '' THEN DELETE;
-             IF NAME  = '' THEN DELETE;
-             SIGNATORY_INDC = 'Y';
-             IF   (SUBSTR(IDS,7,1) = '-'
-             AND   SUBSTR(IDS,10,1) = '-')  THEN DO ;
-                   IDS=COMPRESS(IDS,'-');
-             END;
-             IF MANDATEE_INDC = ' ' THEN MANDATEE_INDC = 'N';
-RUN;
-PROC SORT  DATA=SIGNATORY ;BY BRANCHNO;RUN;
-PROC PRINT DATA=SIGNATORY(OBS=10);TITLE 'SIGNATORY';
-RUN;
+ /*----------------------------------------------------------------*/
+ /*    GET SAS DATE AND TODAY REPORTING DATE                       */
+ /*----------------------------------------------------------------*/
+ DATA SRSDATE;
+     INFILE CTRLDATE;
+     INPUT @001  SRSYY    4.
+           @001  YYYY     $4.
+           @005  SRSMM    2.
+           @005  MM       $2.
+           @007  SRSDD    2.
+           @007  DD       $2.;
 
-  /*----------------------------------------------------------------*/
-  /*    BRANCH FILE PBBRANCH                                        */
-  /*----------------------------------------------------------------*/
-  DATA PBBBRCH ;
-     INFILE PBBRANCH MISSOVER;
-     INPUT @02 BRANCHNO   $3.
-           @06 ACCTBRABBR $3.;
-  RUN;
-  PROC SORT  DATA=PBBBRCH ;BY BRANCHNO;RUN;
-  PROC PRINT DATA=PBBBRCH(OBS=5);TITLE 'PBB BRANCH FILE';RUN;
+   /* DISPLAY TODAY REPORTING DATE*/
+     TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+     TODAYDB2=YYYY||'-'||MM||'-'||DD;
+     CALL SYMPUT('TODAYDATE',TODAYSAS);
+     CALL SYMPUT('DB2DATE',TODAYDB2);
+ RUN;
+ PROC PRINT DATA=SRSDATE(OBS=5);TITLE 'DATE FILE';RUN;
+ /*----------------------------------------------------------------*/
+ /*    DESCRIPTION                                                 */
+ /*----------------------------------------------------------------*/
+   DATA DESCRIBE CLASS DEPT NATURE;
+     INFILE CIRHODCT;
+         INPUT @001 KEY_ID                  $10.
+               @011 KEY_CODE                $10.
+               @021 KEY_DESCRIBE            $150.
+               @171 KEY_REMARK_ID1          $10.
+               @181 KEY_REMARK_1            $50.
+               @231 KEY_REMARK_ID2          $10.
+               @241 KEY_REMARK_2            $50.
+               @291 KEY_REMARK_ID3          $10.
+               @301 KEY_REMARK_3            $50.
+               @351 DESC_LASTOPERATOR       $8.
+               @359 DESC_LASTMNT_DATE       $10.
+               @369 DESC_LASTMNT_TIME       $8.  ;
+         IF KEY_ID = 'CLASS ' THEN OUTPUT CLASS ;
+         IF KEY_ID = 'DEPT  ' THEN OUTPUT DEPT  ;
+         IF KEY_ID = 'NATURE' THEN OUTPUT NATURE;
+   RUN;
 
-  DATA MERGE1;
-     MERGE SIGNATORY(IN=A) PBBBRCH(IN=B);BY BRANCHNO;
-     IF A AND B;
-  RUN;
-  PROC SORT  DATA=MERGE1 ;BY ACCTNO  ;RUN;
-  PROC PRINT DATA=MERGE1(OBS=5);TITLE 'SIGNATORY MERGE';RUN;
+ DATA CLASS (INDEX=(CLASS_CODE/UNIQUE/NOMISS));
+ SET CLASS;
+      KEEP CLASS_CODE CLASS_DESC;
+      CLASS_CODE=KEY_CODE;
+      CLASS_DESC=KEY_DESCRIBE;
+ RUN;
 
-DATA OUT;
-  SET MERGE1;
-  FILE OUTFILE;
-        IF SIGNATORY_INDC = ' ' THEN SIGNATORY_INDC = 'N';
-        IF MANDATEE_INDC  = ' ' THEN MANDATEE_INDC  = 'N';
-        PUT @01 BANKNO            $3.
-            @04 ACCTNO            $11.
-            @15 SEQNO             Z5.
-            @20 NAME              $40.
-            @60 IDS               $15.
-            @75 SIGNATORY_INDC    $1.
-            @76 MANDATEE_INDC     $1.
-            @77 NOMINEE_INDC      $1.
-            @78 STATUS            $1.
-            @79 BRANCHNO          $5.
-            @84 ACCTBRABBR        $3.
-            @89 INDORG_INDC       $1.;
-  RETURN;
+ DATA NATURE (INDEX=(NATURE_CODE/UNIQUE/NOMISS));
+ SET NATURE;
+      KEEP NATURE_CODE NATURE_DESC;
+      NATURE_CODE=KEY_CODE;
+      NATURE_DESC=KEY_DESCRIBE;
+ RUN;
+
+ DATA DEPT   (INDEX=(DEPT_CODE/UNIQUE/NOMISS));
+ SET DEPT;
+      DEPT_CODE=KEY_CODE;
+      DEPT_DESC=KEY_DESCRIBE;
+ RUN;
+ /*----------------------------------------------------------------*/
+ /*    CONTROL LIST                                                */
+ /*----------------------------------------------------------------*/
+   DATA CONTROL;
+     INFILE CIRHOBCT;
+         INPUT @01  CLASS_CODE             $10.
+               @11  NATURE_CODE            $10.
+               @21  DEPT_CODE              $10.
+               @31  GUIDE_CODE             $10.
+               @41  CLASS_ID               $10.
+               @51  CTRL_OPERATOR           $8.
+               @59  CTRL_LASTMNT_DATE      $10.
+               @69  CTRL_LASTMNT_TIME       $8.  ;
+         IF ((CLASS_CODE EQ 'CLS0000003' AND
+             NATURE_CODE IN ('NAT0000011','NAT0000012','NAT0000013',
+                'NAT0000014','NAT0000015','NAT0000016','NAT0000017',
+                'NAT0000018','NAT0000019','NAT0000020','NAT0000021',
+                'NAT0000022','NAT0000025','NAT0000026','NAT0000046',
+                'NAT0000047','NAT0000048','NAT0000049','NAT0000050',
+                'NAT0000051','NAT0000052','NAT0000053','NAT0000054',
+                'NAT0000055','NAT0000056','NAT0000057','NAT0000058',
+                'NAT0000059','NAT0000060','NAT0000061','NAT0000062')
+             AND DEPT_CODE IN ('BRD','PBCSS') )
+             OR
+          /*(CLASS_CODE  EQ 'CLS0000003' AND  */
+          /* NATURE_CODE EQ 'NAT0000023' AND  */
+          /* DEPT_CODE   EQ 'AMLCFT' )        */
+          /* OR                               */
+          /*(CLASS_CODE  EQ 'CLS0000004' AND  */
+          /* NATURE_CODE EQ 'NAT0000044' AND  */
+          /* DEPT_CODE   EQ 'AMLCFT' )        */
+          /* OR                               */
+            (CLASS_CODE  EQ 'CLS0000004' AND
+             NATURE_CODE IN ('NAT0000027','NAT0000028') AND
+             DEPT_CODE   EQ 'AMLCFT' )) THEN OUTPUT;
+   RUN;
+ PROC SORT  DATA=CONTROL; BY CLASS_ID ; RUN;
+ PROC PRINT DATA=CONTROL; TITLE 'CONTROL' ; RUN;
+ /*----------------------------------------------------------------*/
+ /*    DETAIL LISTING                                              */
+ /*----------------------------------------------------------------*/
+   DATA DETAIL;
+     FORMAT PURGEDATE $10.;
+     PURGEDATE = "&DB2DATE";
+     INFILE CIRHOLDT;
+         INPUT @001 CLASS_ID              $10.
+               @011 INDORG                $01.
+               @012 NAME                  $40.
+               @052 ID1                   $20.
+               @072 ID2                   $20.
+               @092 DTL_REMARK1           $40.
+               @132 DTL_REMARK2           $40.
+               @172 DTL_REMARK3           $40.
+               @212 DTL_REMARK4           $40.
+               @252 DTL_REMARK5           $40.
+               @292 DTL_CRT_DATE          $10.
+               @302 DTL_CRT_TIME          $08.
+               @310 DTL_LASTOPERATOR      $08.
+               @318 DTL_LASTMNT_DATE      $10.
+               @318 LASTMNT_YYYY          $04.
+               @323 LASTMNT_MM            $02.
+               @326 LASTMNT_DD            $02.
+               @328 DTL_LASTMNT_TIME      $08.;
+
+         LASTSAS=MDY(LASTMNT_MM,LASTMNT_DD,LASTMNT_YYYY);
+         ONEYR=LASTSAS + 365;
+         TWOYR=LASTSAS + 732;
+         IF CLASS_ID IN ('0000000075') AND
+            ONEYR LT "&TODAYDATE" THEN OUTPUT;
+         ELSE
+         IF TWOYR LT "&TODAYDATE" THEN OUTPUT;
   RUN;
+ PROC SORT DATA=DETAIL; BY CLASS_ID; RUN;
+ PROC PRINT DATA=DETAIL(OBS=10); TITLE 'DETAIL'; RUN;
+ /*------------------------------------------------------------------*/
+ /*- MERGE DETAIL AND CONTROL                                       -*/
+ /*------------------------------------------------------------------*/
+ DATA FIRST;
+     MERGE DETAIL(IN=A) CONTROL(IN=B);BY CLASS_ID;
+         IF A AND B;
+ RUN;
+
+ DATA CLASS_DESC;          /* CLASS DESCRIPTION */
+      SET FIRST;
+      SET CLASS     KEY=CLASS_CODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ DATA NATURE_DESC;          /* NATURE DESCRIPTION */
+      SET CLASS_DESC;
+      SET NATURE    KEY=NATURE_CODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ DATA DEPT_DESC;            /* DEPARTMENT DESCRIPTION */
+      SET NATURE_DESC;
+      SET DEPT      KEY=DEPT_CODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+ PROC SORT DATA=DEPT_DESC; BY CLASS_ID INDORG NAME; RUN;
+
+ /*-------------------------------------------------------*/
+ /*- FULL FILE DETAILS                                   -*/
+ /*-------------------------------------------------------*/
+ DATA OUT;
+ SET DEPT_DESC;
+     FILE OUTFILE;
+     PUT @001     INDORG                 $01.
+         @002     NAME                   $40.
+         @042     ID1                    $20.
+         @062     ID2                    $20.
+         @082     CLASS_ID               $10.
+         @092     PURGEDATE              $10.
+         @102     DTL_REMARK1            $40.
+         @142     DTL_REMARK2            $40.
+         @182     DTL_REMARK3            $40.
+         @222     DTL_REMARK4            $40.
+         @262     DTL_REMARK5            $40.
+         @302     DTL_CRT_DATE           $10.
+         @312     DTL_CRT_TIME           $08.
+         @320     DTL_LASTOPERATOR       $08.
+         @328     DTL_LASTMNT_DATE       $10.
+         @338     DTL_LASTMNT_TIME       $08.
+         @346     CLASS_CODE             $10.
+         @356     CLASS_DESC             $150.
+         @506     NATURE_CODE            $10.
+         @516     NATURE_DESC            $150.
+         @666     DEPT_CODE              $10.
+         @676     DEPT_DESC              $150.
+         @826     GUIDE_CODE             $10. ;
+ RUN;
