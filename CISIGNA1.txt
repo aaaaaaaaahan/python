@@ -1,239 +1,168 @@
-//CIRHPRG1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB58004
+//CICARDBL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB53380
 //*---------------------------------------------------------------------
-//*- ESMR 2013-1060  DAILY EXTRACTION OF SPECIFIC CLASSIFICATION
-//*-                 AND NATURE OF ENTRIES FOR PURGING
-//*- REFER TO EMAIL DATED 11/06/13 SENT BY AML/NG MEE WUN (REQUESTER)
-//*- DO NOT PURGE FOR PBCSS DEPARTMENT WITH CLS0000003 AND NAT0000024
-//*- ESMR 2014-669 EXCLUDE PURGING OF CLS0000003 AND NAT0000023
-//*- ESMR 2014-2853 PURGE OF CLS0000004 AND NAT0000044 FOR ONE YEAR
-//*- ESMR 2014-2399 2014-2467 BRDLAW/BRDLEGAL/BRDFRD TO BRD
-//*- ESMR 2016-476 REVERT BACK CLS0000004 AND NAT0000044TO NOT BE PURGE
-//*- ESMR 2017-2378 ENHANCE THE RHOLD SYSTEM - TO PURGE THE NAMES
-//*-      MAINTAINED FOR INVESTIGATION ON SUSPECTS BY LAW ENFORCEMENT
-//*-      AGENCY AFTER 2 YEARES OF MAINTENANCE.
+//*  ESMR 2010-663 (LEE AH SEN / TEE CHUI CHEE)
+//*  UPDATE ACCOUNT MISCELLANEOUS BALANCE TABLE
+//*  FILTERING THE PRINCIPAL AND SUPPLEMENTARY CARD HOLDERS
+//*  ESMR 2017-3322 UPDATE CARD BALANCE IN CIS FOR PIBB CARD ACCOUNT
 //*---------------------------------------------------------------------
 //DELETE   EXEC PGM=IEFBR14
-//DLT1     DD DSN=RBP2.B033.RHOLD.LIST.TOPURGE,
+//DEL1     DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.PRIM,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL3     DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.DUP,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL4     DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.UNQ,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*---------------------------------------------------------------------
-//* EXTRACTION OF PURGING RECORDS IN RHOLD TABLE
+//* TO MOVE DATA FIELDS FROM MERGE DATASET TO FIT SOURCE CIUPABAL
 //*---------------------------------------------------------------------
-//RHOLDLST EXEC SAS609
+//MOVEDATA EXEC SAS609,REGION=4M,WORK='50000,50000'
 //IEFRDER   DD DUMMY
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
-//CIRHOBCT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHOBCT.FB
-//CIRHODCT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHODCT.FB
-//CIRHOLDT  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHOLDT.FB
-//OUTFILE   DD DSN=RBP2.B033.RHOLD.LIST.TOPURGE,
+//ACCTFILE  DD DISP=SHR,DSN=RBP2.B033.PBCS.ACCT33(0)
+//          DD DISP=SHR,DSN=RBP2.B033.PBCS.ACCT34(0)
+//          DD DISP=SHR,DSN=RBP2.B033.PBCS.ACCT54(0)
+//          DD DISP=SHR,DSN=RBP2.B033.PBCS.ACCT55(0)
+//OUTFILE   DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL,
 //             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(5,20),RLSE),
-//             DCB=(LRECL=835,BLKSIZE=0,RECFM=FB)
+//             UNIT=SYSDA,SPACE=(CYL,(100,100),RLSE),
+//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
 //SASLIST   DD SYSOUT=X
 //SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
 OPTIONS NODATE NONUMBER NOCENTER;
 TITLE;
  /*----------------------------------------------------------------*/
- /*    GET SAS DATE AND TODAY REPORTING DATE                       */
+ /*    DATA DECLARATION                                            */
  /*----------------------------------------------------------------*/
- DATA SRSDATE;
-     INFILE CTRLDATE;
-     INPUT @001  SRSYY    4.
-           @001  YYYY     $4.
-           @005  SRSMM    2.
-           @005  MM       $2.
-           @007  SRSDD    2.
-           @007  DD       $2.;
+ DATA ACCTF1;
+     INFILE ACCTFILE;
+         FORMAT SUPPCARD $16. CARDACCT $14.;
+         INPUT @445   OUTSTBAL      9.2
+               @454   OUTSTBALS     $1.
+               @652   GUARNTOR     $16.
+               @972   CUSTNBR      $12.
+               @984   CUSTREF      $12.
+               @996   PRIMPROD      $5.
+               @1001  PRIMCARD     $16.
+               @1017  AUTHLIM       10.2
+               @1027  AUTHLIMS      $1.
+               @1028  PRODTYPE      $1.; /* CREDIT / DEBIT CARD */
+               IF PRIMCARD = '0000000000000000' THEN DELETE;
+               IF GUARNTOR = '0000000000000000' THEN GUARNTOR = '';
 
-   /* DISPLAY TODAY REPORTING DATE*/
-     TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-     TODAYDB2=YYYY||'-'||MM||'-'||DD;
-     CALL SYMPUT('TODAYDATE',TODAYSAS);
-     CALL SYMPUT('DB2DATE',TODAYDB2);
+     /* SWITCH FOR SORTING */
+        IF GUARNTOR NE '' THEN DO;
+           SUPPCARD = PRIMCARD;
+           PRIMCARD = GUARNTOR;
+        END;
+
+     /* ROUND UP TOTAL FIGURE */
+        IF OUTSTBALS='-' THEN OUTSTBAL = OUTSTBAL*(-1);
+        IF AUTHLIMS ='-' THEN AUTHLIM  = AUTHLIM*(-1);
+           TOTALBAL = OUTSTBAL+AUTHLIM;
+
+     /* USING FIRST 14 DIGIT OF CREDIT CARD NUMBER */
+           CARDACCT = SUBSTR(PRIMCARD,1,14);
+
+     PROC SORT  DATA=ACCTF1;BY CARDACCT;
+     PROC PRINT DATA=ACCTF1(OBS=5);TITLE 'ACCTF1';RUN;
+
+ /* TOTAL UP BY PRIMARY CARD */
+ PROC SUMMARY DATA=ACCTF1;
+    BY CARDACCT;
+    VAR TOTALBAL;
+    OUTPUT OUT=ACCTF2 SUM=PRIMBAL;
  RUN;
- PROC PRINT DATA=SRSDATE(OBS=5);TITLE 'DATE FILE';RUN;
- /*----------------------------------------------------------------*/
- /*    DESCRIPTION                                                 */
- /*----------------------------------------------------------------*/
-   DATA DESCRIBE CLASS DEPT NATURE;
-     INFILE CIRHODCT;
-         INPUT @001 KEY_ID                  $10.
-               @011 KEY_CODE                $10.
-               @021 KEY_DESCRIBE            $150.
-               @171 KEY_REMARK_ID1          $10.
-               @181 KEY_REMARK_1            $50.
-               @231 KEY_REMARK_ID2          $10.
-               @241 KEY_REMARK_2            $50.
-               @291 KEY_REMARK_ID3          $10.
-               @301 KEY_REMARK_3            $50.
-               @351 DESC_LASTOPERATOR       $8.
-               @359 DESC_LASTMNT_DATE       $10.
-               @369 DESC_LASTMNT_TIME       $8.  ;
-         IF KEY_ID = 'CLASS ' THEN OUTPUT CLASS ;
-         IF KEY_ID = 'DEPT  ' THEN OUTPUT DEPT  ;
-         IF KEY_ID = 'NATURE' THEN OUTPUT NATURE;
-   RUN;
+ PROC SORT DATA=ACCTF2;BY CARDACCT;
+ PROC PRINT DATA=ACCTF2(OBS=5);TITLE 'ACCTF2';WHERE _FREQ_ > 2; RUN;
 
- DATA CLASS (INDEX=(CLASS_CODE/UNIQUE/NOMISS));
- SET CLASS;
-      KEEP CLASS_CODE CLASS_DESC;
-      CLASS_CODE=KEY_CODE;
-      CLASS_DESC=KEY_DESCRIBE;
+ /* ATTACH PRIMARY BALANCE TO RECORDS FOR CONSOLIDATION */
+ DATA TEMP1;
+   MERGE ACCTF2(IN=A) ACCTF1(IN=B); BY CARDACCT;
+   IF A ;
  RUN;
+ PROC PRINT DATA=TEMP1(OBS=5);TITLE 'TEMP1'; RUN;
 
- DATA NATURE (INDEX=(NATURE_CODE/UNIQUE/NOMISS));
- SET NATURE;
-      KEEP NATURE_CODE NATURE_DESC;
-      NATURE_CODE=KEY_CODE;
-      NATURE_DESC=KEY_DESCRIBE;
- RUN;
-
- DATA DEPT   (INDEX=(DEPT_CODE/UNIQUE/NOMISS));
- SET DEPT;
-      DEPT_CODE=KEY_CODE;
-      DEPT_DESC=KEY_DESCRIBE;
- RUN;
  /*----------------------------------------------------------------*/
- /*    CONTROL LIST                                                */
+ /*   OUTPUT DETAIL REPORT                                         */
  /*----------------------------------------------------------------*/
-   DATA CONTROL;
-     INFILE CIRHOBCT;
-         INPUT @01  CLASS_CODE             $10.
-               @11  NATURE_CODE            $10.
-               @21  DEPT_CODE              $10.
-               @31  GUIDE_CODE             $10.
-               @41  CLASS_ID               $10.
-               @51  CTRL_OPERATOR           $8.
-               @59  CTRL_LASTMNT_DATE      $10.
-               @69  CTRL_LASTMNT_TIME       $8.  ;
-         IF ((CLASS_CODE EQ 'CLS0000003' AND
-             NATURE_CODE IN ('NAT0000011','NAT0000012','NAT0000013',
-                'NAT0000014','NAT0000015','NAT0000016','NAT0000017',
-                'NAT0000018','NAT0000019','NAT0000020','NAT0000021',
-                'NAT0000022','NAT0000025','NAT0000026','NAT0000046',
-                'NAT0000047','NAT0000048','NAT0000049','NAT0000050',
-                'NAT0000051','NAT0000052','NAT0000053','NAT0000054',
-                'NAT0000055','NAT0000056','NAT0000057','NAT0000058',
-                'NAT0000059','NAT0000060','NAT0000061','NAT0000062')
-             AND DEPT_CODE IN ('BRD','PBCSS') )
-             OR
-          /*(CLASS_CODE  EQ 'CLS0000003' AND  */
-          /* NATURE_CODE EQ 'NAT0000023' AND  */
-          /* DEPT_CODE   EQ 'AMLCFT' )        */
-          /* OR                               */
-          /*(CLASS_CODE  EQ 'CLS0000004' AND  */
-          /* NATURE_CODE EQ 'NAT0000044' AND  */
-          /* DEPT_CODE   EQ 'AMLCFT' )        */
-          /* OR                               */
-            (CLASS_CODE  EQ 'CLS0000004' AND
-             NATURE_CODE IN ('NAT0000027','NAT0000028') AND
-             DEPT_CODE   EQ 'AMLCFT' )) THEN OUTPUT;
-   RUN;
- PROC SORT  DATA=CONTROL; BY CLASS_ID ; RUN;
- PROC PRINT DATA=CONTROL; TITLE 'CONTROL' ; RUN;
- /*----------------------------------------------------------------*/
- /*    DETAIL LISTING                                              */
- /*----------------------------------------------------------------*/
-   DATA DETAIL;
-     FORMAT PURGEDATE $10.;
-     PURGEDATE = "&DB2DATE";
-     INFILE CIRHOLDT;
-         INPUT @001 CLASS_ID              $10.
-               @011 INDORG                $01.
-               @012 NAME                  $40.
-               @052 ID1                   $20.
-               @072 ID2                   $20.
-               @092 DTL_REMARK1           $40.
-               @132 DTL_REMARK2           $40.
-               @172 DTL_REMARK3           $40.
-               @212 DTL_REMARK4           $40.
-               @252 DTL_REMARK5           $40.
-               @292 DTL_CRT_DATE          $10.
-               @302 DTL_CRT_TIME          $08.
-               @310 DTL_LASTOPERATOR      $08.
-               @318 DTL_LASTMNT_DATE      $10.
-               @318 LASTMNT_YYYY          $04.
-               @323 LASTMNT_MM            $02.
-               @326 LASTMNT_DD            $02.
-               @328 DTL_LASTMNT_TIME      $08.;
-
-         LASTSAS=MDY(LASTMNT_MM,LASTMNT_DD,LASTMNT_YYYY);
-         ONEYR=LASTSAS + 365;
-         TWOYR=LASTSAS + 732;
-         IF CLASS_ID IN ('0000000075') AND
-            ONEYR LT "&TODAYDATE" THEN OUTPUT;
-         ELSE
-         IF TWOYR LT "&TODAYDATE" THEN OUTPUT;
+DATA TEMPOUT;
+  SET TEMP1 ;
+  FILE OUTFILE;
+         IF PRODTYPE = 'C' THEN PRIMBAL=PRIMBAL *(-1);
+         IF PRODTYPE = 'D' THEN PRIMBAL=PRIMBAL *(-1);
+         PUT   @001   '033'
+               @004   PRIMPROD      $5.
+               @009   PRIMCARD     $16.
+               @025   SUPPCARD     $16.
+               @041   OUTSTBAL     Z11.
+               @052   AUTHLIM      Z11.
+               @063   TOTALBAL     Z11.
+               @074   PRIMBAL      Z11.
+               @085   PRODTYPE     $1.   /* CREDIT/DEBIT CARD      */
+               @086   'UNQ'           ;  /* UNIQUE/DUPLICATE INDC  */
+           /*  @972   CUSTNBR      $12. */
+           /*  @984   CUSTREF      $12. */
+  RETURN;
   RUN;
- PROC SORT DATA=DETAIL; BY CLASS_ID; RUN;
- PROC PRINT DATA=DETAIL(OBS=10); TITLE 'DETAIL'; RUN;
- /*------------------------------------------------------------------*/
- /*- MERGE DETAIL AND CONTROL                                       -*/
- /*------------------------------------------------------------------*/
- DATA FIRST;
-     MERGE DETAIL(IN=A) CONTROL(IN=B);BY CLASS_ID;
-         IF A AND B;
- RUN;
+//*---------------------------------------------------------------------
+//* GET UNIQUE FIRST 14 DIGIT CREDIT CARD NO
+//*---------------------------------------------------------------------
+//CARDUNQ  EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL
+//OUTDD01  DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.UNQ,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            SPACE=(CYL,(100,100),RLSE),
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//TOOLIN   DD *
+  SELECT FROM(INDD01) TO(OUTDD01) ON(1,22,CH) NODUPS
 
- DATA CLASS_DESC;          /* CLASS DESCRIPTION */
-      SET FIRST;
-      SET CLASS     KEY=CLASS_CODE;
-      IF _IORC_ THEN DO;
-         _ERROR_ = 0;
-         _IORC_ = 0;
-         END;
- RUN;
+//*---------------------------------------------------------------------
+//* GET DUPLICATION FIRST 14 DIGIT CREDIT CARD NO
+//*---------------------------------------------------------------------
+//CARDDUP  EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL
+//OUTDD01  DD DISP=(NEW,PASS),DSN=&&DUPREC,
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//TOOLIN   DD *
+  SELECT FROM(INDD01) TO(OUTDD01) ON(1,22,CH) ALLDUPS
 
- DATA NATURE_DESC;          /* NATURE DESCRIPTION */
-      SET CLASS_DESC;
-      SET NATURE    KEY=NATURE_CODE;
-      IF _IORC_ THEN DO;
-         _ERROR_ = 0;
-         _IORC_ = 0;
-         END;
- RUN;
-
- DATA DEPT_DESC;            /* DEPARTMENT DESCRIPTION */
-      SET NATURE_DESC;
-      SET DEPT      KEY=DEPT_CODE;
-      IF _IORC_ THEN DO;
-         _ERROR_ = 0;
-         _IORC_ = 0;
-         END;
- RUN;
- PROC SORT DATA=DEPT_DESC; BY CLASS_ID INDORG NAME; RUN;
-
- /*-------------------------------------------------------*/
- /*- FULL FILE DETAILS                                   -*/
- /*-------------------------------------------------------*/
- DATA OUT;
- SET DEPT_DESC;
-     FILE OUTFILE;
-     PUT @001     INDORG                 $01.
-         @002     NAME                   $40.
-         @042     ID1                    $20.
-         @062     ID2                    $20.
-         @082     CLASS_ID               $10.
-         @092     PURGEDATE              $10.
-         @102     DTL_REMARK1            $40.
-         @142     DTL_REMARK2            $40.
-         @182     DTL_REMARK3            $40.
-         @222     DTL_REMARK4            $40.
-         @262     DTL_REMARK5            $40.
-         @302     DTL_CRT_DATE           $10.
-         @312     DTL_CRT_TIME           $08.
-         @320     DTL_LASTOPERATOR       $08.
-         @328     DTL_LASTMNT_DATE       $10.
-         @338     DTL_LASTMNT_TIME       $08.
-         @346     CLASS_CODE             $10.
-         @356     CLASS_DESC             $150.
-         @506     NATURE_CODE            $10.
-         @516     NATURE_DESC            $150.
-         @666     DEPT_CODE              $10.
-         @676     DEPT_DESC              $150.
-         @826     GUIDE_CODE             $10. ;
- RUN;
+//*--------------------------------------------------------------------
+//*--> CHANGE INDICATOR TO DUPLICATE
+//*--------------------------------------------------------------------
+//STEP0001 EXEC PGM=SORT
+//SORTIN   DD DISP=(OLD,DELETE),DSN=&&DUPREC
+//SORTOUT  DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.DUP,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            SPACE=(CYL,(100,100),RLSE),
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SYSOUT   DD SYSOUT=*
+//SYSIN    DD *
+ SORT FIELDS=COPY
+ OUTFIL OUTREC=(1,85,
+                86,3,CHANGE=(3,C'UNQ',C'DUP'),
+                NOMATCH=(86,3),
+                89,112)
+//*---------------------------------------------------------------------
+//*  TO OMIT SUPPLEMENTARY CARDS RECORDS                                00170000
+//*---------------------------------------------------------------------
+//OMITSUPP EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.UNQ
+//         DD DISP=SHR,DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.DUP
+//OUTDD01  DD DSN=RBP2.B033.CIS.CREDITCD.ACCTBAL.PRIM,                  00170000
+//            DISP=(NEW,CATLG,DELETE),
+//            UNIT=SYSDA,SPACE=(CYL,(100,100),RLSE),
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//CPY1CNTL DD *
+ SORT FIELDS=(1,40,CH,A)
+ OMIT   COND=(25,16,CH,NE,C'                ')
+//TOOLIN   DD *
+  SORT FROM(INDD01) TO(OUTDD01) USING(CPY1)
