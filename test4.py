@@ -1,21 +1,19 @@
-CREATE OR REPLACE TABLE acctbal_unq AS
-SELECT *
-FROM tempoUT
-WHERE CARDACCT IN (
-    SELECT CARDACCT
-    FROM tempoUT
-    GROUP BY CARDACCT
-    HAVING COUNT(*) = 1
-)
-ORDER BY CARDACCT;
-
-
-CREATE OR REPLACE TABLE acctbal_dup AS
-SELECT *
-FROM tempoUT
-WHERE CARDACCT IN (
-    SELECT CARDACCT
-    FROM tempoUT
-    GROUP BY CARDACCT
-    HAVING COUNT(*) > 1
-);
+INPUT 
+ @001 U_IBS_HOLD_CO_NO      2.
+ @003 U_IBS_BANK_NO          2.
+ @005 U_IBS_APPL_NO         $20.
+ @025 C_IBS_APPL_CODE       $5.
+ @030 C_IBS_OWN_TYPE        $2.
+ @032 D_IBS_EFF_DATE         5.
+ @037 U_IBS_R_HOLD_CO_NO     2.
+ @039 U_IBS_R_BANK_NO        2.
+ @041 C_IBS_R_APPL_CODE     $5.
+ @046 U_IBS_R_APPL_NO       $20.
+ @066 C_IBS_E1_TO_E2         2.
+ @068 C_IBS_E2_TO_E1         2.
+ @070 H_IBS_PROCESS_TIME     $8.
+ @078 C_IBS_RELATION_TYP    $2.
+ @081 D_IBS_EXPIRE_DATE     $10.
+ @091 DEF_TYPE              $1.
+ @092 DEF_NBR                2.
+ @094 SUB_ACCT_NBR           6.;
