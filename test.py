@@ -2,166 +2,111 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CICARDBL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB53380
+//CCRSRLEB JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB49618
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=LIABFILE.BORWGUAR.UNQ,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL3     DD DSN=CIS.UPDRLEN.BORWGTOR,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL4     DD DSN=CIS.UPDRLEN.UPDATE,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//* GET UNIQUE RECORD FROM FILE
 //*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.CREDITCD.ACCTBAL,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL2     DD DSN=CIS.CREDITCD.ACCTBAL.PRIM,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL3     DD DSN=CIS.CREDITCD.ACCTBAL.DUP,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL4     DD DSN=CIS.CREDITCD.ACCTBAL.UNQ,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DUPCUST  EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=SAS.B033.LIABFILE.BORWGUAR
+//OUTDD01  DD DSN=LIABFILE.BORWGUAR.UNQ,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            SPACE=(CYL,(300,200),RLSE),
+//            DCB=(LRECL=80,BLKSIZE=0,RECFM=FB)
+//TOOLIN   DD *
+   SELECT FROM(INDD01) TO(OUTDD01) ON(1,11,CH) ON(23,1,CH) FIRST
 //*---------------------------------------------------------------------
-//* TO MOVE DATA FIELDS FROM MERGE DATASET TO FIT SOURCE CIUPABAL
-//*---------------------------------------------------------------------
-//MOVEDATA EXEC SAS609,REGION=4M,WORK='50000,50000'
-//IEFRDER   DD DUMMY
-//ACCTFILE  DD DISP=SHR,DSN=PBCS.ACCT33(0)
-//          DD DISP=SHR,DSN=PBCS.ACCT34(0)
-//          DD DISP=SHR,DSN=PBCS.ACCT54(0)
-//          DD DISP=SHR,DSN=PBCS.ACCT55(0)
-//OUTFILE   DD DSN=CIS.CREDITCD.ACCTBAL,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(100,100),RLSE),
-//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
+//STATS#01 EXEC SAS609
+//RLENFILE DD DISP=SHR,DSN=RLEN#CA.LN#02
+//         DD DISP=SHR,DSN=RLEN#CA.LN#08
+//BORWGTOR DD DISP=SHR,DSN=LIABFILE.BORWGUAR.UNQ
+//* SHOW BEFORE AND AFTER EFFECT FOR UAT VERIFICATION
+//OUTFILE  DD DSN=CIS.UPDRLEN.BORWGTOR,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(20,20),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//* UPDATE FORMAT FOR CIUPDRLN
+//UPDFILE  DD DSN=CIS.UPDRLEN.UPDATE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(20,20),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+
 OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
 OPTIONS NODATE NONUMBER NOCENTER;
 TITLE;
- /*----------------------------------------------------------------*/
- /*    DATA DECLARATION                                            */
- /*----------------------------------------------------------------*/
- DATA ACCTF1;
-     INFILE ACCTFILE;
-         FORMAT SUPPCARD $16. CARDACCT $14.;
-         INPUT @445   OUTSTBAL      9.2
-               @454   OUTSTBALS     $1.
-               @652   GUARNTOR     $16.
-               @972   CUSTNBR      $12.
-               @984   CUSTREF      $12.
-               @996   PRIMPROD      $5.
-               @1001  PRIMCARD     $16.
-               @1017  AUTHLIM       10.2
-               @1027  AUTHLIMS      $1.
-               @1028  PRODTYPE      $1.; /* CREDIT / DEBIT CARD */
-               IF PRIMCARD = '0000000000000000' THEN DELETE;
-               IF GUARNTOR = '0000000000000000' THEN GUARNTOR = '';
+DATA RLEN;
+   INFILE RLENFILE;
+       INPUT @5    ACCTNO       $11.
+             @25   ACCTCODE      $5.
+             @46   CUSTNO       $11.
+             @66   RLENCODE     PD2.
+             @68   PRISEC       PD2.;
+       IF PRISEC = 901;
+       IF RLENCODE IN (003,011,012,013,014,016,017,018,019,021,
+                       022,023,027,028);
+RUN;
+PROC SORT  DATA=RLEN ; BY ACCTNO ;
+PROC PRINT DATA=RLEN(OBS=5);TITLE 'RLEN FILE';RUN;
 
-     /* SWITCH FOR SORTING */
-        IF GUARNTOR NE '' THEN DO;
-           SUPPCARD = PRIMCARD;
-           PRIMCARD = GUARNTOR;
-        END;
+DATA LOAN;
+   INFILE BORWGTOR;
+       INPUT @1    ACCTNO       $11.
+             @23   STAT         $3.;
+       IF STAT = 'B  '         THEN CODE=020;
+          ELSE IF STAT = 'G  ' THEN CODE=017;
+          ELSE IF STAT = 'B/G' THEN CODE=028;
+RUN;
+PROC SORT  DATA=LOAN ; BY ACCTNO ;
+PROC PRINT DATA=LOAN(OBS=5);TITLE 'LOAN FILE';RUN;
 
-     /* ROUND UP TOTAL FIGURE */
-        IF OUTSTBALS='-' THEN OUTSTBAL = OUTSTBAL*(-1);
-        IF AUTHLIMS ='-' THEN AUTHLIM  = AUTHLIM*(-1);
-           TOTALBAL = OUTSTBAL+AUTHLIM;
+DATA MERGE1;
+     MERGE LOAN(IN=A) RLEN(IN=B); BY ACCTNO;
+     IF A AND B;
+     IF CODE = RLENCODE THEN DELETE;
+     IF RLENCODE=021 AND CODE=017 THEN DELETE;
+RUN;
+PROC PRINT DATA=MERGE1(OBS=10);TITLE 'MERGE1';RUN;
 
-     /* USING FIRST 14 DIGIT OF CREDIT CARD NUMBER */
-           CARDACCT = SUBSTR(PRIMCARD,1,14);
-
-     PROC SORT  DATA=ACCTF1;BY CARDACCT;
-     PROC PRINT DATA=ACCTF1(OBS=5);TITLE 'ACCTF1';RUN;
-
- /* TOTAL UP BY PRIMARY CARD */
- PROC SUMMARY DATA=ACCTF1;
-    BY CARDACCT;
-    VAR TOTALBAL;
-    OUTPUT OUT=ACCTF2 SUM=PRIMBAL;
- RUN;
- PROC SORT DATA=ACCTF2;BY CARDACCT;
- PROC PRINT DATA=ACCTF2(OBS=5);TITLE 'ACCTF2';WHERE _FREQ_ > 2; RUN;
-
- /* ATTACH PRIMARY BALANCE TO RECORDS FOR CONSOLIDATION */
- DATA TEMP1;
-   MERGE ACCTF2(IN=A) ACCTF1(IN=B); BY CARDACCT;
-   IF A ;
- RUN;
- PROC PRINT DATA=TEMP1(OBS=5);TITLE 'TEMP1'; RUN;
-
- /*----------------------------------------------------------------*/
- /*   OUTPUT DETAIL REPORT                                         */
- /*----------------------------------------------------------------*/
-DATA TEMPOUT;
-  SET TEMP1 ;
+DATA OUT;           /* FOR SHOWING BEFORE AND AFTER EFFECT - UAT TEST */
+  SET MERGE1;
   FILE OUTFILE;
-         IF PRODTYPE = 'C' THEN PRIMBAL=PRIMBAL *(-1);
-         IF PRODTYPE = 'D' THEN PRIMBAL=PRIMBAL *(-1);
-         PUT   @001   '033'
-               @004   PRIMPROD      $5.
-               @009   PRIMCARD     $16.
-               @025   SUPPCARD     $16.
-               @041   OUTSTBAL     Z11.
-               @052   AUTHLIM      Z11.
-               @063   TOTALBAL     Z11.
-               @074   PRIMBAL      Z11.
-               @085   PRODTYPE     $1.   /* CREDIT/DEBIT CARD      */
-               @086   'UNQ'           ;  /* UNIQUE/DUPLICATE INDC  */
-           /*  @972   CUSTNBR      $12. */
-           /*  @984   CUSTREF      $12. */
+     PUT @1    ACCTCODE          $5.
+         @6    ACCTNO            $11.
+         @20   CUSTNO            $11.
+         @35   RLENCODE          Z3.
+         @40   CODE              Z3.
+         @45   STAT $3.;
   RETURN;
   RUN;
-//*---------------------------------------------------------------------
-//* GET UNIQUE FIRST 14 DIGIT CREDIT CARD NO
-//*---------------------------------------------------------------------
-//CARDUNQ  EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL
-//OUTDD01  DD DSN=CIS.CREDITCD.ACCTBAL.UNQ,
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            SPACE=(CYL,(100,100),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-  SELECT FROM(INDD01) TO(OUTDD01) ON(1,22,CH) NODUPS
 
-//*---------------------------------------------------------------------
-//* GET DUPLICATION FIRST 14 DIGIT CREDIT CARD NO
-//*---------------------------------------------------------------------
-//CARDDUP  EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL
-//OUTDD01  DD DISP=(NEW,PASS),DSN=&&DUPREC,
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-  SELECT FROM(INDD01) TO(OUTDD01) ON(1,22,CH) ALLDUPS
+DATA OUT2;          /* FOR UPDATE TO SOURCE CIUPDRLN */
+  SET MERGE1;
+  FILE UPDFILE;
+     PUT @01   '033'
+         @04   ACCTCODE          $5.
+         @09   ACCTNO            $11.
+         @29   'CUST '
+         @34   CUSTNO            $11.
+         @54   '901'
+         @57   CODE              Z3. ;
+  RETURN;
+  RUN;
 
-//*--------------------------------------------------------------------
-//*--> CHANGE INDICATOR TO DUPLICATE
-//*--------------------------------------------------------------------
-//STEP0001 EXEC PGM=SORT
-//SORTIN   DD DISP=(OLD,DELETE),DSN=&&DUPREC
-//SORTOUT  DD DSN=CIS.CREDITCD.ACCTBAL.DUP,
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            SPACE=(CYL,(100,100),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SYSOUT   DD SYSOUT=*
-//SYSIN    DD *
- SORT FIELDS=COPY
- OUTFIL OUTREC=(1,85,
-                86,3,CHANGE=(3,C'UNQ',C'DUP'),
-                NOMATCH=(86,3),
-                89,112)
-//*---------------------------------------------------------------------
-//*  TO OMIT SUPPLEMENTARY CARDS RECORDS                                00170000
-//*---------------------------------------------------------------------
-//OMITSUPP EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL.UNQ
-//         DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL.DUP
-//OUTDD01  DD DSN=CIS.CREDITCD.ACCTBAL.PRIM,                  00170000
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(100,100),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//CPY1CNTL DD *
- SORT FIELDS=(1,40,CH,A)
- OMIT   COND=(25,16,CH,NE,C'                ')
-//TOOLIN   DD *
-  SORT FROM(INDD01) TO(OUTDD01) USING(CPY1)
+
+this is the field layout for 
+SAS.B033.LIABFILE.BORWGUAR
+INPUT   @1    ACCTNO   Z11. 
+        @13   NOTENO    Z5. 
+        @19   NOTETYPE  Z3. 
+        @23   IND       $3.;
