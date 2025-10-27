@@ -1,20 +1,7 @@
 import duckdb
-import pyarrow.parquet as pq
-import pyarrow as pa
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
 import datetime
-import os
 
-# ============================================================
-# PATH CONFIGURATION
-# ============================================================
-# (Modify these to your actual paths)
-host_parquet_path = '/host/cis/parquet/sas_parquet'
-parquet_output_path = '/host/cis/parquet'
-csv_output_path = '/host/cis/output'
-
-# ============================================================
-# DATE CONFIGURATION
-# ============================================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
@@ -24,37 +11,35 @@ year, month, day = batch_date.year, batch_date.month, batch_date.day
 con = duckdb.connect()
 
 # ============================================================
-# INPUT PARQUET FILES
-# ============================================================
-rlen_files = [
-    f"{host_parquet_path}/rlen_ca_ln02.parquet",
-    f"{host_parquet_path}/rlen_ca_ln08.parquet"
-]
-borwgtor_parquet = f"{host_parquet_path}/sas_b033_liabfile_borwguar.parquet"
-
-# ============================================================
 # STEP 1: DUPLICATE REMOVAL (simulate ICETOOL SELECT FIRST)
 # ============================================================
 # Keep first occurrence based on key (ACCTNO + IND)
 con.execute(f"""
     CREATE OR REPLACE TABLE borwguar_unq AS
     SELECT *
-    FROM read_parquet('{borwgtor_parquet}')
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY substr(ACCTNO,1,11), substr(IND,1,1) ORDER BY ACCTNO) = 1
+    FROM '{host_parquet_path("LIABFILE_BORWGUAR.parquet")}'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ACCTNO, substr(IND,1,1) ORDER BY ACCTNO) = 1
 """)
 
 # ============================================================
 # STEP 2: READ RLEN FILES & FILTER
 # ============================================================
 con.execute(f"""
+    CREATE OR REPLACE VIEW rlen_files AS 
+    SELECT * FROM '{host_parquet_path("RLENCA_LN02.parquet")}'
+    UNION ALL
+    SELECT * FROM '{host_parquet_path("RLENCA_LN08.parquet")}'
+""")
+
+con.execute(f"""
     CREATE OR REPLACE TABLE rlen AS
     SELECT 
-        substr(ACCTNO,1,11) AS ACCTNO,
-        substr(ACCTCODE,1,5) AS ACCTCODE,
-        substr(CUSTNO,1,11) AS CUSTNO,
-        RLENCODE,
-        PRISEC
-    FROM read_parquet({rlen_files})
+        U_IBS_APPL_NO   AS ACCTNO,
+        C_IBS_APPL_CODE AS ACCTCODE,
+        U_IBS_R_APPL_NO AS CUSTNO,
+        try_cast(C_IBS_E1_TO_E2 AS INTEGER) AS RLENCODE,
+        try_cast(C_IBS_E2_TO_E1 AS INTEGER) AS PRISEC
+    FROM rlen_files
     WHERE PRISEC = 901
       AND RLENCODE IN (3,11,12,13,14,16,17,18,19,21,22,23,27,28)
 """)
@@ -100,7 +85,7 @@ con.execute("""
 # ============================================================
 # STEP 5: OUTPUT (SHOW BEFORE & AFTER EFFECT)
 # ============================================================
-outfile_table = con.execute("""
+outfile_table = """
     SELECT 
         ACCTCODE,
         ACCTNO,
@@ -108,18 +93,16 @@ outfile_table = con.execute("""
         LPAD(CAST(RLENCODE AS VARCHAR),3,'0') AS RLENCODE,
         LPAD(CAST(CODE AS VARCHAR),3,'0') AS CODE,
         STAT
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
     FROM merge1
-""").arrow()
-
-outfile_path_parquet = f"{parquet_output_path}/cis_updrlen_borwgtor_{batch_date}.parquet"
-outfile_path_csv = f"{csv_output_path}/cis_updrlen_borwgtor_{batch_date}.csv"
-pq.write_table(outfile_table, outfile_path_parquet)
-outfile_table.to_pandas().to_csv(outfile_path_csv, index=False)
+""".format(year=year,month=month,day=day)
 
 # ============================================================
 # STEP 6: OUTPUT FOR UPDATE (CIUPDRLN)
 # ============================================================
-updf_table = con.execute("""
+updf_table = """
     SELECT 
         '033' AS CONST1,
         ACCTCODE,
@@ -128,17 +111,42 @@ updf_table = con.execute("""
         CUSTNO,
         '901' AS CONST3,
         LPAD(CAST(CODE AS VARCHAR),3,'0') AS CODE
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
     FROM merge1
-""").arrow()
-
-updf_path_parquet = f"{parquet_output_path}/cis_updrlen_update_{batch_date}.parquet"
-updf_path_csv = f"{csv_output_path}/cis_updrlen_update_{batch_date}.csv"
-pq.write_table(updf_table, updf_path_parquet)
-updf_table.to_pandas().to_csv(updf_path_csv, index=False)
+""".format(year=year,month=month,day=day)
 
 # ============================================================
 # COMPLETION LOG
 # ============================================================
-print("✅ CCRSRLEB Python Conversion Completed")
-print(f"Output 1 (Before/After): {outfile_path_parquet}")
-print(f"Output 2 (For Update): {updf_path_parquet}")
+out = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM borwguar_unq
+""".format(year=year,month=month,day=day)
+
+queries = {
+    "LIABFILE_BORWGUAR_UNQ"                 : out,
+    "CIS_UPDRLEN_BORWGTOR"             : outfile_table,
+    "CIS_UPDRLEN_UPDATE"             : updf_table
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
