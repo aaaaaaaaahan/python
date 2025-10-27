@@ -1,167 +1,239 @@
-convert program to python with duckdb and pyarrow
-duckdb for process input file and output parquet&csv
-assumed all the input file ady convert to parquet can directly use it
+import duckdb
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
+import datetime
 
-//CICARDBL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB53380
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.CREDITCD.ACCTBAL,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL2     DD DSN=CIS.CREDITCD.ACCTBAL.PRIM,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL3     DD DSN=CIS.CREDITCD.ACCTBAL.DUP,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL4     DD DSN=CIS.CREDITCD.ACCTBAL.UNQ,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* TO MOVE DATA FIELDS FROM MERGE DATASET TO FIT SOURCE CIUPABAL
-//*---------------------------------------------------------------------
-//MOVEDATA EXEC SAS609,REGION=4M,WORK='50000,50000'
-//IEFRDER   DD DUMMY
-//ACCTFILE  DD DISP=SHR,DSN=PBCS.ACCT33(0)
-//          DD DISP=SHR,DSN=PBCS.ACCT34(0)
-//          DD DISP=SHR,DSN=PBCS.ACCT54(0)
-//          DD DISP=SHR,DSN=PBCS.ACCT55(0)
-//OUTFILE   DD DSN=CIS.CREDITCD.ACCTBAL,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(100,100),RLSE),
-//             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- /*----------------------------------------------------------------*/
- /*    DATA DECLARATION                                            */
- /*----------------------------------------------------------------*/
- DATA ACCTF1;
-     INFILE ACCTFILE;
-         FORMAT SUPPCARD $16. CARDACCT $14.;
-         INPUT @445   OUTSTBAL      9.2
-               @454   OUTSTBALS     $1.
-               @652   GUARNTOR     $16.
-               @972   CUSTNBR      $12.
-               @984   CUSTREF      $12.
-               @996   PRIMPROD      $5.
-               @1001  PRIMCARD     $16.
-               @1017  AUTHLIM       10.2
-               @1027  AUTHLIMS      $1.
-               @1028  PRODTYPE      $1.; /* CREDIT / DEBIT CARD */
-               IF PRIMCARD = '0000000000000000' THEN DELETE;
-               IF GUARNTOR = '0000000000000000' THEN GUARNTOR = '';
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-     /* SWITCH FOR SORTING */
-        IF GUARNTOR NE '' THEN DO;
-           SUPPCARD = PRIMCARD;
-           PRIMCARD = GUARNTOR;
-        END;
+# remark: parquet havent generate 24/10/2025
 
-     /* ROUND UP TOTAL FIGURE */
-        IF OUTSTBALS='-' THEN OUTSTBAL = OUTSTBAL*(-1);
-        IF AUTHLIMS ='-' THEN AUTHLIM  = AUTHLIM*(-1);
-           TOTALBAL = OUTSTBAL+AUTHLIM;
+# ============================================================
+# DUCKDB CONNECTION
+# ============================================================
+con = duckdb.connect()
 
-     /* USING FIRST 14 DIGIT OF CREDIT CARD NUMBER */
-           CARDACCT = SUBSTR(PRIMCARD,1,14);
+# ============================================================
+# DATA TRANSFORMATION
+# ============================================================
+# UNION ALL ACCTFILE
+con.execute(f"""
+    CREATE OR REPLACE VIEW acct_raw AS 
+    SELECT * FROM '{host_parquet_path("PBCS_ACCT33.parquet")}'
+    UNION ALL
+    SELECT * FROM '{host_parquet_path("PBCS_ACCT34.parquet")}'
+    UNION ALL
+    SELECT * FROM '{host_parquet_path("PBCS_ACCT54.parquet")}'
+    UNION ALL
+    SELECT * FROM '{host_parquet_path("PBCS_ACCT55.parquet")}'
+""")
 
-     PROC SORT  DATA=ACCTF1;BY CARDACCT;
-     PROC PRINT DATA=ACCTF1(OBS=5);TITLE 'ACCTF1';RUN;
+# Simulate SAS data step logic
+con.execute("""
+CREATE OR REPLACE TABLE acctf1 AS
+SELECT
+    CAST(OUTSTBAL AS DOUBLE) AS OUTSTBAL,
+    OUTSTBALS,
+    RIGHT('0000000000000000' || CAST(SUBSTRING(GUARNTOR, 1, 16) AS VARCHAR), 16) AS GUARNTOR,
+    CUSTNBR,
+    CUSTREF,
+    PRIMPROD,
+    RIGHT('0000000000000000' || CAST(SUBSTRING(PRIMCARD, 1, 16) AS VARCHAR), 16) AS PRIMCARD,
+    CAST(AUTHLIM AS DOUBLE) AS AUTHLIM,
+    AUTHLIMS,
+    PRODTYPE,
 
- /* TOTAL UP BY PRIMARY CARD */
- PROC SUMMARY DATA=ACCTF1;
-    BY CARDACCT;
-    VAR TOTALBAL;
-    OUTPUT OUT=ACCTF2 SUM=PRIMBAL;
- RUN;
- PROC SORT DATA=ACCTF2;BY CARDACCT;
- PROC PRINT DATA=ACCTF2(OBS=5);TITLE 'ACCTF2';WHERE _FREQ_ > 2; RUN;
+    -- Derived / computed fields (same SAS logic)
+    CASE WHEN GUARNTOR IS NOT NULL AND GUARNTOR <> '0000000000000000'
+         THEN SUBSTRING(PRIMCARD, 1, 16)
+         ELSE NULL
+    END AS SUPPCARD,
 
- /* ATTACH PRIMARY BALANCE TO RECORDS FOR CONSOLIDATION */
- DATA TEMP1;
-   MERGE ACCTF2(IN=A) ACCTF1(IN=B); BY CARDACCT;
-   IF A ;
- RUN;
- PROC PRINT DATA=TEMP1(OBS=5);TITLE 'TEMP1'; RUN;
+    CASE 
+        WHEN OUTSTBALS = '-' THEN CAST(OUTSTBAL AS DOUBLE) * -1 
+        ELSE CAST(OUTSTBAL AS DOUBLE) 
+    END +
+    CASE 
+        WHEN AUTHLIMS = '-' THEN CAST(AUTHLIM AS DOUBLE) * -1 
+        ELSE CAST(AUTHLIM AS DOUBLE) 
+    END AS TOTALBAL,
 
- /*----------------------------------------------------------------*/
- /*   OUTPUT DETAIL REPORT                                         */
- /*----------------------------------------------------------------*/
-DATA TEMPOUT;
-  SET TEMP1 ;
-  FILE OUTFILE;
-         IF PRODTYPE = 'C' THEN PRIMBAL=PRIMBAL *(-1);
-         IF PRODTYPE = 'D' THEN PRIMBAL=PRIMBAL *(-1);
-         PUT   @001   '033'
-               @004   PRIMPROD      $5.
-               @009   PRIMCARD     $16.
-               @025   SUPPCARD     $16.
-               @041   OUTSTBAL     Z11.
-               @052   AUTHLIM      Z11.
-               @063   TOTALBAL     Z11.
-               @074   PRIMBAL      Z11.
-               @085   PRODTYPE     $1.   /* CREDIT/DEBIT CARD      */
-               @086   'UNQ'           ;  /* UNIQUE/DUPLICATE INDC  */
-           /*  @972   CUSTNBR      $12. */
-           /*  @984   CUSTREF      $12. */
-  RETURN;
-  RUN;
-//*---------------------------------------------------------------------
-//* GET UNIQUE FIRST 14 DIGIT CREDIT CARD NO
-//*---------------------------------------------------------------------
-//CARDUNQ  EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL
-//OUTDD01  DD DSN=CIS.CREDITCD.ACCTBAL.UNQ,
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            SPACE=(CYL,(100,100),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-  SELECT FROM(INDD01) TO(OUTDD01) ON(1,22,CH) NODUPS
+    SUBSTRING(PRIMCARD, 1, 14) AS CARDACCT,
 
-//*---------------------------------------------------------------------
-//* GET DUPLICATION FIRST 14 DIGIT CREDIT CARD NO
-//*---------------------------------------------------------------------
-//CARDDUP  EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL
-//OUTDD01  DD DISP=(NEW,PASS),DSN=&&DUPREC,
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-  SELECT FROM(INDD01) TO(OUTDD01) ON(1,22,CH) ALLDUPS
+    CASE WHEN OUTSTBALS = '-' THEN CAST(OUTSTBAL AS DOUBLE) * -1 ELSE CAST(OUTSTBAL AS DOUBLE) END AS OUTSTBAL_FIX,
+    CASE WHEN AUTHLIMS = '-' THEN CAST(AUTHLIM AS DOUBLE) * -1 ELSE CAST(AUTHLIM AS DOUBLE) END AS AUTHLIM_FIX,
+            
+    CASE 
+        WHEN GUARNTOR IS NOT NULL AND GUARNTOR <> '0000000000000000'
+        THEN GUARNTOR
+        ELSE PRIMCARD
+    END AS SORT_KEY
 
-//*--------------------------------------------------------------------
-//*--> CHANGE INDICATOR TO DUPLICATE
-//*--------------------------------------------------------------------
-//STEP0001 EXEC PGM=SORT
-//SORTIN   DD DISP=(OLD,DELETE),DSN=&&DUPREC
-//SORTOUT  DD DSN=CIS.CREDITCD.ACCTBAL.DUP,
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            SPACE=(CYL,(100,100),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SYSOUT   DD SYSOUT=*
-//SYSIN    DD *
- SORT FIELDS=COPY
- OUTFIL OUTREC=(1,85,
-                86,3,CHANGE=(3,C'UNQ',C'DUP'),
-                NOMATCH=(86,3),
-                89,112)
-//*---------------------------------------------------------------------
-//*  TO OMIT SUPPLEMENTARY CARDS RECORDS                                00170000
-//*---------------------------------------------------------------------
-//OMITSUPP EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL.UNQ
-//         DD DISP=SHR,DSN=CIS.CREDITCD.ACCTBAL.DUP
-//OUTDD01  DD DSN=CIS.CREDITCD.ACCTBAL.PRIM,                  00170000
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(100,100),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//CPY1CNTL DD *
- SORT FIELDS=(1,40,CH,A)
- OMIT   COND=(25,16,CH,NE,C'                ')
-//TOOLIN   DD *
-  SORT FROM(INDD01) TO(OUTDD01) USING(CPY1)
+FROM acct_raw
+WHERE PRIMCARD <> '0000000000000000'
+""")
+
+# ============================================================
+# AGGREGATE PRIMARY BALANCE
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE acctf2 AS
+SELECT
+    CARDACCT,
+    SUM(OUTSTBAL_FIX + AUTHLIM_FIX) AS PRIMBAL,
+    COUNT(*) AS FREQ
+FROM acctf1
+GROUP BY CARDACCT
+""")
+
+# ============================================================
+# MERGE SUMMARY BACK TO DETAIL
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE temp1 AS
+SELECT f1.*, f2.CARDACCT, f2.PRIMBAL
+FROM acctf1 f1
+LEFT JOIN acctf2 f2 USING (CARDACCT)
+""")
+
+# ============================================================
+# OUTPUT DATASET (TEMPOUT)
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE tempoUT AS
+SELECT
+    '033' AS RECORD_TYPE,
+    PRIMPROD,
+    PRIMCARD,
+    SUPPCARD,
+    OUTSTBAL_FIX AS OUTSTBAL,
+    AUTHLIM_FIX AS AUTHLIM,
+    OUTSTBAL_FIX + AUTHLIM_FIX AS TOTALBAL,
+    CASE 
+        WHEN PRODTYPE IN ('C','D') THEN PRIMBAL * -1
+        ELSE PRIMBAL
+    END AS PRIMBAL,
+    PRODTYPE,
+    'UNQ' AS INDICATOR,
+    CARDACCT
+FROM temp1
+ORDER BY CARDACCT
+""")
+
+# ============================================================
+# UNIQUE / DUPLICATE SPLIT (ICETOOL equivalent)
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE acctbal_unq AS
+SELECT DISTINCT ON (CARDACCT) 
+    RECORD_TYPE, PRIMPROD, PRIMCARD, SUPPCARD,
+    OUTSTBAL, AUTHLIM, TOTALBAL, PRIMBAL, PRODTYPE,
+    INDICATOR
+FROM tempoUT
+ORDER BY CARDACCT
+""")
+
+con.execute("""
+CREATE OR REPLACE TABLE acctbal_dup AS
+SELECT t.*
+FROM tempoUT t
+JOIN (
+    SELECT CARDACCT FROM tempoUT GROUP BY CARDACCT HAVING COUNT(*) > 1
+) d USING (CARDACCT)
+""")
+
+# Update duplicate indicator
+con.execute("""
+CREATE OR REPLACE TABLE acctbal_dup2 AS
+SELECT
+    RECORD_TYPE, PRIMPROD, PRIMCARD, SUPPCARD,
+    OUTSTBAL, AUTHLIM, TOTALBAL, PRIMBAL, PRODTYPE,
+    'DUP' AS INDICATOR
+FROM acctbal_dup
+ORDER BY PRIMCARD
+""")
+
+# ============================================================
+# COMBINE UNIQUE + DUPLICATE & OMIT SUPP CARDS
+# ============================================================
+con.execute("""
+CREATE OR REPLACE TABLE acctbal_prim AS
+SELECT *
+FROM (
+    SELECT * FROM acctbal_unq
+    UNION ALL
+    SELECT * FROM acctbal_dup2
+)
+WHERE (SUPPCARD IS NULL OR TRIM(SUPPCARD) = '')
+ORDER BY PRIMCARD
+""")
+
+# ============================================================
+# EXPORT OUTPUTS
+# ============================================================
+out1 = """
+    SELECT
+        RECORD_TYPE,
+        PRIMPROD,
+        PRIMCARD,
+        SUPPCARD,
+        OUTSTBAL,
+        AUTHLIM,
+        TOTALBAL,
+        PRIMBAL,
+        PRODTYPE,
+        INDICATOR
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM tempoUT
+""".format(year=year,month=month,day=day)
+
+out2 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM acctbal_unq
+""".format(year=year,month=month,day=day)
+
+out3 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM acctbal_dup2
+""".format(year=year,month=month,day=day)
+
+out4 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM acctbal_prim
+""".format(year=year,month=month,day=day)
+
+queries = {
+    "CIS_CREDITCD_ACCTBAL"                 : out1,
+    "CIS_CREDITCD_ACCTBAL_UNQ"             : out2,
+    "CIS_CREDITCD_ACCTBAL_DUP"             : out3,
+    "CIS_CREDITCD_ACCTBAL_PRIM"            : out4
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
