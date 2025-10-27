@@ -1,0 +1,103 @@
+//CCRSRLEB JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB49618
+//*--------------------------------------------------------------------
+//* ESMR 2010-3717
+//* UPDATE BORROWER AND GUARANTOR STATUS FOR LOANS ACCOUNT ONLY
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.LIABFILE.BORWGUAR.UNQ,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL3     DD DSN=RBP2.B033.CIS.UPDRLEN.BORWGTOR,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL4     DD DSN=RBP2.B033.CIS.UPDRLEN.UPDATE,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//* GET UNIQUE RECORD FROM FILE
+//*---------------------------------------------------------------------
+//DUPCUST  EXEC PGM=ICETOOL
+//TOOLMSG  DD SYSOUT=*
+//DFSMSG   DD SYSOUT=*
+//INDD01   DD DISP=SHR,DSN=RBP2.SAS.B033.LIABFILE.BORWGUAR
+//OUTDD01  DD DSN=RBP2.B033.LIABFILE.BORWGUAR.UNQ,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            SPACE=(CYL,(300,200),RLSE),
+//            DCB=(LRECL=80,BLKSIZE=0,RECFM=FB)
+//TOOLIN   DD *
+   SELECT FROM(INDD01) TO(OUTDD01) ON(1,11,CH) ON(23,1,CH) FIRST
+//*---------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//RLENFILE DD DISP=SHR,DSN=RBP2.B033.RLEN#CA.LN#02
+//         DD DISP=SHR,DSN=RBP2.B033.RLEN#CA.LN#08
+//BORWGTOR DD DISP=SHR,DSN=RBP2.B033.LIABFILE.BORWGUAR.UNQ
+//* SHOW BEFORE AND AFTER EFFECT FOR UAT VERIFICATION
+//OUTFILE  DD DSN=RBP2.B033.CIS.UPDRLEN.BORWGTOR,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(20,20),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//* UPDATE FORMAT FOR CIUPDRLN
+//UPDFILE  DD DSN=RBP2.B033.CIS.UPDRLEN.UPDATE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(20,20),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+DATA RLEN;
+   INFILE RLENFILE;
+       INPUT @5    ACCTNO       $11.
+             @25   ACCTCODE      $5.
+             @46   CUSTNO       $11.
+             @66   RLENCODE     PD2.
+             @68   PRISEC       PD2.;
+       IF PRISEC = 901;
+       IF RLENCODE IN (003,011,012,013,014,016,017,018,019,021,
+                       022,023,027,028);
+RUN;
+PROC SORT  DATA=RLEN ; BY ACCTNO ;
+PROC PRINT DATA=RLEN(OBS=5);TITLE 'RLEN FILE';RUN;
+
+DATA LOAN;
+   INFILE BORWGTOR;
+       INPUT @1    ACCTNO       $11.
+             @23   STAT         $3.;
+       IF STAT = 'B  '         THEN CODE=020;
+          ELSE IF STAT = 'G  ' THEN CODE=017;
+          ELSE IF STAT = 'B/G' THEN CODE=028;
+RUN;
+PROC SORT  DATA=LOAN ; BY ACCTNO ;
+PROC PRINT DATA=LOAN(OBS=5);TITLE 'LOAN FILE';RUN;
+
+DATA MERGE1;
+     MERGE LOAN(IN=A) RLEN(IN=B); BY ACCTNO;
+     IF A AND B;
+     IF CODE = RLENCODE THEN DELETE;
+     IF RLENCODE=021 AND CODE=017 THEN DELETE;
+RUN;
+PROC PRINT DATA=MERGE1(OBS=10);TITLE 'MERGE1';RUN;
+
+DATA OUT;           /* FOR SHOWING BEFORE AND AFTER EFFECT - UAT TEST */
+  SET MERGE1;
+  FILE OUTFILE;
+     PUT @1    ACCTCODE          $5.
+         @6    ACCTNO            $11.
+         @20   CUSTNO            $11.
+         @35   RLENCODE          Z3.
+         @40   CODE              Z3.
+         @45   STAT $3.;
+  RETURN;
+  RUN;
+
+DATA OUT2;          /* FOR UPDATE TO SOURCE CIUPDRLN */
+  SET MERGE1;
+  FILE UPDFILE;
+     PUT @01   '033'
+         @04   ACCTCODE          $5.
+         @09   ACCTNO            $11.
+         @29   'CUST '
+         @34   CUSTNO            $11.
+         @54   '901'
+         @57   CODE              Z3. ;
+  RETURN;
+  RUN;
