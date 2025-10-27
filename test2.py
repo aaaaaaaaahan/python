@@ -1,153 +1,144 @@
 import duckdb
 import pyarrow.parquet as pq
 import pyarrow as pa
+import datetime
 import os
 
 # ============================================================
 # PATH CONFIGURATION
 # ============================================================
-input_paths = [
-    '/host/cis/parquet/sas_parquet/PBCS_ACCT33.parquet',
-    '/host/cis/parquet/sas_parquet/PBCS_ACCT34.parquet',
-    '/host/cis/parquet/sas_parquet/PBCS_ACCT54.parquet',
-    '/host/cis/parquet/sas_parquet/PBCS_ACCT55.parquet'
-]
+# (Modify these to your actual paths)
+host_parquet_path = '/host/cis/parquet/sas_parquet'
+parquet_output_path = '/host/cis/parquet'
+csv_output_path = '/host/cis/output'
 
-output_base = '/host/cis/output/creditcd'
-os.makedirs(output_base, exist_ok=True)
-
-parquet_out = f'{output_base}/acctbal.parquet'
-csv_out = f'{output_base}/acctbal.csv'
+# ============================================================
+# DATE CONFIGURATION
+# ============================================================
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
 # DUCKDB CONNECTION
 # ============================================================
 con = duckdb.connect()
 
-# UNION ALL INPUT FILES
+# ============================================================
+# INPUT PARQUET FILES
+# ============================================================
+rlen_files = [
+    f"{host_parquet_path}/rlen_ca_ln02.parquet",
+    f"{host_parquet_path}/rlen_ca_ln08.parquet"
+]
+borwgtor_parquet = f"{host_parquet_path}/sas_b033_liabfile_borwguar.parquet"
+
+# ============================================================
+# STEP 1: DUPLICATE REMOVAL (simulate ICETOOL SELECT FIRST)
+# ============================================================
+# Keep first occurrence based on key (ACCTNO + IND)
 con.execute(f"""
-CREATE OR REPLACE TABLE acct_raw AS
-SELECT * FROM read_parquet({input_paths})
+    CREATE OR REPLACE TABLE borwguar_unq AS
+    SELECT *
+    FROM read_parquet('{borwgtor_parquet}')
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY substr(ACCTNO,1,11), substr(IND,1,1) ORDER BY ACCTNO) = 1
 """)
 
 # ============================================================
-# DATA TRANSFORMATION
+# STEP 2: READ RLEN FILES & FILTER
 # ============================================================
-# Simulate SAS data step logic
-con.execute("""
-CREATE OR REPLACE TABLE acctf1 AS
-SELECT
-    RIGHT('0000000000000000' || CAST(SUBSTRING(PRIMCARD, 1, 16) AS VARCHAR), 16) AS PRIMCARD,
-    RIGHT('0000000000000000' || CAST(SUBSTRING(GUARNTOR, 1, 16) AS VARCHAR), 16) AS GUARNTOR,
-    OUTSTBAL,
-    CASE WHEN OUTSTBALS = '-' THEN OUTSTBAL * -1 ELSE OUTSTBAL END AS OUTSTBAL_FIX,
-    CASE WHEN AUTHLIMS = '-' THEN AUTHLIM * -1 ELSE AUTHLIM END AS AUTHLIM_FIX,
-    AUTHLIM,
-    AUTHLIMS,
-    PRODTYPE,
-    SUBSTRING(PRIMCARD, 1, 14) AS CARDACCT,
-    CASE 
-        WHEN GUARNTOR IS NOT NULL AND GUARNTOR <> '0000000000000000'
-        THEN GUARNTOR
-        ELSE PRIMCARD
-    END AS SORT_KEY,
-    OUTSTBAL + AUTHLIM AS TOTALBAL
-FROM acct_raw
-WHERE PRIMCARD <> '0000000000000000'
+con.execute(f"""
+    CREATE OR REPLACE TABLE rlen AS
+    SELECT 
+        substr(ACCTNO,1,11) AS ACCTNO,
+        substr(ACCTCODE,1,5) AS ACCTCODE,
+        substr(CUSTNO,1,11) AS CUSTNO,
+        RLENCODE,
+        PRISEC
+    FROM read_parquet({rlen_files})
+    WHERE PRISEC = 901
+      AND RLENCODE IN (3,11,12,13,14,16,17,18,19,21,22,23,27,28)
 """)
 
 # ============================================================
-# AGGREGATE PRIMARY BALANCE
+# STEP 3: READ BORWGUAR.UNQ AS LOAN AND MAP STAT TO CODE
 # ============================================================
-con.execute("""
-CREATE OR REPLACE TABLE acctf2 AS
-SELECT
-    CARDACCT,
-    SUM(OUTSTBAL_FIX + AUTHLIM_FIX) AS PRIMBAL,
-    COUNT(*) AS FREQ
-FROM acctf1
-GROUP BY CARDACCT
+con.execute(f"""
+    CREATE OR REPLACE TABLE loan AS
+    SELECT 
+        substr(ACCTNO,1,11) AS ACCTNO,
+        substr(IND,1,3) AS STAT,
+        CASE 
+            WHEN trim(IND) = 'B' THEN 20
+            WHEN trim(IND) = 'G' THEN 17
+            WHEN trim(IND) = 'B/G' THEN 28
+            ELSE NULL
+        END AS CODE
+    FROM borwguar_unq
+    WHERE IND IN ('B','G','B/G')
 """)
 
 # ============================================================
-# MERGE SUMMARY BACK TO DETAIL
+# STEP 4: MERGE LOGIC
 # ============================================================
 con.execute("""
-CREATE OR REPLACE TABLE temp1 AS
-SELECT f1.*, f2.PRIMBAL
-FROM acctf1 f1
-LEFT JOIN acctf2 f2 USING (CARDACCT)
+    CREATE OR REPLACE TABLE merge1 AS
+    SELECT 
+        l.ACCTNO,
+        r.ACCTCODE,
+        r.CUSTNO,
+        r.RLENCODE,
+        l.CODE,
+        l.STAT
+    FROM loan l
+    JOIN rlen r ON l.ACCTNO = r.ACCTNO
+    WHERE NOT (
+        l.CODE = r.RLENCODE
+        OR (r.RLENCODE = 21 AND l.CODE = 17)
+    )
 """)
 
 # ============================================================
-# OUTPUT DATASET (TEMPOUT)
+# STEP 5: OUTPUT (SHOW BEFORE & AFTER EFFECT)
 # ============================================================
-con.execute("""
-CREATE OR REPLACE TABLE tempoUT AS
-SELECT
-    '033' AS RECORD_TYPE,
-    PRIMPROD,
-    PRIMCARD,
-    SUPPCARD,
-    OUTSTBAL_FIX AS OUTSTBAL,
-    AUTHLIM_FIX AS AUTHLIM,
-    OUTSTBAL_FIX + AUTHLIM_FIX AS TOTALBAL,
-    CASE 
-        WHEN PRODTYPE IN ('C','D') THEN PRIMBAL * -1
-        ELSE PRIMBAL
-    END AS PRIMBAL,
-    PRODTYPE,
-    'UNQ' AS INDICATOR
-FROM temp1
-""")
+outfile_table = con.execute("""
+    SELECT 
+        ACCTCODE,
+        ACCTNO,
+        CUSTNO,
+        LPAD(CAST(RLENCODE AS VARCHAR),3,'0') AS RLENCODE,
+        LPAD(CAST(CODE AS VARCHAR),3,'0') AS CODE,
+        STAT
+    FROM merge1
+""").arrow()
+
+outfile_path_parquet = f"{parquet_output_path}/cis_updrlen_borwgtor_{batch_date}.parquet"
+outfile_path_csv = f"{csv_output_path}/cis_updrlen_borwgtor_{batch_date}.csv"
+pq.write_table(outfile_table, outfile_path_parquet)
+outfile_table.to_pandas().to_csv(outfile_path_csv, index=False)
 
 # ============================================================
-# UNIQUE / DUPLICATE SPLIT (ICETOOL equivalent)
+# STEP 6: OUTPUT FOR UPDATE (CIUPDRLN)
 # ============================================================
-con.execute("""
-CREATE OR REPLACE TABLE acctbal_unq AS
-SELECT DISTINCT ON (CARDACCT) *
-FROM tempoUT
-""")
+updf_table = con.execute("""
+    SELECT 
+        '033' AS CONST1,
+        ACCTCODE,
+        ACCTNO,
+        'CUST ' AS CONST2,
+        CUSTNO,
+        '901' AS CONST3,
+        LPAD(CAST(CODE AS VARCHAR),3,'0') AS CODE
+    FROM merge1
+""").arrow()
 
-con.execute("""
-CREATE OR REPLACE TABLE acctbal_dup AS
-SELECT t.*
-FROM tempoUT t
-JOIN (
-    SELECT CARDACCT FROM tempoUT GROUP BY CARDACCT HAVING COUNT(*) > 1
-) d USING (CARDACCT)
-""")
-
-# Update duplicate indicator
-con.execute("""
-CREATE OR REPLACE TABLE acctbal_dup2 AS
-SELECT
-    RECORD_TYPE, PRIMPROD, PRIMCARD, SUPPCARD,
-    OUTSTBAL, AUTHLIM, TOTALBAL, PRIMBAL, PRODTYPE,
-    'DUP' AS INDICATOR
-FROM acctbal_dup
-""")
+updf_path_parquet = f"{parquet_output_path}/cis_updrlen_update_{batch_date}.parquet"
+updf_path_csv = f"{csv_output_path}/cis_updrlen_update_{batch_date}.csv"
+pq.write_table(updf_table, updf_path_parquet)
+updf_table.to_pandas().to_csv(updf_path_csv, index=False)
 
 # ============================================================
-# COMBINE UNIQUE + DUPLICATE & OMIT SUPP CARDS
+# COMPLETION LOG
 # ============================================================
-con.execute("""
-CREATE OR REPLACE TABLE acctbal_prim AS
-SELECT *
-FROM (
-    SELECT * FROM acctbal_unq
-    UNION ALL
-    SELECT * FROM acctbal_dup2
-)
-WHERE (SUPPCARD IS NULL OR TRIM(SUPPCARD) = '')
-ORDER BY CARDACCT
-""")
-
-# ============================================================
-# EXPORT OUTPUTS
-# ============================================================
-con.execute(f"COPY acctbal_prim TO '{parquet_out}' (FORMAT 'parquet')")
-con.execute(f"COPY acctbal_prim TO '{csv_out}' (HEADER TRUE)")
-
-print(f"✅ ETL complete. Output saved to:\n{parquet_out}\n{csv_out}")
+print("✅ CCRSRLEB Python Conversion Completed")
+print(f"Output 1 (Before/After): {outfile_path_parquet}")
+print(f"Output 2 (For Update): {updf_path_parquet}")
