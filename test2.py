@@ -1,9 +1,22 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pyarrow.csv as pc
 import datetime
+import os
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+host_parquet_path = '/host/cis/parquet/sas_parquet'
+parquet_output_path = '/host/cis/parquet/python_output'
+csv_output_path = '/host/cis/output'
+
+input_file = f"{host_parquet_path}/unload_cirmrks_fb.parquet"
+output_file_name = f"CIRMKDU1_DELETE_{year}{month:02d}{day:02d}"
 
 # ============================================================
 # DUCKDB CONNECTION
@@ -11,142 +24,91 @@ year, month, day = batch_date.year, batch_date.month, batch_date.day
 con = duckdb.connect()
 
 # ============================================================
-# STEP 1: DUPLICATE REMOVAL (simulate ICETOOL SELECT FIRST)
-# ============================================================
-# Keep first occurrence based on key (ACCTNO + IND)
-con.execute(f"""
-    CREATE OR REPLACE TABLE borwguar_unq AS
-    SELECT *
-    FROM '{host_parquet_path("LIABFILE_BORWGUAR.parquet")}'
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY ACCTNO, substr(IND,1,1) ORDER BY ACCTNO) = 1
-""")
-
-# ============================================================
-# STEP 2: READ RLEN FILES & FILTER
+# LOAD INPUT
 # ============================================================
 con.execute(f"""
-    CREATE OR REPLACE VIEW rlen_files AS 
-    SELECT * FROM '{host_parquet_path("RLENCA_LN02.parquet")}'
-    UNION ALL
-    SELECT * FROM '{host_parquet_path("RLENCA_LN08.parquet")}'
-""")
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE rlen AS
+    CREATE OR REPLACE TABLE RMKFILE AS
     SELECT 
-        U_IBS_APPL_NO   AS ACCTNO,
-        C_IBS_APPL_CODE AS ACCTCODE,
-        U_IBS_R_APPL_NO AS CUSTNO,
-        try_cast(C_IBS_E1_TO_E2 AS INTEGER) AS RLENCODE,
-        try_cast(C_IBS_E2_TO_E1 AS INTEGER) AS PRISEC
-    FROM rlen_files
-    WHERE PRISEC = 901
-      AND RLENCODE IN (3,11,12,13,14,16,17,18,19,21,22,23,27,28)
+        CAST(BANK_NO AS INTEGER) AS BANK_NO,
+        TRIM(APPL_CODE) AS APPL_CODE,
+        TRIM(APPL_NO) AS APPL_NO,
+        CAST(EFF_DATE AS BIGINT) AS EFF_DATE,
+        TRIM(RMK_KEYWORD) AS RMK_KEYWORD,
+        TRIM(RMK_LINE_1) AS RMK_LINE_1,
+        TRIM(RMK_LINE_2) AS RMK_LINE_2,
+        TRIM(RMK_LINE_3) AS RMK_LINE_3,
+        TRIM(RMK_LINE_4) AS RMK_LINE_4,
+        TRIM(RMK_LINE_5) AS RMK_LINE_5
+    FROM read_parquet('{input_file}')
 """)
 
 # ============================================================
-# STEP 3: READ BORWGUAR.UNQ AS LOAN AND MAP STAT TO CODE
+# FUNCTION TO EXTRACT REMARK TYPE
 # ============================================================
-con.execute(f"""
-    CREATE OR REPLACE TABLE loan AS
-    SELECT 
-        substr(ACCTNO,1,11) AS ACCTNO,
-        substr(IND,1,3) AS STAT,
-        CASE 
-            WHEN trim(IND) = 'B' THEN 20
-            WHEN trim(IND) = 'G' THEN 17
-            WHEN trim(IND) = 'B/G' THEN 28
-            ELSE NULL
-        END AS CODE
-    FROM borwguar_unq
-    WHERE IND IN ('B','G','B/G')
-""")
+def extract_remark(keyword):
+    con.execute(f"""
+        CREATE OR REPLACE TABLE {keyword} AS
+        SELECT * 
+        FROM RMKFILE
+        WHERE APPL_CODE = 'CUST'
+        AND RMK_KEYWORD = '{keyword}'
+    """)
+
+    # Sort & remove duplicates by BANK_NO, APPL_CODE, APPL_NO (keep latest EFF_DATE)
+    con.execute(f"""
+        CREATE OR REPLACE TABLE LAST_{keyword} AS
+        SELECT *
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY BANK_NO, APPL_CODE, APPL_NO
+                ORDER BY EFF_DATE DESC
+            ) AS RN
+            FROM {keyword}
+        ) WHERE RN = 1
+    """)
+
+    # Extract duplicates (records to delete)
+    con.execute(f"""
+        CREATE OR REPLACE TABLE DEL_{keyword} AS
+        SELECT *
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY BANK_NO, APPL_CODE, APPL_NO
+                ORDER BY EFF_DATE DESC
+            ) AS RN
+            FROM {keyword}
+        ) WHERE RN > 1
+    """)
 
 # ============================================================
-# STEP 4: MERGE LOGIC
+# PROCESS EACH REMARK TYPE
+# ============================================================
+for kw in ['PASSPORT', 'VALID', 'MMTOH', 'PVIP']:
+    extract_remark(kw)
+
+# ============================================================
+# UNION ALL DELETES
 # ============================================================
 con.execute("""
-    CREATE OR REPLACE TABLE merge1 AS
-    SELECT 
-        l.ACCTNO,
-        r.ACCTCODE,
-        r.CUSTNO,
-        r.RLENCODE,
-        l.CODE,
-        l.STAT
-    FROM loan l
-    JOIN rlen r ON l.ACCTNO = r.ACCTNO
-    WHERE NOT (
-        l.CODE = r.RLENCODE
-        OR (r.RLENCODE = 21 AND l.CODE = 17)
-    )
+    CREATE OR REPLACE TABLE OUT_DELETE AS
+    SELECT * FROM DEL_PASSPORT
+    UNION ALL
+    SELECT * FROM DEL_VALID
+    UNION ALL
+    SELECT * FROM DEL_MMTOH
+    UNION ALL
+    SELECT * FROM DEL_PVIP
 """)
 
 # ============================================================
-# STEP 5: OUTPUT (SHOW BEFORE & AFTER EFFECT)
+# EXPORT OUTPUT
 # ============================================================
-outfile_table = """
-    SELECT 
-        ACCTCODE,
-        ACCTNO,
-        CUSTNO,
-        LPAD(CAST(RLENCODE AS VARCHAR),3,'0') AS RLENCODE,
-        LPAD(CAST(CODE AS VARCHAR),3,'0') AS CODE,
-        STAT
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-    FROM merge1
-""".format(year=year,month=month,day=day)
+parquet_out = f"{parquet_output_path}/{output_file_name}.parquet"
+csv_out = f"{csv_output_path}/{output_file_name}.csv"
 
-# ============================================================
-# STEP 6: OUTPUT FOR UPDATE (CIUPDRLN)
-# ============================================================
-updf_table = """
-    SELECT 
-        '033' AS CONST1,
-        ACCTCODE,
-        ACCTNO,
-        'CUST ' AS CONST2,
-        CUSTNO,
-        '901' AS CONST3,
-        LPAD(CAST(CODE AS VARCHAR),3,'0') AS CODE
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-    FROM merge1
-""".format(year=year,month=month,day=day)
+con.execute(f"COPY OUT_DELETE TO '{parquet_out}' (FORMAT PARQUET)")
+con.execute(f"COPY OUT_DELETE TO '{csv_out}' (HEADER TRUE, DELIMITER ',')")
 
-# ============================================================
-# COMPLETION LOG
-# ============================================================
-out = """
-    SELECT
-        *
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-    FROM borwguar_unq
-""".format(year=year,month=month,day=day)
-
-queries = {
-    "LIABFILE_BORWGUAR_UNQ"                 : out,
-    "CIS_UPDRLEN_BORWGTOR"             : outfile_table,
-    "CIS_UPDRLEN_UPDATE"             : updf_table
-}
-
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
-
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+print(f"✅ Output generated:")
+print(f"   • Parquet: {parquet_out}")
+print(f"   • CSV: {csv_out}")
