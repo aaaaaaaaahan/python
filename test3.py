@@ -1,114 +1,60 @@
-import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path
-import datetime
+INPUT @001  BANKNO             $3.
+             @004  APPLCODE           $5.
+             @009  CUSTNO             $11.
+             @029  PHONETYPE          $15.
+             @044  PHONEPAC           PD8.
+             @052  PHONEPREV          PD8.
+             @060  INDORG             $1.
+             @061  FIRSTDATE          $10.
+             @072  PROMTSOURCE        $5.
+             @077  PROMPTDATE         $10.
+             @077  PROMPTYY            4.
+             @082  PROMPTMM            2.
+             @085  PROMPTDD            2.
+             @087  PROMPTTIME         $8.
+             @095  UPDSOURCE          $5.
+             @100  UPDTYY              4.
+             @105  UPDTMM              2.
+             @108  UPDTDD              2.
+             @110  UPDTIME            $8.
+             @118  UPDOPER            $8.;
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-
-# ============================================================
-# DUCKDB CONNECTION
-# ============================================================
-con = duckdb.connect()
-
-# ============================================================
-# INPUT PARQUET
-# ============================================================
-# Read RMKFILE
-con.execute(f"""
-    CREATE OR REPLACE TABLE RMKFILE AS
-    SELECT 
-        LPAD(CAST(CAST(BANK_NO AS INTEGER) AS VARCHAR),3,'0') AS BANK_NO,
-        APPL_CODE,
-        APPL_NO,
-        CAST(EFF_DATE AS BIGINT) AS EFF_DATE,
-        RMK_KEYWORD,
-        RMK_LINE_1,
-        RMK_LINE_2,
-        RMK_LINE_3,
-        RMK_LINE_4,
-        RMK_LINE_5
-    FROM '{host_parquet_path("CIRMRKS_FB.parquet")}'
-""")
-
-# ============================================================
-# STEP 1: FILTER WHERE APPL_CODE = 'CUST '
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE OKAY AS
-    SELECT *
-    FROM RMKFILE
-    WHERE APPL_CODE = 'CUST'
-""")
-
-# ============================================================
-# STEP 2: REMOVE DUPLICATES (KEEP LATEST BY APPL_NO, EFF_DATE)
-# SAS PROC SORT NODUPKEY DUPOUT=DUPNI
-# ============================================================
-# Create DUPNI = duplicate records (removed ones)
-con.execute("""
-    CREATE OR REPLACE TABLE DUPNI AS
-    SELECT *
-    FROM OKAY
-    WHERE (APPL_NO, EFF_DATE) IN (
-        SELECT APPL_NO, EFF_DATE
-        FROM OKAY
-        GROUP BY APPL_NO, EFF_DATE
-        HAVING COUNT(*) > 1
-    )
-""")
-
-# ============================================================
-# STEP 3: ADD GROUP_ID & EFF_DATE_ADD
-# Equivalent to SAS BY-group increment
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE LATEST AS
-    SELECT 
-        *,
-        DENSE_RANK() OVER (ORDER BY APPL_NO, EFF_DATE) AS GROUP_ID,
-        ROW_NUMBER() OVER (PARTITION BY APPL_NO ORDER BY EFF_DATE) AS EFF_DATE_ADD
-    FROM DUPNI
-""")
-
-# ============================================================
-# STEP 4: EXPORT OUTPUT
-# ============================================================
-# Select and write output with correct field order
-result = """
-    SELECT
-        BANK_NO,
-        APPL_CODE,
-        APPL_NO,
-        EFF_DATE,
-        RMK_KEYWORD,
-        RMK_LINE_1,
-        RMK_LINE_2,
-        RMK_LINE_3,
-        RMK_LINE_4,
-        RMK_LINE_5,
-        EFF_DATE_ADD
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-    FROM LATEST
-""".format(year=year,month=month,day=day)
-
-queries = {
-    "CIRMKEFF_UPDATE"                 : result,
-}
-
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
-
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+( "CI_BANK_NO"                         
+ POSITION(  00001:00003) CHAR(00003)   
+, "CI_APPL_CODE"                       
+ POSITION(  00004:00008) CHAR(00005)   
+, "CI_APPL_NO"                         
+ POSITION(  00009:00028) CHAR(00020)   
+, "CI_PHONE_FIELD"                     
+ POSITION(  00029:00043) CHAR(00015)   
+, "CI_PAC_PHONE"                       
+ POSITION(  00044:00051) DECIMAL       
+, "CI_PREV_PHONE"                      
+ POSITION(  00052:00059) DECIMAL       
+, "CI_CUST_TYPE"                       
+ POSITION(  00060:00060) CHAR(00001)   
+, "CI_FIRST_DATE"                      
+ POSITION(  00061:00070) DATE EXTERNAL 
+, "CI_NO_OF_PROMPT"                    
+ POSITION(  00071:00071) DECIMAL       
+, "CI_PROMPT_SOURCE"                   
+ POSITION(  00072:00076) CHAR(00005)   
+, "CI_PROMPT_DATE"                     
+ POSITION(  00077:00086) DATE EXTERNAL 
+, "CI_PROMPT_TIME"                     
+ POSITION(  00087:00094) TIME EXTERNAL 
+, "CI_UPDATE_SOURCE"                   
+ POSITION(  00095:00099) CHAR(00005)   
+, "CI_UPDATE_DATE"                     
+ POSITION(  00100:00109) DATE EXTERNAL 
+, "CI_UPDATE_TIME"                     
+ POSITION(  00110:00117) TIME EXTERNAL 
+, "CI_UPDATE_OPERATOR"                 
+ POSITION(  00118:00125) CHAR(00008)   
+, "CI_TRX_APPL_CODE"                   
+ POSITION(  00126:00130) CHAR(00005)   
+, "CI_TRX_APPL_NO"                     
+ POSITION(  00131:00150) CHAR(00020)   
+, "CI_NEW_PHONE"                
+ POSITION(  00151:00158) DECIMAL
+)                               
