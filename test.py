@@ -2,76 +2,69 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIRMKFIL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0132457
+//CIRMKEF1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB95844
 //*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=REMARKS.VALID.EXPIRE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIRMKEFF.UPDATE,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*---------------------------------------------------------------------
 //STATS#01 EXEC SAS609
 //RMKFILE  DD DISP=SHR,DSN=UNLOAD.CIRMRKS.FB
-//OUTFILE  DD DSN=REMARKS.VALID.EXPIRE,
+//CIRMKUPD DD DSN=CIRMKEFF.UPDATE,
 //            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,20),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=346,BLKSIZE=0,RECFM=FB)
+//            SPACE=(CYL,(200,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=360,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
+OPTIONS NOCENTER;
 
- /*----------------------------------------------------------------*/
- /*    SET DATES                                                   */
- /*----------------------------------------------------------------*/
- DATA REPTDATE;
-    TODAYSAS = TODAY();
-    CALL SYMPUT('DAY',PUT(DAY(TODAYSAS),Z2.));
-    CALL SYMPUT('MONTH',PUT(MONTH(TODAYSAS),Z2.));
-    CALL SYMPUT('YEAR',PUT(YEAR(TODAYSAS),Z4.));
-    CALL SYMPUT('CURRDT',TODAYSAS);
- RUN;
- PROC PRINT; RUN;
+DATA OKAY DUPNI;
+   INFILE RMKFILE;
+   INPUT  @003   BANK_NO           PD2.
+          @005   APPL_CODE         $ 5.
+          @010   APPL_NO           $20.
+          @031   EFF_DATE          PD8.
+          @031   EFF_DATE2         PD6.
+          @039   RMK_KEYWORD       $ 8.
+          @055   RMK_LINE_1        $60.
+          @115   RMK_LINE_2        $60.
+          @175   RMK_LINE_3        $60.
+          @235   RMK_LINE_4        $60.
+          @295   RMK_LINE_5        $60. ;
+          IF APPL_CODE   IN ('CUST ');
+RUN;
 
-    DATA REMARKS;
-     INFILE RMKFILE;
-     INPUT  @  3   BANK_NO              PD2.
-            @  5   APPL_CODE            $ 5.
-            @ 10   APPL_NO              $20.
-            @ 39   RMK_KEYWORD          $ 8.
-            @ 55   RMK_LINE_1           $60.
-            @115   RMK_LINE_2           $60.
-            @175   RMK_LINE_3           $60.
-            @235   RMK_LINE_4           $60.
-            @295   RMK_LINE_5           $60.
-            @364   EXPIRE_DATE          $10.
-            @364   YYYY                 $4.
-            @369   MM                   $2.
-            @372   DD                   $2.;
-     REPDT =  MDY(MM,DD,YYYY);
-     IF RMK_KEYWORD = 'VALID'
-     OR RMK_KEYWORD = 'PASSPORT'
-     OR RMK_KEYWORD = 'MMTOH';
-     IF (&CURRDT LE REPDT);
-     RUN;
+PROC SORT DATA=OKAY NODUPKEY DUPOUT=DUPNI;
+       BY APPL_NO EFF_DATE;
+          RUN;
 
-     PROC PRINT DATA=REMARKS (OBS=25);TITLE 'REMARKS';
+PROC PRINT DATA=OKAY(OBS=20);TITLE 'OKAY';RUN;
+PROC PRINT DATA=DUPNI(OBS=20);TITLE 'DUP';RUN;
 
-     RUN;
+DATA LATEST;
+SET DUPNI;
+BY APPL_NO EFF_DATE;
+IF FIRST.EFF_DATE THEN DO;
+GROUP_ID+1;
+EFF_DATE_ADD=1;
+END;
+ELSE EFF_DATE_ADD+1;
+RUN;
+PROC PRINT DATA=LATEST(OBS=30);TITLE 'EFF DATE TO ADD';RUN;
 
-
-     DATA OUT_REMARKS;
-     SET REMARKS;
-       FILE OUTFILE;
-         PUT  @001   BANK_NO               $ 3.
-              @004   APPL_CODE             $ 5.
-              @009   APPL_NO               $20.
-              @029   RMK_KEYWORD           $ 8.
-              @037   EXPIRE_DATE           $10.
-              @047   RMK_LINE_1            $60.
-              @107   RMK_LINE_2            $60.
-              @167   RMK_LINE_3            $60.
-              @227   RMK_LINE_4            $60.
-              @287   RMK_LINE_5            $60. ;
-       RETURN;
-       RUN;
-       PROC PRINT DATA=REMARKS (OBS=25);TITLE 'OUTRMK';
-
-BELOW IS SPLIT FROM EXPIRED_DATE
- REPDT =  MDY(MM,DD,YYYY);
+DATA OUT_UPDATE;
+  SET LATEST;
+  FILE CIRMKUPD;
+     PUT  @001   BANK_NO           Z3.
+          @004   APPL_CODE         $5.
+          @009   APPL_NO           $20.
+          @029   EFF_DATE          Z15.
+          @044   RMK_KEYWORD       $8.
+          @052   RMK_LINE_1        $60.
+          @112   RMK_LINE_2        $60.
+          @172   RMK_LINE_3        $60.
+          @232   RMK_LINE_4        $60.
+          @292   RMK_LINE_5        $60.
+          @352   EFF_DATE_ADD      Z2.
+          ;
+  RUN;
