@@ -2,111 +2,154 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CCRSRLEB JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB49618
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=LIABFILE.BORWGUAR.UNQ,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL3     DD DSN=CIS.UPDRLEN.BORWGTOR,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL4     DD DSN=CIS.UPDRLEN.UPDATE,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//* GET UNIQUE RECORD FROM FILE
+//CIRMKDU1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB95844
+//**********************************************************************
 //*---------------------------------------------------------------------
-//DUPCUST  EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=SAS.B033.LIABFILE.BORWGUAR
-//OUTDD01  DD DSN=LIABFILE.BORWGUAR.UNQ,
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            SPACE=(CYL,(300,200),RLSE),
-//            DCB=(LRECL=80,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-   SELECT FROM(INDD01) TO(OUTDD01) ON(1,11,CH) ON(23,1,CH) FIRST
+//* TO IDENTIFY THE REMARKS RECORDS TO BE DELETED
 //*---------------------------------------------------------------------
 //STATS#01 EXEC SAS609
-//RLENFILE DD DISP=SHR,DSN=RLEN#CA.LN#02
-//         DD DISP=SHR,DSN=RLEN#CA.LN#08
-//BORWGTOR DD DISP=SHR,DSN=LIABFILE.BORWGUAR.UNQ
-//* SHOW BEFORE AND AFTER EFFECT FOR UAT VERIFICATION
-//OUTFILE  DD DSN=CIS.UPDRLEN.BORWGTOR,
+//RMKFILE  DD DISP=SHR,DSN=UNLOAD.CIRMRKS.FB
+//CIRMKDEL DD DSN=CIRMKDU1.DELETE(+1),
 //            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(20,20),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//* UPDATE FORMAT FOR CIUPDRLN
-//UPDFILE  DD DSN=CIS.UPDRLEN.UPDATE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(20,20),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//            SPACE=(CYL,(200,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=351,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
+OPTIONS NOCENTER;
 
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
-DATA RLEN;
-   INFILE RLENFILE;
-       INPUT @5    ACCTNO       $11.
-             @25   ACCTCODE      $5.
-             @46   CUSTNO       $11.
-             @66   RLENCODE     PD2.
-             @68   PRISEC       PD2.;
-       IF PRISEC = 901;
-       IF RLENCODE IN (003,011,012,013,014,016,017,018,019,021,
-                       022,023,027,028);
+ /* PASSPORT   */
+DATA  PASSPORT;
+   INFILE RMKFILE;
+   INPUT  @003   BANK_NO           PD2.
+          @005   APPL_CODE         $ 5.
+          @010   APPL_NO           $20.
+          @031   EFF_DATE          PD8.
+          @039   RMK_KEYWORD       $ 8.
+          @055   RMK_LINE_1        $60.
+          @115   RMK_LINE_2        $60.
+          @175   RMK_LINE_3        $60.
+          @235   RMK_LINE_4        $60.
+          @295   RMK_LINE_5        $60. ;
+          IF APPL_CODE   IN ('CUST ');
+          IF RMK_KEYWORD IN ('PASSPORT');
 RUN;
-PROC SORT  DATA=RLEN ; BY ACCTNO ;
-PROC PRINT DATA=RLEN(OBS=5);TITLE 'RLEN FILE';RUN;
-
-DATA LOAN;
-   INFILE BORWGTOR;
-       INPUT @1    ACCTNO       $11.
-             @23   STAT         $3.;
-       IF STAT = 'B  '         THEN CODE=020;
-          ELSE IF STAT = 'G  ' THEN CODE=017;
-          ELSE IF STAT = 'B/G' THEN CODE=028;
+PROC SORT  DATA=PASSPORT;
+BY BANK_NO
+   APPL_CODE
+   APPL_NO
+   EFF_DATE
+   ;
 RUN;
-PROC SORT  DATA=LOAN ; BY ACCTNO ;
-PROC PRINT DATA=LOAN(OBS=5);TITLE 'LOAN FILE';RUN;
+PROC PRINT DATA=PASSPORT (OBS=25);TITLE 'PASSPORT REMARKS';RUN;
 
-DATA MERGE1;
-     MERGE LOAN(IN=A) RLEN(IN=B); BY ACCTNO;
-     IF A AND B;
-     IF CODE = RLENCODE THEN DELETE;
-     IF RLENCODE=021 AND CODE=017 THEN DELETE;
+  DATA LAST_PASSPORT;
+  SET PASSPORT;
+  PROC SORT DATA=LAST_PASSPORT NODUPKEY DUPOUT=DEL_PASSPORT;
+  BY BANK_NO APPL_CODE APPL_NO; RUN;
+
+ /* VALID      */
+DATA VALID;
+   INFILE RMKFILE;
+   INPUT  @003   BANK_NO           PD2.
+          @005   APPL_CODE         $ 5.
+          @010   APPL_NO           $20.
+          @031   EFF_DATE          PD8.
+          @039   RMK_KEYWORD       $ 8.
+          @055   RMK_LINE_1        $60.
+          @115   RMK_LINE_2        $60.
+          @175   RMK_LINE_3        $60.
+          @235   RMK_LINE_4        $60.
+          @295   RMK_LINE_5        $60. ;
+          IF APPL_CODE   IN ('CUST ');
+          IF RMK_KEYWORD IN ('VALID   ');
 RUN;
-PROC PRINT DATA=MERGE1(OBS=10);TITLE 'MERGE1';RUN;
+PROC SORT  DATA=VALID;
+BY BANK_NO
+   APPL_CODE
+   APPL_NO
+   EFF_DATE
+   ;
+RUN;
+PROC PRINT DATA=VALID (OBS=25);TITLE 'VALID REMARKS';RUN;
 
-DATA OUT;           /* FOR SHOWING BEFORE AND AFTER EFFECT - UAT TEST */
-  SET MERGE1;
-  FILE OUTFILE;
-     PUT @1    ACCTCODE          $5.
-         @6    ACCTNO            $11.
-         @20   CUSTNO            $11.
-         @35   RLENCODE          Z3.
-         @40   CODE              Z3.
-         @45   STAT $3.;
-  RETURN;
+  DATA LAST_VALID;
+  SET VALID;
+  PROC SORT DATA=LAST_VALID NODUPKEY DUPOUT=DEL_VALID;
+  BY BANK_NO APPL_CODE APPL_NO; RUN;
+
+ /* MMTOH      */
+DATA MMTOH;
+   INFILE RMKFILE;
+   INPUT  @003   BANK_NO           PD2.
+          @005   APPL_CODE         $ 5.
+          @010   APPL_NO           $20.
+          @031   EFF_DATE          PD8.
+          @039   RMK_KEYWORD       $ 8.
+          @055   RMK_LINE_1        $60.
+          @115   RMK_LINE_2        $60.
+          @175   RMK_LINE_3        $60.
+          @235   RMK_LINE_4        $60.
+          @295   RMK_LINE_5        $60. ;
+          IF APPL_CODE   IN ('CUST ');
+          IF RMK_KEYWORD IN ('MMTOH   ');
+RUN;
+PROC SORT  DATA=MMTOH;
+BY BANK_NO
+   APPL_CODE
+   APPL_NO
+   EFF_DATE
+   ;
+RUN;
+PROC PRINT DATA=MMTOH (OBS=25);TITLE 'MMTOH REMARKS';RUN;
+
+  DATA LAST_MMTOH;
+  SET MMTOH;
+  PROC SORT DATA=LAST_MMTOH NODUPKEY DUPOUT=DEL_MMTOH;
+  BY BANK_NO APPL_CODE APPL_NO; RUN;
+
+ /* PVIP       */
+DATA PVIP;
+   INFILE RMKFILE;
+   INPUT  @003   BANK_NO           PD2.
+          @005   APPL_CODE         $ 5.
+          @010   APPL_NO           $20.
+          @031   EFF_DATE          PD8.
+          @039   RMK_KEYWORD       $ 8.
+          @055   RMK_LINE_1        $60.
+          @115   RMK_LINE_2        $60.
+          @175   RMK_LINE_3        $60.
+          @235   RMK_LINE_4        $60.
+          @295   RMK_LINE_5        $60. ;
+          IF APPL_CODE   IN ('CUST ');
+          IF RMK_KEYWORD IN ('PVIP    ');
+RUN;
+PROC SORT  DATA=PVIP;
+BY BANK_NO
+   APPL_CODE
+   APPL_NO
+   EFF_DATE
+   ;
+RUN;
+PROC PRINT DATA=PVIP (OBS=25);TITLE 'PVIP REMARKS';RUN;
+
+  DATA LAST_PVIP;
+  SET PVIP;
+  PROC SORT DATA=LAST_PVIP NODUPKEY DUPOUT=DEL_PVIP;
+  BY BANK_NO APPL_CODE APPL_NO; RUN;
+
+
+ /* DELETE INPUT FILE  */  /* TO FIT PROGRAM(CIRMKDEL) */
+DATA OUT_DELETE;
+  SET DEL_PASSPORT DEL_VALID DEL_MMTOH DEL_PVIP;
+  FILE CIRMKDEL;
+     PUT  @001   BANK_NO           Z3.
+          @004   APPL_CODE         $5.
+          @009   APPL_NO           $20.
+          @029   EFF_DATE          Z15.
+          @044   RMK_KEYWORD       $8.
+          @052   RMK_LINE_1        $60.
+          @112   RMK_LINE_2        $60.
+          @172   RMK_LINE_3        $60.
+          @232   RMK_LINE_4        $60.
+          @292   RMK_LINE_5        $60. ;
   RUN;
-
-DATA OUT2;          /* FOR UPDATE TO SOURCE CIUPDRLN */
-  SET MERGE1;
-  FILE UPDFILE;
-     PUT @01   '033'
-         @04   ACCTCODE          $5.
-         @09   ACCTNO            $11.
-         @29   'CUST '
-         @34   CUSTNO            $11.
-         @54   '901'
-         @57   CODE              Z3. ;
-  RETURN;
-  RUN;
-
-
-this is the field layout for 
-SAS.B033.LIABFILE.BORWGUAR
-INPUT   @1    ACCTNO   Z11. 
-        @13   NOTENO    Z5. 
-        @19   NOTETYPE  Z3. 
-        @23   IND       $3.;
