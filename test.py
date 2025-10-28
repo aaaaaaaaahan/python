@@ -2,69 +2,225 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIRMKEF1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB95844
+//CICRMPH1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB15173
 //*---------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIRMKEFF.UPDATE,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIPHONET.ALL.SUMMARY,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=CIPHONET.OTC.SUMMARY,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*---------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//RMKFILE  DD DISP=SHR,DSN=UNLOAD.CIRMRKS.FB
-//CIRMKUPD DD DSN=CIRMKEFF.UPDATE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(200,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=360,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTIONS NOCENTER;
+//* GET TOTAL PHONE UPDATED ACCOUNTS FOR A PARTICULAR MONTH
+//*---------------------------------------------------------------------
+//GETPROM EXEC SAS609,REGION=4M,WORK='50000,50000'
+//IEFRDER   DD DUMMY
+//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
+//CIPHONET  DD DISP=SHR,DSN=UNLOAD.CIPHONET.FB
+//ALLSUM    DD DSN=CIPHONET.ALL.SUMMARY,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(1,1),RLSE),
+//             DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//OTCSUM    DD DSN=CIPHONET.OTC.SUMMARY,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(1,1),RLSE),
+//             DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*    BATCH DATE - 10 TO GET PREVIOUS MONTH DATE FOR REPORTING    */
+ /*----------------------------------------------------------------*/
+ DATA SRSDATE;
+       INFILE CTRLDATE;
+         INPUT @001  SRSYY    4.
+               @005  SRSMM    2.
+               @007  SRSDD    2.;
 
-DATA OKAY DUPNI;
-   INFILE RMKFILE;
-   INPUT  @003   BANK_NO           PD2.
-          @005   APPL_CODE         $ 5.
-          @010   APPL_NO           $20.
-          @031   EFF_DATE          PD8.
-          @031   EFF_DATE2         PD6.
-          @039   RMK_KEYWORD       $ 8.
-          @055   RMK_LINE_1        $60.
-          @115   RMK_LINE_2        $60.
-          @175   RMK_LINE_3        $60.
-          @235   RMK_LINE_4        $60.
-          @295   RMK_LINE_5        $60. ;
-          IF APPL_CODE   IN ('CUST ');
-RUN;
+      CURDT  = MDY(SRSMM,SRSDD,SRSYY);
+      PREVDT = CURDT - 10;
+      PREVYY = YEAR(PREVDT);
+      PREVMM = MONTH(PREVDT);
+      PREVDD = DAY(PREVDT);
+      CALL SYMPUT('PREVDD',PUT(PREVDD,2.));
+      CALL SYMPUT('PREVMM',PUT(PREVMM,2.));
+      CALL SYMPUT('PREVYY',PUT(PREVYY,4.));
+ RUN;
+ PROC PRINT DATA=SRSDATE(OBS=10);
+      TITLE 'DATE FORMAT ** MMDDYYYY **   ';RUN;
 
-PROC SORT DATA=OKAY NODUPKEY DUPOUT=DUPNI;
-       BY APPL_NO EFF_DATE;
-          RUN;
+ /*----------------------------------------------------------------*/
+ /*  GET ALL EXISTING CUSTOMERS BY CHANNEL                         */
+ /*----------------------------------------------------------------*/
+ DATA MASTERPHONE;
+    INFILE CIPHONET;
+       INPUT @001  BANKNO             $3.
+             @004  APPLCODE           $5.
+             @009  CUSTNO             $11.
+             @029  PHONETYPE          $15.
+             @044  PHONEPAC           PD8.
+             @052  PHONEPREV          PD8.
+             @060  INDORG             $1.
+             @061  FIRSTDATE          $10.
+             @072  PROMTSOURCE        $5.
+             @077  PROMPTDATE         $10.
+             @077  PROMPTYY            4.
+             @082  PROMPTMM            2.
+             @085  PROMPTDD            2.
+             @087  PROMPTTIME         $8.
+             @095  UPDSOURCE          $5.
+             @100  UPDTYY              4.
+             @105  UPDTMM              2.
+             @108  UPDTDD              2.
+             @110  UPDTIME            $8.
+             @118  UPDOPER            $8.;
+             TOTCNT=1;
+             IF PROMTSOURCE = 'INIT' THEN DELETE;
+ RUN;
 
-PROC PRINT DATA=OKAY(OBS=20);TITLE 'OKAY';RUN;
-PROC PRINT DATA=DUPNI(OBS=20);TITLE 'DUP';RUN;
+ /*----------------------------------------------------------------*/
+ /*  GET THIS MONTH PROMPTED CUSTOMERS DATA                        */
+ /*----------------------------------------------------------------*/
+ DATA PROMCUST;
+     ATMPCNT=0; EBKPCNT=0; OTCPCNT=0;
+     SET MASTERPHONE;
+     IF &PREVYY = PROMPTYY AND &PREVMM = PROMPTMM THEN DO;
+         IF PROMTSOURCE = 'ATM' THEN ATMPCNT=1;
+         IF PROMTSOURCE = 'EBK' THEN EBKPCNT=1;
+         IF PROMTSOURCE NOT IN ('ATM','EBK') THEN OTCPCNT=1;
+     END;
+     OUTPUT;
+ RUN;
 
-DATA LATEST;
-SET DUPNI;
-BY APPL_NO EFF_DATE;
-IF FIRST.EFF_DATE THEN DO;
-GROUP_ID+1;
-EFF_DATE_ADD=1;
-END;
-ELSE EFF_DATE_ADD+1;
-RUN;
-PROC PRINT DATA=LATEST(OBS=30);TITLE 'EFF DATE TO ADD';RUN;
+ PROC SQL;
+     CREATE TABLE EXTCUST AS
+     SELECT (SUM(ATMPCNT)) AS PROMATM, (SUM(EBKPCNT)) AS PROMEBK,
+     (SUM(OTCPCNT)) AS PROMOTC
+     FROM PROMCUST;
+ QUIT;
+ RUN;
 
-DATA OUT_UPDATE;
-  SET LATEST;
-  FILE CIRMKUPD;
-     PUT  @001   BANK_NO           Z3.
-          @004   APPL_CODE         $5.
-          @009   APPL_NO           $20.
-          @029   EFF_DATE          Z15.
-          @044   RMK_KEYWORD       $8.
-          @052   RMK_LINE_1        $60.
-          @112   RMK_LINE_2        $60.
-          @172   RMK_LINE_3        $60.
-          @232   RMK_LINE_4        $60.
-          @292   RMK_LINE_5        $60.
-          @352   EFF_DATE_ADD      Z2.
-          ;
+ /*----------------------------------------------------------------*/
+ /*  GET THIS MONTH UPDATED CUSTOMERS DATA                         */
+ /*----------------------------------------------------------------*/
+ DATA UPDCUST;
+     SET MASTERPHONE;
+     ATMUCNT=0; EBKUCNT=0; OTCUCNT=0;
+     IF &PREVYY = UPDTYY AND &PREVMM = UPDTMM THEN DO;
+         IF UPDSOURCE = 'ATM' THEN ATMUCNT=1;
+         IF UPDSOURCE = 'EBK' THEN EBKUCNT=1;
+         IF UPDSOURCE NOT IN ('ATM','EBK', ' ') THEN OTCUCNT=1;
+     END;
+     OUTPUT;
+ RUN;
+
+ PROC SQL;
+     CREATE TABLE UPDTCUST AS
+     SELECT (SUM(ATMUCNT)) AS UPDATM, (SUM(EBKUCNT)) AS UPDEBK,
+     (SUM(OTCUCNT)) AS UPDOTC
+     FROM UPDCUST;
+ QUIT;
+ RUN;
+
+ /*----------------------------------------------------------------*/
+ /*  MERGE TO GET SUMMARY REPORT DATASET                           */
+ /*----------------------------------------------------------------*/
+     DATA SUMMERGE;
+        MERGE EXTCUST UPDTCUST;
+     RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT SUMMARY REPORT BY ALL CHANNELS                        */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT;
+  SET SUMMERGE;
+  FILE ALLSUM;
+     PUT @001  ' ATM '
+         @006  PROMATM             8.
+         @014  UPDATM              8.;
+     PUT @001  ' EBK '
+         @006  PROMEBK             8.
+         @014  UPDEBK              8.;
+     PUT @001  ' OTC '
+         @006  PROMOTC             8.
+         @014  UPDOTC              8.;
+  RETURN;
   RUN;
+
+ /*----------------------------------------------------------------*/
+ /*----------------------------------------------------------------*/
+ /*----------------------------------------------------------------*/
+ /*  GET OTC SUMMARY CUSTOMERS DATASET                             */
+ /*----------------------------------------------------------------*/
+ DATA OTCPROM;
+     SET MASTERPHONE;
+     IF PROMTSOURCE IN ('ATM','EBK',' ') THEN DELETE;
+     X=0;
+     TEMPBRANCH=PROMTSOURCE;
+     IF &PREVYY = PROMPTYY AND &PREVMM = PROMPTMM THEN OUTPUT OTCPROM;
+ RUN;
+
+ DATA OTCUPD;
+     SET MASTERPHONE;
+     IF UPDSOURCE IN ('ATM','EBK',' ') THEN DELETE;
+     Y=0;
+     TEMPBRANCH=UPDSOURCE;
+     IF &PREVYY = UPDTYY AND &PREVMM = UPDTMM THEN OUTPUT OTCUPD;
+ RUN;
+
+ /*----------------------------------------------------------------*/
+ /*  PROC SUMMARY FOR TOTAL PROMPTED CUSTOMERS                     */
+ /*----------------------------------------------------------------*/
+ PROC SUMMARY DATA=OTCPROM;
+ CLASS TEMPBRANCH;
+ VAR X;
+ OUTPUT OUT=TEMPPROM (DROP=_TYPE_ RENAME=(_FREQ_=TOTPROM)) SUM=; RUN;
+ PROC SORT  DATA=TEMPPROM; BY TEMPBRANCH ;RUN;
+ PROC PRINT DATA=TEMPPROM;TITLE 'OTC PROM CUSTOMERS FILE';RUN;
+
+ /*----------------------------------------------------------------*/
+ /*  PROC SUMMARY FOR TOTAL UPDATED CUSTOMERS                      */
+ /*----------------------------------------------------------------*/
+ PROC SUMMARY DATA=OTCUPD;
+ CLASS TEMPBRANCH;
+ VAR Y;
+ OUTPUT OUT=TEMPUPD (DROP=_TYPE_ RENAME=(_FREQ_=TOTUPD)) SUM=; RUN;
+
+ PROC SORT  DATA=TEMPUPD; BY TEMPBRANCH ;RUN;
+
+ /*----------------------------------------------------------------*/
+ /*  MERGE TO GET ALL BRANCHES COUNT CUSTOMERS RECORDS             */
+ /*----------------------------------------------------------------*/
+     DATA ALLOTCMRG;
+        MERGE TEMPPROM TEMPUPD; BY TEMPBRANCH;
+        IF TOTPROM LT 1 THEN TOTPROM = 0;
+        IF TOTUPD LT 1 THEN TOTUPD = 0;
+        IF TEMPBRANCH NE ' ' THEN OUTPUT;
+     RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT2;
+  SET ALLOTCMRG;
+  FILE OTCSUM;
+     PUT @001  TEMPBRANCH         $5.
+         @006  TOTPROM             8.
+         @014  TOTUPD              8.;
+  RETURN;
+  RUN;
+//*--------------------------------------------------------------------
+//*PRINT THE RESULT (DETAIL)
+//*--------------------------------------------------------------------
+//PRT#ALL  EXEC PGM=IEBGENER
+//SYSPRINT DD SYSOUT=X
+//SYSUT1   DD DISP=SHR,DSN=CIPHONET.ALL.SUMMARY
+//SYSUT2   DD SYSOUT=X
+//SYSIN    DD DUMMY
+//*
+//PRT#OTC  EXEC PGM=IEBGENER
+//SYSPRINT DD SYSOUT=X
+//SYSUT1   DD DISP=SHR,DSN=CIPHONET.OTC.SUMMARY
+//SYSUT2   DD SYSOUT=X
+//SYSIN    DD DUMMY
