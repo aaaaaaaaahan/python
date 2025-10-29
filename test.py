@@ -2,70 +2,111 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIEBKALS JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0143343
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DLT1     DD DSN=CIS.EBANKING.ALIAS,
+//CIEMLFIL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0176605
+//*--------------------------------------------------------------------
+//* ESMR 2020-4480 PROMPTING TO UPDATE REMARKS = EMAILADD
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIEMLFIL.INSERT,
 //            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//SASLST    EXEC SAS609
-//IEFRDER   DD DUMMY
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
-//CUSTFILE  DD DISP=SHR,DSN=CIS.CUST.DAILY
-//INPFILE   DD DISP=SHR,DSN=UNLOAD.ALLALIAS.FB
-//OUTFILE   DD DSN=CIS.EBANKING.ALIAS,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(5,20),RLSE),
-//             DCB=(LRECL=150,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- DATA CUS;
-    KEEP CUSTNO ACCTNOC CUSTNAME ACCTCODE DOBDOR;
-    SET CUSTFILE.CUSTDLY;
-    IF CUSTNAME EQ '' THEN DELETE;
- RUN;
- PROC SORT  DATA=CUS NODUPKEY; BY CUSTNO;RUN;
- PROC PRINT DATA=CUS(OBS=10);TITLE 'CUSTOMER DATA';RUN;
+//DEL2     DD DSN=CIEMLFIL.DELETE,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//RMKFILE  DD DISP=SHR,DSN=CCRIS.CISRMRK.EMAIL.FIRST
+//CUSTFILE DD DISP=SHR,DSN=CIS.CUST.DAILY
+//CIEMLDBT DD DISP=SHR,DSN=CIEMLDBT.FB
+//INSERT2  DD DSN=CIEMLFIL.INSERT,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=130,BLKSIZE=0,RECFM=FB)
+//DELETE2  DD DSN=CIEMLFIL.DELETE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=130,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
 
- DATA ALIAS;
-      INFILE INPFILE;
-             INPUT  @001  HOLD_CO_NO       PD2.
-                    @003  BANK_NO          PD2.
-                    @005  CUSTNO           $20.
-                    @034  PROCESS_TIME     $8.
-                    @053  KEY_FIELD_1      $15.
-                    @089  NAME_LINE        $40.
-                    @343  LAST_CHANGE      $10.;
-      IF KEY_FIELD_1 = 'PP';
- RUN;
- PROC SORT  DATA=ALIAS;
-   BY CUSTNO
-      DESCENDING LAST_CHANGE
-      DESCENDING PROCESS_TIME ; RUN;
- PROC PRINT DATA=ALIAS; TITLE 'ALIAS FILE' ; RUN;
- /*-----------------------------------------------------------*/
- /*  MATCH EMAIL DATASET AND CUST DAILY                       */
- /*-----------------------------------------------------------*/
- DATA MATCH;
- MERGE ALIAS(IN=A)  CUS(IN=B);
-       BY CUSTNO;
-       IF B AND A;
- RUN;
- PROC SORT  DATA=MATCH; BY CUSTNO ;RUN;
- PROC PRINT DATA=MATCH(OBS=10) ;TITLE 'MATCH DATASET';RUN;
+DATA TBL_EMAIL;
+   INFILE CIEMLDBT;
+   INPUT @001     CUSTNO                      $20.;
+RUN;
+PROC SORT  DATA=TBL_EMAIL ; BY CUSTNO;RUN;
+PROC PRINT DATA=TBL_EMAIL (OBS=10);TITLE 'CIEMLDBT   ';RUN;
 
- DATA OUT;
-    SET MATCH;BY CUSTNO;
-    FILE OUTFILE;
-    IF FIRST.CUSTNO THEN DO;
-         PUT @001     BANK_NO             $Z3.
-             @005     CUSTNO              $20.
-             @017     NAME_LINE           $48.
-             @066     DOBDOR              $10.
-             ;
-    END;
+DATA RMK;
+   INFILE RMKFILE;
+   INPUT @009     CUSTNO                      $20.
+         @052     REMARKS                     $60.;
+RUN;
+PROC SORT  DATA=RMK; BY CUSTNO;RUN;
+PROC PRINT DATA=RMK(OBS=10);TITLE 'REMARK DATA';RUN;
+
+DATA CUS;
+   KEEP CUSTNO ALIAS ALIASKEY;
+   SET CUSTFILE.CUSTDLY;
+   IF INDORG       = 'I';
+   IF CUSTNAME EQ '' THEN DELETE;
+   IF ALIAS    EQ '' THEN DELETE;
+   IF ACCTCODE  = '' THEN DELETE;
+RUN;
+PROC SORT  DATA=CUS NODUPKEY; BY CUSTNO;RUN;
+PROC PRINT DATA=CUS(OBS=10);TITLE 'CUSTOMER DATA';RUN;
+
+ /*-----------------------------------------------------------*/
+ /*  IDENTIFY CUSTOMER WITH/WITHOUT EMAIL                     */
+ /*-----------------------------------------------------------*/
+DATA INSERT1 DELETE1;
+MERGE RMK(IN=A)  CUS(IN=B);
+      BY CUSTNO;
+      IF B AND NOT A THEN OUTPUT INSERT1;
+      IF B AND A     THEN OUTPUT DELETE1;
+RUN;
+PROC SORT  DATA=INSERT1 NODUPKEY; BY CUSTNO ;RUN;
+PROC PRINT DATA=INSERT1(OBS=10) ;TITLE 'INSERT NEW CUST';RUN;
+PROC SORT  DATA=DELETE1 NODUPKEY; BY CUSTNO ;RUN;
+PROC PRINT DATA=DELETE1(OBS=10) ;TITLE 'DELETE CUST W EMAIL';RUN;
+
+ /*-----------------------------------------------------------*/
+ /*  COMPARE AGAINST TABLE CIEMAILT WHICH FUNCTION TO DO      */
+ /*-----------------------------------------------------------*/
+DATA INSERT2;
+MERGE INSERT1(IN=C)  TBL_EMAIL(IN=D);
+      BY CUSTNO;
+      IF C AND NOT D;
+RUN;
+PROC SORT  DATA=INSERT2 NODUPKEY; BY CUSTNO ;RUN;
+PROC PRINT DATA=INSERT2(OBS=10) ;TITLE 'CONFIRM INSERT ';RUN;
+
+DATA DELETE2;
+MERGE DELETE1(IN=E)  TBL_EMAIL(IN=F);
+      BY CUSTNO;
+      IF E AND F;
+RUN;
+PROC SORT  DATA=DELETE2 NODUPKEY; BY CUSTNO ;RUN;
+PROC PRINT DATA=DELETE2(OBS=10) ;TITLE 'CONFIRM DELETE ';RUN;
+
+ DATA OUT1;
+ FILE INSERT2;
+   SET INSERT2;
+       PROMPT_DATE = '2001-01-01';
+       PUT @001     CUSTNO              $20.
+           @021     ALIAS               $30.  /* ID_NO      */
+           @051     ALIASKEY            $05.  /* IDTYPE     */
+           @056     PROMPT_DATE         $10.
+           @066     'INIT'                    /* TELLER_ID  */
+           @081     'CIEMLFIL'              ; /* REASON     */
+ RUN;
+
+ DATA OUT2;
+ FILE DELETE2;
+   SET DELETE2;
+       PUT @001     CUSTNO              $20.
+           @021     ALIAS               $30.  /* ID_NO      */
+           @051     ALIASKEY            $05.  /* IDTYPE     */
+           @056     PROMPT_DATE         $10.
+           @066     TELLER_ID           $10.  /* TELLER_ID  */
+           @081     REASON              $50.; /* REASON     */
  RUN;
