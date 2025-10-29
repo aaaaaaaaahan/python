@@ -1,110 +1,143 @@
 import duckdb
 import pyarrow.parquet as pq
 import pyarrow as pa
-import pandas as pd
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+import datetime
+from pathlib import Path
 
 # ============================================================
-# DUCKDB CONNECTION
+#  CONFIGURATION
+# ============================================================
+# Define input/output paths (adjust as needed)
+host_parquet_path = Path("input_parquet")   # folder containing all input parquet files
+parquet_output_path = Path("output_parquet")  # folder to store output parquet
+csv_output_path = Path("output_csv")          # folder to store output csv
+
+parquet_output_path.mkdir(exist_ok=True)
+csv_output_path.mkdir(exist_ok=True)
+
+# File mapping
+RMKFILE = host_parquet_path / "CCRIS_CISRMRK_EMAIL_FIRST.parquet"
+CUSTFILE = host_parquet_path / "CIS_CUST_DAILY.parquet"
+CIEMLDBT = host_parquet_path / "CIEMLDBT_FB.parquet"
+
+# ============================================================
+#  DUCKDB CONNECTION
 # ============================================================
 con = duckdb.connect()
 
 # ============================================================
-# LOAD INPUT PARQUET FILES
+#  LOAD INPUT TABLES
 # ============================================================
-custfile_path = f"{host_parquet_path}/CIS_CUST_DAILY.parquet"
-inpfile_path = f"{host_parquet_path}/UNLOAD_ALLALIAS_FB.parquet"
-
-# Register tables in DuckDB
-con.execute(f"CREATE OR REPLACE VIEW CUSTFILE AS SELECT * FROM read_parquet('{custfile_path}')")
-con.execute(f"CREATE OR REPLACE VIEW INPFILE AS SELECT * FROM read_parquet('{inpfile_path}')")
-
-# ============================================================
-# STEP 1: FILTER CUSTOMER DATA (CUS)
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE CUS AS
-    SELECT CUSTNO, ACCTNOC, CUSTNAME, ACCTCODE, DOBDOR
-    FROM CUSTFILE
-    WHERE CUSTNAME IS NOT NULL AND CUSTNAME <> ''
+con.execute(f"""
+    CREATE OR REPLACE TABLE TBL_EMAIL AS
+    SELECT CUSTNO
+    FROM read_parquet('{CIEMLDBT}')
 """)
 
-# Remove duplicates by CUSTNO (equivalent to PROC SORT NODUPKEY)
-con.execute("""
-    CREATE OR REPLACE TABLE CUS AS
-    SELECT DISTINCT ON (CUSTNO) *
-    FROM CUS
-""")
-
-# ============================================================
-# STEP 2: READ ALIAS DATA (ALIAS)
-# ============================================================
-# Assuming INPFILE already contains the extracted fields from the fixed-format data
-con.execute("""
-    CREATE OR REPLACE TABLE ALIAS AS
-    SELECT *
-    FROM INPFILE
-    WHERE KEY_FIELD_1 = 'PP'
-""")
-
-# Sort by CUSTNO, LAST_CHANGE DESC, PROCESS_TIME DESC
-con.execute("""
-    CREATE OR REPLACE TABLE ALIAS AS
-    SELECT *
-    FROM ALIAS
-    ORDER BY CUSTNO, LAST_CHANGE DESC, PROCESS_TIME DESC
-""")
-
-# ============================================================
-# STEP 3: MERGE ALIAS AND CUS (MATCH)
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE MATCH AS
-    SELECT A.*, 
-           B.ACCTNOC, 
-           B.ACCTCODE, 
-           B.CUSTNAME, 
-           B.DOBDOR
-    FROM ALIAS A
-    INNER JOIN CUS B
-    ON A.CUSTNO = B.CUSTNO
-""")
-
-# Sort by CUSTNO
-con.execute("""
-    CREATE OR REPLACE TABLE MATCH AS
-    SELECT * FROM MATCH ORDER BY CUSTNO
-""")
-
-# ============================================================
-# STEP 4: OUTPUT (Equivalent to DATA OUT)
-# Keep first record per CUSTNO
-# ============================================================
-out_df = con.execute("""
+con.execute(f"""
+    CREATE OR REPLACE TABLE RMK AS
     SELECT 
-        BANK_NO,
+        SUBSTR(CUSTNO, 1, 20) AS CUSTNO,
+        SUBSTR(REMARKS, 1, 60) AS REMARKS
+    FROM read_parquet('{RMKFILE}')
+""")
+
+con.execute(f"""
+    CREATE OR REPLACE TABLE CUS AS
+    SELECT 
+        CUSTNO, ALIAS, ALIASKEY, INDORG, CUSTNAME, ACCTCODE
+    FROM read_parquet('{CUSTFILE}')
+    WHERE INDORG = 'I'
+      AND CUSTNAME <> ''
+      AND ALIAS <> ''
+      AND ACCTCODE <> ''
+""")
+
+# Remove duplicate CUSTNO
+con.execute("CREATE OR REPLACE TABLE CUS AS SELECT DISTINCT ON (CUSTNO) * FROM CUS")
+
+# ============================================================
+#  STEP 1 - IDENTIFY CUSTOMER WITH/WITHOUT EMAIL
+# ============================================================
+# INSERT1: Customer exists in CUS but not in RMK
+# DELETE1: Customer exists in both
+con.execute("""
+    CREATE OR REPLACE TABLE INSERT1 AS
+    SELECT B.*
+    FROM CUS B
+    LEFT JOIN RMK A USING (CUSTNO)
+    WHERE A.CUSTNO IS NULL
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE DELETE1 AS
+    SELECT B.*
+    FROM CUS B
+    INNER JOIN RMK A USING (CUSTNO)
+""")
+
+# ============================================================
+#  STEP 2 - COMPARE AGAINST TABLE CIEMLDBT (TBL_EMAIL)
+# ============================================================
+# INSERT2: in INSERT1 but not in TBL_EMAIL
+# DELETE2: in DELETE1 and in TBL_EMAIL
+con.execute("""
+    CREATE OR REPLACE TABLE INSERT2 AS
+    SELECT C.*
+    FROM INSERT1 C
+    LEFT JOIN TBL_EMAIL D USING (CUSTNO)
+    WHERE D.CUSTNO IS NULL
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE DELETE2 AS
+    SELECT E.*
+    FROM DELETE1 E
+    INNER JOIN TBL_EMAIL F USING (CUSTNO)
+""")
+
+# ============================================================
+#  STEP 3 - ADD OUTPUT COLUMNS & EXPORT
+# ============================================================
+prompt_date = datetime.date(2001, 1, 1).strftime("%Y-%m-%d")
+
+con.execute(f"""
+    CREATE OR REPLACE TABLE OUT1 AS
+    SELECT 
         CUSTNO,
-        NAME_LINE,
-        DOBDOR
-    FROM (
-        SELECT *,
-               ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) AS rn
-        FROM MATCH
-    )
-    WHERE rn = 1
-""").fetchdf()
+        ALIAS,
+        ALIASKEY,
+        '{prompt_date}' AS PROMPT_DATE,
+        'INIT' AS TELLER_ID,
+        'CIEMLFIL' AS REASON
+    FROM INSERT2
+""")
+
+con.execute(f"""
+    CREATE OR REPLACE TABLE OUT2 AS
+    SELECT 
+        CUSTNO,
+        ALIAS,
+        ALIASKEY,
+        '{prompt_date}' AS PROMPT_DATE,
+        COALESCE(TELLER_ID, ' ') AS TELLER_ID,
+        COALESCE(REASON, ' ') AS REASON
+    FROM DELETE2
+""")
 
 # ============================================================
-# WRITE OUTPUT TO PARQUET AND CSV
+#  EXPORT RESULTS TO PARQUET & CSV
 # ============================================================
-parquet_out_path = f"{parquet_output_path}/CIS_EBANKING_ALIAS.parquet"
-csv_out_path = f"{csv_output_path}/CIS_EBANKING_ALIAS.csv"
+tables_to_export = ["INSERT2", "DELETE2", "OUT1", "OUT2"]
 
-# Save as Parquet
-table = pa.Table.from_pandas(out_df)
-pq.write_table(table, parquet_out_path)
+for t in tables_to_export:
+    parquet_file = parquet_output_path / f"{t}.parquet"
+    csv_file = csv_output_path / f"{t}.csv"
 
-# Save as CSV
-out_df.to_csv(csv_out_path, index=False)
+    con.execute(f"COPY {t} TO '{parquet_file}' (FORMAT 'parquet')")
+    con.execute(f"COPY {t} TO '{csv_file}' (HEADER, DELIMITER ',')")
 
-print(f"✅ Output generated:\n  - Parquet: {parquet_out_path}\n  - CSV: {csv_out_path}")
+print("✅ Job completed successfully!")
+print("Output written to:")
+print(f"  - {parquet_output_path}")
+print(f"  - {csv_output_path}")
