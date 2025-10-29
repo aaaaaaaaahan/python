@@ -1,14 +1,8 @@
 import duckdb
-import pyarrow as pa
 import pyarrow.parquet as pq
+import pyarrow as pa
+import pandas as pd
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
-import datetime
-
-# ============================================================
-# DATE SETUP
-# ============================================================
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
 # DUCKDB CONNECTION
@@ -16,87 +10,101 @@ year, month, day = batch_date.year, batch_date.month, batch_date.day
 con = duckdb.connect()
 
 # ============================================================
-# INPUT PARQUET
+# LOAD INPUT PARQUET FILES
 # ============================================================
-rmk_path = f"{host_parquet_path}/UNLOAD_CIRMRKS_FB.parquet"
+custfile_path = f"{host_parquet_path}/CIS_CUST_DAILY.parquet"
+inpfile_path = f"{host_parquet_path}/UNLOAD_ALLALIAS_FB.parquet"
 
-# Read RMKFILE
-con.execute(f"""
-    CREATE OR REPLACE TABLE RMKFILE AS
+# Register tables in DuckDB
+con.execute(f"CREATE OR REPLACE VIEW CUSTFILE AS SELECT * FROM read_parquet('{custfile_path}')")
+con.execute(f"CREATE OR REPLACE VIEW INPFILE AS SELECT * FROM read_parquet('{inpfile_path}')")
+
+# ============================================================
+# STEP 1: FILTER CUSTOMER DATA (CUS)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE CUS AS
+    SELECT CUSTNO, ACCTNOC, CUSTNAME, ACCTCODE, DOBDOR
+    FROM CUSTFILE
+    WHERE CUSTNAME IS NOT NULL AND CUSTNAME <> ''
+""")
+
+# Remove duplicates by CUSTNO (equivalent to PROC SORT NODUPKEY)
+con.execute("""
+    CREATE OR REPLACE TABLE CUS AS
+    SELECT DISTINCT ON (CUSTNO) *
+    FROM CUS
+""")
+
+# ============================================================
+# STEP 2: READ ALIAS DATA (ALIAS)
+# ============================================================
+# Assuming INPFILE already contains the extracted fields from the fixed-format data
+con.execute("""
+    CREATE OR REPLACE TABLE ALIAS AS
+    SELECT *
+    FROM INPFILE
+    WHERE KEY_FIELD_1 = 'PP'
+""")
+
+# Sort by CUSTNO, LAST_CHANGE DESC, PROCESS_TIME DESC
+con.execute("""
+    CREATE OR REPLACE TABLE ALIAS AS
+    SELECT *
+    FROM ALIAS
+    ORDER BY CUSTNO, LAST_CHANGE DESC, PROCESS_TIME DESC
+""")
+
+# ============================================================
+# STEP 3: MERGE ALIAS AND CUS (MATCH)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE MATCH AS
+    SELECT A.*, 
+           B.ACCTNOC, 
+           B.ACCTCODE, 
+           B.CUSTNAME, 
+           B.DOBDOR
+    FROM ALIAS A
+    INNER JOIN CUS B
+    ON A.CUSTNO = B.CUSTNO
+""")
+
+# Sort by CUSTNO
+con.execute("""
+    CREATE OR REPLACE TABLE MATCH AS
+    SELECT * FROM MATCH ORDER BY CUSTNO
+""")
+
+# ============================================================
+# STEP 4: OUTPUT (Equivalent to DATA OUT)
+# Keep first record per CUSTNO
+# ============================================================
+out_df = con.execute("""
     SELECT 
         BANK_NO,
-        APPL_CODE,
-        APPL_NO,
-        EFF_DATE,
-        RMK_KEYWORD,
-        RMK_LINE_1,
-        RMK_LINE_2,
-        RMK_LINE_3,
-        RMK_LINE_4,
-        RMK_LINE_5
-    FROM '{rmk_path}'
-""")
+        CUSTNO,
+        NAME_LINE,
+        DOBDOR
+    FROM (
+        SELECT *,
+               ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) AS rn
+        FROM MATCH
+    )
+    WHERE rn = 1
+""").fetchdf()
 
 # ============================================================
-# STEP 1: FILTER WHERE APPL_CODE = 'CUST '
+# WRITE OUTPUT TO PARQUET AND CSV
 # ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE OKAY AS
-    SELECT *
-    FROM RMKFILE
-    WHERE APPL_CODE = 'CUST '
-""")
+parquet_out_path = f"{parquet_output_path}/CIS_EBANKING_ALIAS.parquet"
+csv_out_path = f"{csv_output_path}/CIS_EBANKING_ALIAS.csv"
 
-# ============================================================
-# STEP 2: REMOVE DUPLICATES (KEEP LATEST BY APPL_NO, EFF_DATE)
-# SAS PROC SORT NODUPKEY DUPOUT=DUPNI
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE DUPNI AS
-    SELECT *
-    FROM OKAY
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY APPL_NO, EFF_DATE ORDER BY EFF_DATE DESC) = 1
-""")
+# Save as Parquet
+table = pa.Table.from_pandas(out_df)
+pq.write_table(table, parquet_out_path)
 
-# ============================================================
-# STEP 3: ADD GROUP_ID & EFF_DATE_ADD
-# Equivalent to SAS BY-group increment
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE LATEST AS
-    SELECT 
-        *,
-        ROW_NUMBER() OVER (PARTITION BY APPL_NO ORDER BY EFF_DATE) AS EFF_DATE_ADD
-    FROM DUPNI
-""")
+# Save as CSV
+out_df.to_csv(csv_out_path, index=False)
 
-# ============================================================
-# STEP 4: EXPORT OUTPUT
-# ============================================================
-out_parquet = f"{parquet_output_path}/CIRMKEFF_UPDATE_{year}{month:02d}{day:02d}.parquet"
-out_csv = f"{csv_output_path}/CIRMKEFF_UPDATE_{year}{month:02d}{day:02d}.csv"
-
-# Select and write output with correct field order
-result = con.execute("""
-    SELECT
-        CAST(BANK_NO AS INTEGER) AS BANK_NO,
-        APPL_CODE,
-        APPL_NO,
-        CAST(EFF_DATE AS BIGINT) AS EFF_DATE,
-        RMK_KEYWORD,
-        RMK_LINE_1,
-        RMK_LINE_2,
-        RMK_LINE_3,
-        RMK_LINE_4,
-        RMK_LINE_5,
-        CAST(EFF_DATE_ADD AS INTEGER) AS EFF_DATE_ADD
-    FROM LATEST
-""").arrow()
-
-# Write to Parquet and CSV
-pq.write_table(result, out_parquet)
-result.to_pandas().to_csv(out_csv, index=False)
-
-print("✅ CIRMKEF1 conversion completed successfully.")
-print(f"Parquet saved to: {out_parquet}")
-print(f"CSV saved to: {out_csv}")
+print(f"✅ Output generated:\n  - Parquet: {parquet_out_path}\n  - CSV: {csv_out_path}")
