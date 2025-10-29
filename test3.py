@@ -1,60 +1,83 @@
-INPUT @001  BANKNO             $3.
-             @004  APPLCODE           $5.
-             @009  CUSTNO             $11.
-             @029  PHONETYPE          $15.
-             @044  PHONEPAC           PD8.
-             @052  PHONEPREV          PD8.
-             @060  INDORG             $1.
-             @061  FIRSTDATE          $10.
-             @072  PROMTSOURCE        $5.
-             @077  PROMPTDATE         $10.
-             @077  PROMPTYY            4.
-             @082  PROMPTMM            2.
-             @085  PROMPTDD            2.
-             @087  PROMPTTIME         $8.
-             @095  UPDSOURCE          $5.
-             @100  UPDTYY              4.
-             @105  UPDTMM              2.
-             @108  UPDTDD              2.
-             @110  UPDTIME            $8.
-             @118  UPDOPER            $8.;
+error:
+duckdb.duckdb.BinderException: Binder Error: Ambiguous reference to column name "CUSTNO" (use: "A.CUSTNO" or "B.CUSTNO")
 
-( "CI_BANK_NO"                         
- POSITION(  00001:00003) CHAR(00003)   
-, "CI_APPL_CODE"                       
- POSITION(  00004:00008) CHAR(00005)   
-, "CI_APPL_NO"                         
- POSITION(  00009:00028) CHAR(00020)   
-, "CI_PHONE_FIELD"                     
- POSITION(  00029:00043) CHAR(00015)   
-, "CI_PAC_PHONE"                       
- POSITION(  00044:00051) DECIMAL       
-, "CI_PREV_PHONE"                      
- POSITION(  00052:00059) DECIMAL       
-, "CI_CUST_TYPE"                       
- POSITION(  00060:00060) CHAR(00001)   
-, "CI_FIRST_DATE"                      
- POSITION(  00061:00070) DATE EXTERNAL 
-, "CI_NO_OF_PROMPT"                    
- POSITION(  00071:00071) DECIMAL       
-, "CI_PROMPT_SOURCE"                   
- POSITION(  00072:00076) CHAR(00005)   
-, "CI_PROMPT_DATE"                     
- POSITION(  00077:00086) DATE EXTERNAL 
-, "CI_PROMPT_TIME"                     
- POSITION(  00087:00094) TIME EXTERNAL 
-, "CI_UPDATE_SOURCE"                   
- POSITION(  00095:00099) CHAR(00005)   
-, "CI_UPDATE_DATE"                     
- POSITION(  00100:00109) DATE EXTERNAL 
-, "CI_UPDATE_TIME"                     
- POSITION(  00110:00117) TIME EXTERNAL 
-, "CI_UPDATE_OPERATOR"                 
- POSITION(  00118:00125) CHAR(00008)   
-, "CI_TRX_APPL_CODE"                   
- POSITION(  00126:00130) CHAR(00005)   
-, "CI_TRX_APPL_NO"                     
- POSITION(  00131:00150) CHAR(00020)   
-, "CI_NEW_PHONE"                
- POSITION(  00151:00158) DECIMAL
-)                               
+program:
+import duckdb
+from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
+import datetime
+
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+# ============================================================
+# DUCKDB CONNECTION
+# ============================================================
+con = duckdb.connect()
+cis = get_hive_parquet('CIS_CUST_DAILY')
+
+# ============================================================
+# STEP 1: FILTER CUSTOMER DATA (CUS)
+# ============================================================
+con.execute(f"""
+    CREATE OR REPLACE TABLE CUS AS
+    SELECT DISTINCT ON (CUSTNO)
+        CUSTNO, 
+        ACCTNOC, 
+        CUSTNAME, 
+        ACCTCODE, 
+        DOBDOR
+    FROM read_parquet('{cis[0]}')
+    WHERE CUSTNAME IS NOT NULL AND CUSTNAME <> ''
+""")
+
+# ============================================================
+# STEP 2: READ ALIAS DATA (ALIAS)
+# ============================================================
+# Assuming INPFILE already contains the extracted fields from the fixed-format data
+con.execute(f"""
+    CREATE OR REPLACE TABLE ALIAS AS
+    SELECT *
+    FROM '{host_parquet_path("ALLALIAS_FB.parquet")}'
+    WHERE KEY_FIELD_1 = 'PP'
+    ORDER BY CUSTNO, LAST_CHANGE DESC, PROCESS_TIME DESC
+""")
+
+# ============================================================
+# STEP 3: MERGE ALIAS AND CUS (MATCH)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE MATCH AS
+    SELECT A.*, 
+           B.ACCTNOC, 
+           B.ACCTCODE, 
+           B.CUSTNAME, 
+           B.DOBDOR
+    FROM ALIAS A
+    INNER JOIN CUS B
+    ON A.CUSTNO = B.CUSTNO
+    ORDER BY CUSTNO
+""")
+
+# ============================================================
+# STEP 4: OUTPUT (Equivalent to DATA OUT)
+# Keep first record per CUSTNO
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE first AS
+    SELECT 
+        BANK_NO,
+        CUSTNO,
+        NAME_LINE,
+        DOBDOR
+    FROM (
+        SELECT *,
+               ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) AS rn
+        FROM MATCH
+    )
+    WHERE rn = 1
+""")
+
+# ============================================================
+# WRITE OUTPUT TO PARQUET AND CSV
+# ============================================================
+print(f"✅ Output generated")
