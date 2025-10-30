@@ -2,168 +2,88 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIEMPNM1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB19010
-//*---------------------------------------------------------------------
-//* ESMR 2011 - 2602 (BSC - MS LOKE)
-//* EXTRACT SINGLE ELEMENT NAMELINE AND NAMEKEY FIELD 1 BLANK
-//*---------------------------------------------------------------------
-//EXTNAM1  EXEC SAS609,REGION=4M,WORK='50000,50000'
-//IEFRDER   DD DUMMY
-//*OUTPUT FROM CIULDNAM
-//NAMEFILE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.PRIMNAME.OUT
-//OUTDEL    DD DSN=RBP2.B033.CIS.NAMEKEY1.TODELETE(+1),
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(1,5),RLSE),
-//             DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
-//OUTINS    DD DSN=RBP2.B033.CIS.NAMEKEY1.TOINSERT(+1),
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(1,5),RLSE),
-//             DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- /*----------------------------------------------------------------*/
- /*    DATA DECLARATION                                            */
- /*----------------------------------------------------------------*/
-   DATA INNAME;
-     INFILE NAMEFILE;
-     INPUT @001 HOLDCONO        PD2.
-           @003 BANKNO          PD2.
-           @005 CUSTNO          $20.
-           @025 RECTYPE         PD2.
-           @027 RECSEQ          PD2.
-           @029 EFFDATE         PD5.
-           @034 PROCESSTIME     $8.
-           @042 ADRHOLDCONO     PD2.
-           @044 ADRBANKNO       PD2.
-           @046 ADRREFNO        PD6.
-           @052 CUSTTYPE        $1.
-           @053 KEYFIELD1       $15.
-           @068 KEYFIELD2       $10.
-           @078 KEYFIELD3       $5.
-           @083 KEYFIELD4       $5.
-           @088 LINECODE        $1.
-           @089 NAMELINE        $40.
-           @129 LINECODE1       $1.
-           @130 NAMETITLE1      $40.
-           @170 LINECODE2       $1.
-           @171 NAMETITLE2      $40.
-           @211 SALUTATION      $40.
-           @251 TITLECODE       PD2.
-           @253 FIRSTMID        $30.
-           @283 SURNAME         $20.
-           @303 SURNAMEKEY      $3.
-           @306 SUFFIXCODE      PD2.
-           @308 APPENDCODE      PD2.
-           @310 PRIMPHONE       PD6.
-           @316 PPHONELTH       PD2.
-           @318 SECPHONE        PD6.
-           @324 SPHONELTH       PD2.
-           @326 TELEXPHONE      PD6.
-           @332 TPHONELTH       PD2.
-           @334 FAXPHONE        PD6.
-           @340 FPHONELTH       PD2.
-           @343 LASTCHANGE      $10.
-           @353 NAMEFMT         $1.;
-      SECND_WORD = SCAN(NAMELINE, 2);
-      IF CUSTTYPE  EQ 'I' AND NAMELINE NE ' ' AND
-         KEYFIELD1 EQ ' ' AND SECND_WORD EQ ' '
-         THEN OUTPUT;
-   PROC SORT DATA=INNAME; BY CUSTNO; RUN;
-   PROC PRINT DATA=INNAME(OBS=5);TITLE 'UNLOAD NAME FILE';RUN;
-   RUN;
- /*-------------------------------------------------------------------*/
- /*   OUTPUT DATASET TO DELETE CUSTOMER NAMELINE RECORD               */
- /*-------------------------------------------------------------------*/
-  DATA TEMPOUT;
-  SET INNAME;
-  FILE OUTDEL;
-     PUT @001 HOLDCONO        PD2.
-         @003 BANKNO          PD2.
-         @005 CUSTNO          $20.
-         @025 RECTYPE         PD2.
-         @027 RECSEQ          PD2.
-         @029 EFFDATE         PD5.
-         @034 PROCESSTIME     $8.
-         @042 ADRHOLDCONO     PD2.
-         @044 ADRBANKNO       PD2.
-         @046 ADRREFNO        PD6.
-         @052 CUSTTYPE        $1.
-         @053 KEYFIELD1       $15.
-         @068 KEYFIELD2       $10.
-         @078 KEYFIELD3       $5.
-         @083 KEYFIELD4       $5.
-         @088 LINECODE        $1.
-         @089 NAMELINE        $40.
-         @129 LINECODE1       $1.
-         @130 NAMETITLE1      $40.
-         @170 LINECODE2       $1.
-         @171 NAMETITLE2      $40.
-         @211 SALUTATION      $40.
-         @251 TITLECODE       PD2.
-         @253 FIRSTMID        $30.
-         @283 SURNAME         $20.
-         @303 SURNAMEKEY      $3.
-         @306 SUFFIXCODE      PD2.
-         @308 APPENDCODE      PD2.
-         @310 PRIMPHONE       PD6.
-         @316 PPHONELTH       PD2.
-         @318 SECPHONE        PD6.
-         @324 SPHONELTH       PD2.
-         @326 TELEXPHONE      PD6.
-         @332 TPHONELTH       PD2.
-         @334 FAXPHONE        PD6.
-         @340 FPHONELTH       PD2.
-         @342 LASTCHANGE      $10.
-         @352 NAMEFMT         $1.;
-  RUN;
+//CIEXCUS2 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
+//*--------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS_CICUS2T_INSERT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//GETCHG   EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CUSTFILE DD DISP=SHR,DSN=ALLCUST_FB
+//CUS2FILE DD DISP=SHR,DSN=CICUS2T_ALL
+//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
+//OUTFILE1 DD DSN=CIS_CICUS2T_INSERT,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
 
- /*-------------------------------------------------------------------*/
- /*   OUTPUT DATASET FOR RECORDS INSERTION WITH NAMEKEY 1             */
- /*-------------------------------------------------------------------*/
-  DATA TEMPOUT1;
-  SET INNAME;
-  KEYFIELD1 = NAMELINE;
-  NAMEFMT   = 'M';
-  FILE OUTINS;
-     PUT @001 HOLDCONO        PD2.
-         @003 BANKNO          PD2.
-         @005 CUSTNO          $20.
-         @025 RECTYPE         PD2.
-         @027 RECSEQ          PD2.
-         @029 EFFDATE         PD5.
-         @034 PROCESSTIME     $8.
-         @042 ADRHOLDCONO     PD2.
-         @044 ADRBANKNO       PD2.
-         @046 ADRREFNO        PD6.
-         @052 CUSTTYPE        $1.
-         @053 KEYFIELD1       $15.
-         @068 KEYFIELD2       $10.
-         @078 KEYFIELD3       $5.
-         @083 KEYFIELD4       $5.
-         @088 LINECODE        $1.
-         @089 NAMELINE        $40.
-         @129 LINECODE1       $1.
-         @130 NAMETITLE1      $40.
-         @170 LINECODE2       $1.
-         @171 NAMETITLE2      $40.
-         @211 SALUTATION      $40.
-         @251 TITLECODE       PD2.
-         @253 FIRSTMID        $30.
-         @283 SURNAME         $20.
-         @303 SURNAMEKEY      $3.
-         @306 SUFFIXCODE      PD2.
-         @308 APPENDCODE      PD2.
-         @310 PRIMPHONE       PD6.
-         @316 PPHONELTH       PD2.
-         @318 SECPHONE        PD6.
-         @324 SPHONELTH       PD2.
-         @326 TELEXPHONE      PD6.
-         @332 TPHONELTH       PD2.
-         @334 FAXPHONE        PD6.
-         @340 FPHONELTH       PD2.
-         @342 LASTCHANGE      $10.
-         @352 NAMEFMT         $1.;
-  RUN;
+OPTION NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*    SET DATES                                                   */
+ /*----------------------------------------------------------------*/
+    DATA SRSDATE;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
+
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('RDATE',PUT(TODAYSAS,YYMMDDN8.));
+         CALL SYMPUT('YEAR' ,PUT(SRSYY,Z4.));
+         CALL SYMPUT('MONTH',PUT(SRSMM,Z2.));
+         CALL SYMPUT('DAY'  ,PUT(SRSDD,Z2.));
+
+    RUN;
+   PROC PRINT;RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    CUSTOMER FILE - IDENTIFY INDIVIDUAL RECORD                  */
+ /*----------------------------------------------------------------*/
+DATA CICUSTT;
+  INFILE CUSTFILE;
+  INPUT  @003  BANKNO           PD2.
+         @005  CIS_NO           $20.
+         ;
+RUN;
+
+PROC SORT  DATA=CICUSTT; BY CIS_NO     ;RUN;
+PROC PRINT DATA=CICUSTT (OBS=5);TITLE 'INDIVIDUAL CUST ONLY';RUN;
+
+DATA CICUS2T;
+  INFILE CUS2FILE;
+   INPUT @001   CIS_NO                 $20.
+         @021   CIS_TIN                $25.
+         @046   CIS_SST                $25.
+         @071   CIS_EINV_ACCEPT_DATE   $10.
+         @081   CIS_EINV_ACCEPT_TIME   $08.
+         ;
+
+PROC SORT  DATA=CICUS2T; BY CIS_NO;
+PROC PRINT DATA=CICUS2T(OBS=5);TITLE 'CICUS2T';
+RUN;
+
+DATA INSERT_NEW;
+   MERGE CICUSTT(IN=A) CICUS2T(IN=B);
+   BY CIS_NO;
+   IF A AND NOT B;
+RUN;
+PROC SORT  DATA=INSERT_NEW;BY CIS_NO;RUN;
+PROC PRINT DATA=INSERT_NEW(OBS=15);TITLE 'NEW CUST';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* OUTPUT FILE                                                    */
+ /*----------------------------------------------------------------*/
+ DATA OUT1;
+   FILE OUTFILE1;
+   SET INSERT_NEW;
+
+       PUT @01  CIS_NO         $20.
+                ;
+
+ RUN;
