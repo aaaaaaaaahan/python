@@ -1,143 +1,284 @@
 import duckdb
 import pyarrow.parquet as pq
-import pyarrow as pa
 import datetime
-from pathlib import Path
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
 # ============================================================
-#  CONFIGURATION
+# DATE SETUP
 # ============================================================
-# Define input/output paths (adjust as needed)
-host_parquet_path = Path("input_parquet")   # folder containing all input parquet files
-parquet_output_path = Path("output_parquet")  # folder to store output parquet
-csv_output_path = Path("output_csv")          # folder to store output csv
-
-parquet_output_path.mkdir(exist_ok=True)
-csv_output_path.mkdir(exist_ok=True)
-
-# File mapping
-RMKFILE = host_parquet_path / "CCRIS_CISRMRK_EMAIL_FIRST.parquet"
-CUSTFILE = host_parquet_path / "CIS_CUST_DAILY.parquet"
-CIEMLDBT = host_parquet_path / "CIEMLDBT_FB.parquet"
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
-#  DUCKDB CONNECTION
+# DUCKDB CONNECTION
 # ============================================================
 con = duckdb.connect()
 
 # ============================================================
-#  LOAD INPUT TABLES
+# INPUT PARQUET FILE (Already Converted)
 # ============================================================
-con.execute(f"""
-    CREATE OR REPLACE TABLE TBL_EMAIL AS
-    SELECT CUSTNO
-    FROM read_parquet('{CIEMLDBT}')
-""")
+input_file = f"{host_parquet_path}/RBP2_B033_UNLOAD_PRIMNAME_OUT.parquet"
 
 con.execute(f"""
-    CREATE OR REPLACE TABLE RMK AS
+    CREATE OR REPLACE TABLE inname AS 
     SELECT 
-        SUBSTR(CUSTNO, 1, 20) AS CUSTNO,
-        SUBSTR(REMARKS, 1, 60) AS REMARKS
-    FROM read_parquet('{RMKFILE}')
-""")
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE CUS AS
-    SELECT 
-        CUSTNO, ALIAS, ALIASKEY, INDORG, CUSTNAME, ACCTCODE
-    FROM read_parquet('{CUSTFILE}')
-    WHERE INDORG = 'I'
-      AND CUSTNAME <> ''
-      AND ALIAS <> ''
-      AND ACCTCODE <> ''
-""")
-
-# Remove duplicate CUSTNO
-con.execute("CREATE OR REPLACE TABLE CUS AS SELECT DISTINCT ON (CUSTNO) * FROM CUS")
-
-# ============================================================
-#  STEP 1 - IDENTIFY CUSTOMER WITH/WITHOUT EMAIL
-# ============================================================
-# INSERT1: Customer exists in CUS but not in RMK
-# DELETE1: Customer exists in both
-con.execute("""
-    CREATE OR REPLACE TABLE INSERT1 AS
-    SELECT B.*
-    FROM CUS B
-    LEFT JOIN RMK A USING (CUSTNO)
-    WHERE A.CUSTNO IS NULL
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE DELETE1 AS
-    SELECT B.*
-    FROM CUS B
-    INNER JOIN RMK A USING (CUSTNO)
-""")
-
-# ============================================================
-#  STEP 2 - COMPARE AGAINST TABLE CIEMLDBT (TBL_EMAIL)
-# ============================================================
-# INSERT2: in INSERT1 but not in TBL_EMAIL
-# DELETE2: in DELETE1 and in TBL_EMAIL
-con.execute("""
-    CREATE OR REPLACE TABLE INSERT2 AS
-    SELECT C.*
-    FROM INSERT1 C
-    LEFT JOIN TBL_EMAIL D USING (CUSTNO)
-    WHERE D.CUSTNO IS NULL
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE DELETE2 AS
-    SELECT E.*
-    FROM DELETE1 E
-    INNER JOIN TBL_EMAIL F USING (CUSTNO)
-""")
-
-# ============================================================
-#  STEP 3 - ADD OUTPUT COLUMNS & EXPORT
-# ============================================================
-prompt_date = datetime.date(2001, 1, 1).strftime("%Y-%m-%d")
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE OUT1 AS
-    SELECT 
+        HOLDCONO,
+        BANKNO,
         CUSTNO,
-        ALIAS,
-        ALIASKEY,
-        '{prompt_date}' AS PROMPT_DATE,
-        'INIT' AS TELLER_ID,
-        'CIEMLFIL' AS REASON
-    FROM INSERT2
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        NAMEFMT
+    FROM read_parquet('{input_file}')
 """)
 
-con.execute(f"""
-    CREATE OR REPLACE TABLE OUT2 AS
-    SELECT 
+# ============================================================
+# FILTER RECORDS BASED ON SAS LOGIC
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE filtered AS
+    SELECT
+        HOLDCONO,
+        BANKNO,
         CUSTNO,
-        ALIAS,
-        ALIASKEY,
-        '{prompt_date}' AS PROMPT_DATE,
-        COALESCE(TELLER_ID, ' ') AS TELLER_ID,
-        COALESCE(REASON, ' ') AS REASON
-    FROM DELETE2
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        NAMEFMT,
+        regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1) AS SECND_WORD
+    FROM inname
+    WHERE CUSTTYPE = 'I'
+      AND NAMELINE IS NOT NULL
+      AND trim(NAMELINE) != ''
+      AND (KEYFIELD1 IS NULL OR trim(KEYFIELD1) = '')
+      AND (regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1) IS NULL OR trim(regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1)) = '')
 """)
 
 # ============================================================
-#  EXPORT RESULTS TO PARQUET & CSV
+# SORT BY CUSTNO (Like PROC SORT)
 # ============================================================
-tables_to_export = ["INSERT2", "DELETE2", "OUT1", "OUT2"]
+con.execute("""
+    CREATE OR REPLACE TABLE inname_sorted AS
+    SELECT 
+        HOLDCONO,
+        BANKNO,
+        CUSTNO,
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        NAMEFMT
+    FROM filtered
+    ORDER BY CUSTNO
+""")
 
-for t in tables_to_export:
-    parquet_file = parquet_output_path / f"{t}.parquet"
-    csv_file = csv_output_path / f"{t}.csv"
+# ============================================================
+# OUTPUT 1: OUTDEL (TO DELETE)
+# ============================================================
+outdel_query = """
+    SELECT 
+        HOLDCONO,
+        BANKNO,
+        CUSTNO,
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        NAMEFMT
+    FROM inname_sorted
+"""
+outdel_df = con.execute(outdel_query).fetch_arrow_table()
 
-    con.execute(f"COPY {t} TO '{parquet_file}' (FORMAT 'parquet')")
-    con.execute(f"COPY {t} TO '{csv_file}' (HEADER, DELIMITER ',')")
+outdel_parquet = f"{parquet_output_path}/RBP2_B033_CIS_NAMEKEY1_TODELETE_{year}{month:02}{day:02}.parquet"
+outdel_csv = f"{csv_output_path}/RBP2_B033_CIS_NAMEKEY1_TODELETE_{year}{month:02}{day:02}.csv"
 
-print("✅ Job completed successfully!")
-print("Output written to:")
-print(f"  - {parquet_output_path}")
-print(f"  - {csv_output_path}")
+pq.write_table(outdel_df, outdel_parquet)
+con.execute(f"COPY ({outdel_query}) TO '{outdel_csv}' (HEADER, DELIMITER ',')")
+
+# ============================================================
+# OUTPUT 2: OUTINS (TO INSERT)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE tempoout1 AS
+    SELECT
+        HOLDCONO,
+        BANKNO,
+        CUSTNO,
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        NAMELINE AS KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        'M' AS NAMEFMT
+    FROM inname_sorted
+""")
+
+outins_query = "SELECT * FROM tempoout1"
+outins_df = con.execute(outins_query).fetch_arrow_table()
+
+outins_parquet = f"{parquet_output_path}/RBP2_B033_CIS_NAMEKEY1_TOINSERT_{year}{month:02}{day:02}.parquet"
+outins_csv = f"{csv_output_path}/RBP2_B033_CIS_NAMEKEY1_TOINSERT_{year}{month:02}{day:02}.csv"
+
+pq.write_table(outins_df, outins_parquet)
+con.execute(f"COPY ({outins_query}) TO '{outins_csv}' (HEADER, DELIMITER ',')")
+
+# ============================================================
+# LOG OUTPUT
+# ============================================================
+print(f"[INFO] OUTDEL written: {outdel_parquet} and {outdel_csv}")
+print(f"[INFO] OUTINS written: {outins_parquet} and {outins_csv}")
+print(f"[INFO] Total records deleted: {len(outdel_df)}")
+print(f"[INFO] Total records inserted: {len(outins_df)}")
+
+con.close()
