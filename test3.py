@@ -1,130 +1,189 @@
-error:
-duckdb.duckdb.BinderException: Binder Error: Column "TELLER_ID" referenced that exists in the SELECT clause - but this column cannot be referenced before it is defined
-
-program:
 import duckdb
-from CIS_PY_READER import host_parquet_path,parquet_output_path,csv_output_path, get_hive_parquet
+import pyarrow.parquet as pq
 import datetime
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
+# ============================================================
+# DATE SETUP
+# ============================================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
 # ============================================================
-#  DUCKDB CONNECTION
+# DUCKDB CONNECTION
 # ============================================================
 con = duckdb.connect()
-cis = get_hive_parquet('CIS_CUST_DAILY')
 
 # ============================================================
-#  LOAD INPUT TABLES
+# LOAD
 # ============================================================
 con.execute(f"""
-    CREATE OR REPLACE TABLE TBL_EMAIL AS
-    SELECT CUSTNO
-    FROM '{host_parquet_path("CIEMLDBT_FB.parquet")}'
-""")
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE RMK AS
-    SELECT 
+    CREATE OR REPLACE TABLE inname_sorted AS
+    SELECT
+        HOLDCONO,
+        BANKNO,
         CUSTNO,
-        RMK_LINE_1 AS REMARKS
-    FROM '{host_parquet_path("CCRIS_CISRMRK_EMAIL_FIRST.parquet")}'
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        INDORG AS CUSTTYPE,
+        KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        CUSTNAME AS NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        MOBILEPH AS TELEXPHONE,
+        TPHONELTH,
+        FAX AS FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        NAMEFMT,
+        regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1) AS SECND_WORD
+    FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}'
+    WHERE CUSTTYPE = 'I'
+      AND NAMELINE != ''
+      AND KEYFIELD1 IS NULL
+      AND SECND_WORD = ''
+    ORDER BY CUSTNO
 """)
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE CUS AS
+# ============================================================
+# OUTPUT 1: OUTDEL (TO DELETE)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE tempout AS
     SELECT 
-        CUSTNO, ALIAS, ALIASKEY, INDORG, CUSTNAME, ACCTCODE
-    FROM read_parquet('{cis[0]}')
-    WHERE INDORG = 'I'
-      AND CUSTNAME <> ''
-      AND ALIAS <> ''
-      AND ACCTCODE <> ''
-""")
-
-# Remove duplicate CUSTNO
-con.execute("CREATE OR REPLACE TABLE CUS AS SELECT DISTINCT ON (CUSTNO) * FROM CUS")
-
-# ============================================================
-#  STEP 1 - IDENTIFY CUSTOMER WITH/WITHOUT EMAIL
-# ============================================================
-# INSERT1: Customer exists in CUS but not in RMK
-# DELETE1: Customer exists in both
-con.execute("""
-    CREATE OR REPLACE TABLE INSERT1 AS
-    SELECT B.*
-    FROM CUS B
-    LEFT JOIN RMK A USING (CUSTNO)
-    WHERE A.CUSTNO IS NULL
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE DELETE1 AS
-    SELECT B.*
-    FROM CUS B
-    INNER JOIN RMK A USING (CUSTNO)
-""")
-
-# ============================================================
-#  STEP 2 - COMPARE AGAINST TABLE CIEMLDBT (TBL_EMAIL)
-# ============================================================
-# INSERT2: in INSERT1 but not in TBL_EMAIL
-# DELETE2: in DELETE1 and in TBL_EMAIL
-con.execute("""
-    CREATE OR REPLACE TABLE INSERT2 AS
-    SELECT C.*
-    FROM INSERT1 C
-    LEFT JOIN TBL_EMAIL D USING (CUSTNO)
-    WHERE D.CUSTNO IS NULL
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE DELETE2 AS
-    SELECT E.*
-    FROM DELETE1 E
-    INNER JOIN TBL_EMAIL F USING (CUSTNO)
-""")
-
-# ============================================================
-#  STEP 3 - ADD OUTPUT COLUMNS & EXPORT
-# ============================================================
-prompt_date = datetime.date(2001, 1, 1).strftime("%Y-%m-%d")
-
-out1 = f"""
-    SELECT 
+        HOLDCONO,
+        BANKNO,
         CUSTNO,
-        ALIAS,
-        ALIASKEY,
-        '{prompt_date}' AS PROMPT_DATE,
-        'INIT' AS TELLER_ID,
-        'CIEMLFIL' AS REASON
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        NAMEFMT
+    FROM inname_sorted
+""")
+
+# ============================================================
+# OUTPUT 2: OUTINS (TO INSERT)
+# ============================================================
+con.execute("""
+    CREATE OR REPLACE TABLE tempout1 AS
+    SELECT
+        HOLDCONO,
+        BANKNO,
+        CUSTNO,
+        RECTYPE,
+        RECSEQ,
+        EFFDATE,
+        PROCESSTIME,
+        ADRHOLDCONO,
+        ADRBANKNO,
+        ADRREFNO,
+        CUSTTYPE,
+        NAMELINE AS KEYFIELD1,
+        KEYFIELD2,
+        KEYFIELD3,
+        KEYFIELD4,
+        LINECODE,
+        NAMELINE,
+        LINECODE1,
+        NAMETITLE1,
+        LINECODE2,
+        NAMETITLE2,
+        SALUTATION,
+        TITLECODE,
+        FIRSTMID,
+        SURNAME,
+        SURNAMEKEY,
+        SUFFIXCODE,
+        APPENDCODE,
+        PRIMPHONE,
+        PPHONELTH,
+        SECPHONE,
+        SPHONELTH,
+        TELEXPHONE,
+        TPHONELTH,
+        FAXPHONE,
+        FPHONELTH,
+        LASTCHANGE,
+        'M' AS NAMEFMT
+    FROM inname_sorted
+""")
+
+# ============================================================
+# OUTPUT
+# ============================================================
+out1 = """
+    SELECT 
+        *
         ,{year} AS year
         ,{month} AS month 
         ,{day} AS day
-    FROM INSERT2
+    FROM tempout
 """.format(year=year,month=month,day=day)
 
-out2 = f"""
+out2 = """
     SELECT 
-        CUSTNO,
-        ALIAS,
-        ALIASKEY,
-        '{prompt_date}' AS PROMPT_DATE,
-        COALESCE(TELLER_ID, ' ') AS TELLER_ID,
-        COALESCE(REASON, ' ') AS REASON
+        *
         ,{year} AS year
         ,{month} AS month 
         ,{day} AS day
-    FROM DELETE2
+    FROM tempout1
 """.format(year=year,month=month,day=day)
 
-# ============================================================
-#  EXPORT RESULTS TO PARQUET & CSV
-# ============================================================
 queries = {
-    "CIEMLFIL_INSERT"                 : out1,
-    "CIEMLFIL_DELETE"                 : out2
+    "CIS_NAMEKEY1_TODELETE"                 : out1,
+    "CIS_NAMEKEY1_TOINSERT"                 : out2
 }
 
 for name, query in queries.items():
