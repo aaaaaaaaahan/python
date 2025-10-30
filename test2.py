@@ -1,284 +1,70 @@
 import duckdb
+import pyarrow as pa
 import pyarrow.parquet as pq
-import datetime
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
 # ============================================================
-# DATE SETUP
+# 1. READ INPUT FILES
 # ============================================================
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-# ============================================================
-# DUCKDB CONNECTION
-# ============================================================
+custfile_path = f"{host_parquet_path}/ALLCUST_FB.parquet"
+cus2file_path = f"{host_parquet_path}/CICUS2T_ALL.parquet"
+
 con = duckdb.connect()
 
-# ============================================================
-# INPUT PARQUET FILE (Already Converted)
-# ============================================================
-input_file = f"{host_parquet_path}/RBP2_B033_UNLOAD_PRIMNAME_OUT.parquet"
-
+# CUSTOMER FILE - Individual record
 con.execute(f"""
-    CREATE OR REPLACE TABLE inname AS 
+    CREATE OR REPLACE TABLE CICUSTT AS
     SELECT 
-        HOLDCONO,
-        BANKNO,
-        CUSTNO,
-        RECTYPE,
-        RECSEQ,
-        EFFDATE,
-        PROCESSTIME,
-        ADRHOLDCONO,
-        ADRBANKNO,
-        ADRREFNO,
-        CUSTTYPE,
-        KEYFIELD1,
-        KEYFIELD2,
-        KEYFIELD3,
-        KEYFIELD4,
-        LINECODE,
-        NAMELINE,
-        LINECODE1,
-        NAMETITLE1,
-        LINECODE2,
-        NAMETITLE2,
-        SALUTATION,
-        TITLECODE,
-        FIRSTMID,
-        SURNAME,
-        SURNAMEKEY,
-        SUFFIXCODE,
-        APPENDCODE,
-        PRIMPHONE,
-        PPHONELTH,
-        SECPHONE,
-        SPHONELTH,
-        TELEXPHONE,
-        TPHONELTH,
-        FAXPHONE,
-        FPHONELTH,
-        LASTCHANGE,
-        NAMEFMT
-    FROM read_parquet('{input_file}')
+        CAST(BANKNO AS INTEGER) AS BANKNO,
+        CIS_NO
+    FROM read_parquet('{custfile_path}')
 """)
 
-# ============================================================
-# FILTER RECORDS BASED ON SAS LOGIC
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE filtered AS
-    SELECT
-        HOLDCONO,
-        BANKNO,
-        CUSTNO,
-        RECTYPE,
-        RECSEQ,
-        EFFDATE,
-        PROCESSTIME,
-        ADRHOLDCONO,
-        ADRBANKNO,
-        ADRREFNO,
-        CUSTTYPE,
-        KEYFIELD1,
-        KEYFIELD2,
-        KEYFIELD3,
-        KEYFIELD4,
-        LINECODE,
-        NAMELINE,
-        LINECODE1,
-        NAMETITLE1,
-        LINECODE2,
-        NAMETITLE2,
-        SALUTATION,
-        TITLECODE,
-        FIRSTMID,
-        SURNAME,
-        SURNAMEKEY,
-        SUFFIXCODE,
-        APPENDCODE,
-        PRIMPHONE,
-        PPHONELTH,
-        SECPHONE,
-        SPHONELTH,
-        TELEXPHONE,
-        TPHONELTH,
-        FAXPHONE,
-        FPHONELTH,
-        LASTCHANGE,
-        NAMEFMT,
-        regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1) AS SECND_WORD
-    FROM inname
-    WHERE CUSTTYPE = 'I'
-      AND NAMELINE IS NOT NULL
-      AND trim(NAMELINE) != ''
-      AND (KEYFIELD1 IS NULL OR trim(KEYFIELD1) = '')
-      AND (regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1) IS NULL OR trim(regexp_extract(NAMELINE, '^[^ ]+ +([^ ]+)', 1)) = '')
-""")
-
-# ============================================================
-# SORT BY CUSTNO (Like PROC SORT)
-# ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE inname_sorted AS
+# CICUS2T FILE
+con.execute(f"""
+    CREATE OR REPLACE TABLE CICUS2T AS
     SELECT 
-        HOLDCONO,
-        BANKNO,
-        CUSTNO,
-        RECTYPE,
-        RECSEQ,
-        EFFDATE,
-        PROCESSTIME,
-        ADRHOLDCONO,
-        ADRBANKNO,
-        ADRREFNO,
-        CUSTTYPE,
-        KEYFIELD1,
-        KEYFIELD2,
-        KEYFIELD3,
-        KEYFIELD4,
-        LINECODE,
-        NAMELINE,
-        LINECODE1,
-        NAMETITLE1,
-        LINECODE2,
-        NAMETITLE2,
-        SALUTATION,
-        TITLECODE,
-        FIRSTMID,
-        SURNAME,
-        SURNAMEKEY,
-        SUFFIXCODE,
-        APPENDCODE,
-        PRIMPHONE,
-        PPHONELTH,
-        SECPHONE,
-        SPHONELTH,
-        TELEXPHONE,
-        TPHONELTH,
-        FAXPHONE,
-        FPHONELTH,
-        LASTCHANGE,
-        NAMEFMT
-    FROM filtered
-    ORDER BY CUSTNO
+        CIS_NO,
+        CIS_TIN,
+        CIS_SST,
+        CIS_EINV_ACCEPT_DATE,
+        CIS_EINV_ACCEPT_TIME
+    FROM read_parquet('{cus2file_path}')
 """)
 
 # ============================================================
-# OUTPUT 1: OUTDEL (TO DELETE)
+# 2. MERGE LOGIC (A AND NOT B)
 # ============================================================
-outdel_query = """
-    SELECT 
-        HOLDCONO,
-        BANKNO,
-        CUSTNO,
-        RECTYPE,
-        RECSEQ,
-        EFFDATE,
-        PROCESSTIME,
-        ADRHOLDCONO,
-        ADRBANKNO,
-        ADRREFNO,
-        CUSTTYPE,
-        KEYFIELD1,
-        KEYFIELD2,
-        KEYFIELD3,
-        KEYFIELD4,
-        LINECODE,
-        NAMELINE,
-        LINECODE1,
-        NAMETITLE1,
-        LINECODE2,
-        NAMETITLE2,
-        SALUTATION,
-        TITLECODE,
-        FIRSTMID,
-        SURNAME,
-        SURNAMEKEY,
-        SUFFIXCODE,
-        APPENDCODE,
-        PRIMPHONE,
-        PPHONELTH,
-        SECPHONE,
-        SPHONELTH,
-        TELEXPHONE,
-        TPHONELTH,
-        FAXPHONE,
-        FPHONELTH,
-        LASTCHANGE,
-        NAMEFMT
-    FROM inname_sorted
-"""
-outdel_df = con.execute(outdel_query).fetch_arrow_table()
 
-outdel_parquet = f"{parquet_output_path}/RBP2_B033_CIS_NAMEKEY1_TODELETE_{year}{month:02}{day:02}.parquet"
-outdel_csv = f"{csv_output_path}/RBP2_B033_CIS_NAMEKEY1_TODELETE_{year}{month:02}{day:02}.csv"
+insert_new = con.execute("""
+    SELECT A.CIS_NO
+    FROM CICUSTT A
+    LEFT JOIN CICUS2T B
+    ON A.CIS_NO = B.CIS_NO
+    WHERE B.CIS_NO IS NULL
+    ORDER BY A.CIS_NO
+""").arrow()
 
-pq.write_table(outdel_df, outdel_parquet)
-con.execute(f"COPY ({outdel_query}) TO '{outdel_csv}' (HEADER, DELIMITER ',')")
+print(">>> Number of new customers:", len(insert_new))
 
 # ============================================================
-# OUTPUT 2: OUTINS (TO INSERT)
+# 3. OUTPUT FILES
 # ============================================================
-con.execute("""
-    CREATE OR REPLACE TABLE tempoout1 AS
-    SELECT
-        HOLDCONO,
-        BANKNO,
-        CUSTNO,
-        RECTYPE,
-        RECSEQ,
-        EFFDATE,
-        PROCESSTIME,
-        ADRHOLDCONO,
-        ADRBANKNO,
-        ADRREFNO,
-        CUSTTYPE,
-        NAMELINE AS KEYFIELD1,
-        KEYFIELD2,
-        KEYFIELD3,
-        KEYFIELD4,
-        LINECODE,
-        NAMELINE,
-        LINECODE1,
-        NAMETITLE1,
-        LINECODE2,
-        NAMETITLE2,
-        SALUTATION,
-        TITLECODE,
-        FIRSTMID,
-        SURNAME,
-        SURNAMEKEY,
-        SUFFIXCODE,
-        APPENDCODE,
-        PRIMPHONE,
-        PPHONELTH,
-        SECPHONE,
-        SPHONELTH,
-        TELEXPHONE,
-        TPHONELTH,
-        FAXPHONE,
-        FPHONELTH,
-        LASTCHANGE,
-        'M' AS NAMEFMT
-    FROM inname_sorted
+
+output_table = pa.table(insert_new)
+
+# Save as Parquet
+parquet_out = f"{parquet_output_path}/CIS_CICUS2T_INSERT.parquet"
+pq.write_table(output_table, parquet_out)
+
+# Save as CSV
+csv_out = f"{csv_output_path}/CIS_CICUS2T_INSERT.csv"
+duckdb.query(f"""
+    COPY (SELECT * FROM read_parquet('{parquet_out}'))
+    TO '{csv_out}' (HEADER, DELIMITER ',')
 """)
 
-outins_query = "SELECT * FROM tempoout1"
-outins_df = con.execute(outins_query).fetch_arrow_table()
-
-outins_parquet = f"{parquet_output_path}/RBP2_B033_CIS_NAMEKEY1_TOINSERT_{year}{month:02}{day:02}.parquet"
-outins_csv = f"{csv_output_path}/RBP2_B033_CIS_NAMEKEY1_TOINSERT_{year}{month:02}{day:02}.csv"
-
-pq.write_table(outins_df, outins_parquet)
-con.execute(f"COPY ({outins_query}) TO '{outins_csv}' (HEADER, DELIMITER ',')")
-
-# ============================================================
-# LOG OUTPUT
-# ============================================================
-print(f"[INFO] OUTDEL written: {outdel_parquet} and {outdel_csv}")
-print(f"[INFO] OUTINS written: {outins_parquet} and {outins_csv}")
-print(f"[INFO] Total records deleted: {len(outdel_df)}")
-print(f"[INFO] Total records inserted: {len(outins_df)}")
+print(f">>> Output saved to:\n - {parquet_out}\n - {csv_out}")
 
 con.close()
