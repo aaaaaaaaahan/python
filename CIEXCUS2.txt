@@ -1,0 +1,94 @@
+//CIEXCUS2 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
+//*--------------------------------------------------------------------
+//* ESMR 2023-4648 NEW CICUS2T TABLE
+//*
+//* PROCESS FLOW FOR EXTRACTION:
+//* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//* CIEXCUS2 - IDENTIFY CIS NO TO INSERT TO NEW TABLE
+//* CIINCUS2 - INSERT INTO CICUS2T TABLE
+//* CIBKCUS2 - BACKUP CICUS2T TABLE
+//* CIULCUS2 - UNLOAD CICUS2T TABLE
+//*--------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CIS.CICUS2T.INSERT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//GETCHG   EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CUSTFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.ALLCUST.FB
+//CUS2FILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CICUS2T.ALL
+//CTRLDATE DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//OUTFILE1 DD DSN=RBP2.B033.CIS.CICUS2T.INSERT,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+
+OPTION NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*    SET DATES                                                   */
+ /*----------------------------------------------------------------*/
+    DATA SRSDATE;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
+
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('RDATE',PUT(TODAYSAS,YYMMDDN8.));
+         CALL SYMPUT('YEAR' ,PUT(SRSYY,Z4.));
+         CALL SYMPUT('MONTH',PUT(SRSMM,Z2.));
+         CALL SYMPUT('DAY'  ,PUT(SRSDD,Z2.));
+
+    RUN;
+   PROC PRINT;RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    CUSTOMER FILE - IDENTIFY INDIVIDUAL RECORD                  */
+ /*----------------------------------------------------------------*/
+DATA CICUSTT;
+  INFILE CUSTFILE;
+  INPUT  @003  BANKNO           PD2.
+         @005  CIS_NO           $20.
+         ;
+RUN;
+
+PROC SORT  DATA=CICUSTT; BY CIS_NO     ;RUN;
+PROC PRINT DATA=CICUSTT (OBS=5);TITLE 'INDIVIDUAL CUST ONLY';RUN;
+
+DATA CICUS2T;
+  INFILE CUS2FILE;
+   INPUT @001   CIS_NO                 $20.
+         @021   CIS_TIN                $25.
+         @046   CIS_SST                $25.
+         @071   CIS_EINV_ACCEPT_DATE   $10.
+         @081   CIS_EINV_ACCEPT_TIME   $08.
+         ;
+
+PROC SORT  DATA=CICUS2T; BY CIS_NO;
+PROC PRINT DATA=CICUS2T(OBS=5);TITLE 'CICUS2T';
+RUN;
+
+DATA INSERT_NEW;
+   MERGE CICUSTT(IN=A) CICUS2T(IN=B);
+   BY CIS_NO;
+   IF A AND NOT B;
+RUN;
+PROC SORT  DATA=INSERT_NEW;BY CIS_NO;RUN;
+PROC PRINT DATA=INSERT_NEW(OBS=15);TITLE 'NEW CUST';RUN;
+
+ /*----------------------------------------------------------------*/
+ /* OUTPUT FILE                                                    */
+ /*----------------------------------------------------------------*/
+ DATA OUT1;
+   FILE OUTFILE1;
+   SET INSERT_NEW;
+
+       PUT @01  CIS_NO         $20.
+                ;
+
+ RUN;
