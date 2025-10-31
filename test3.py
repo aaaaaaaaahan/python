@@ -1,14 +1,3 @@
-Hi xxx,
+As discussed earlier, the address will be merged on your side. Please find the existing job and dataset details below:
 
-As spoken just now, address will merge by your side and the existing job and dataset is show as below.
-
-Existing Job:
-xxx
-
-Address dataset:
-xxx
-
-Thank you.
-
-Regards,
-Kai Han
+The address merge process will be carried out by your side.
