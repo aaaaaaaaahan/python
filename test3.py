@@ -3,11 +3,11 @@ import datetime
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
 # ============================================================
-# DATE SETUP
+# DATE SETUP (equivalent to reading CTRLDATE in SAS)
 # ============================================================
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
-today = datetime.date.today()
+today = datetime.date.today()  # replace with control date if needed
 
 # ============================================================
 # DUCKDB CONNECTION
@@ -15,7 +15,49 @@ today = datetime.date.today()
 con = duckdb.connect()
 
 # ============================================================
-# STEP 1–3: READ, FILTER & CREATE REVDATA
+# STEP 1a: CREATE REPTDATA (REVIEWED IS NULL OR BLANK)
+# ============================================================
+con.execute(f"""
+    CREATE OR REPLACE TABLE REPTDATA AS
+    SELECT
+        BANKNO,
+        RECTYPE,
+        APPLCODE,
+        APPLNO,
+        NOTENO,
+        REPORTDATE,
+        SUBSTR(REPORTDATE,1,2) AS RPDATEDD,
+        SUBSTR(REPORTDATE,4,2) AS RPDATEMM,
+        SUBSTR(REPORTDATE,7,4) AS RPDATEYYYY,
+        REPORTNO,
+        BRANCHNO,
+        NAME,
+        CODE1, CODE2, CODE3, CODE4, CODE5,
+        AMOUNT1, AMOUNT2, AMOUNT3, AMOUNT4, AMOUNT5,
+        DATE1, DATE2, DATE3, DATE4, DATE5,
+        REMARK1, REMARK2, REMARK3, REMARK4, REMARK5,
+        VIEWED,
+        CUSTASSESS,
+        BRCHCOMMENTS,
+        BRCHREVIEW,
+        BRCHCHECK,
+        HOCOMMENTS,
+        HOREVIEW,
+        HOCHECK,
+        CUSTOCCUP,
+        CUSTNATURE,
+        CUSTEMPLOYER,
+        INDORG,
+        OCCUPDESC,
+        NATUREDESC,
+        VIEWOFFICER AS VIEWOFF,
+        REVIEWED AS REVIEW
+    FROM '{host_parquet_path("UNLOAD_CIREPTTT_FB.parquet")}'
+    WHERE (REVIEWED IS NULL OR TRIM(REVIEWED) = '')
+""")
+
+# ============================================================
+# STEP 1b: CREATE REVDATA (BRCHCHECK NOT NULL AND <365 DAYS OLD)
 # ============================================================
 con.execute(f"""
     CREATE OR REPLACE TABLE REVDATA AS
@@ -32,26 +74,10 @@ con.execute(f"""
         REPORTNO,
         BRANCHNO,
         NAME,
-        CODE1,
-        CODE2,
-        CODE3,
-        CODE4,
-        CODE5,
-        AMOUNT1,
-        AMOUNT2,
-        AMOUNT3,
-        AMOUNT4,
-        AMOUNT5,
-        DATE1,
-        DATE2,
-        DATE3,
-        DATE4,
-        DATE5,
-        REMARK1,
-        REMARK2,
-        REMARK3,
-        REMARK4,
-        REMARK5,
+        CODE1, CODE2, CODE3, CODE4, CODE5,
+        AMOUNT1, AMOUNT2, AMOUNT3, AMOUNT4, AMOUNT5,
+        DATE1, DATE2, DATE3, DATE4, DATE5,
+        REMARK1, REMARK2, REMARK3, REMARK4, REMARK5,
         VIEWED,
         CUSTASSESS,
         BRCHCOMMENTS,
@@ -66,21 +92,20 @@ con.execute(f"""
         INDORG,
         OCCUPDESC,
         NATUREDESC,
-        VIEWOFFICER,
-        REVIEWED,
+        VIEWOFFICER AS VIEWOFF,
+        REVIEWED AS REVIEW,
         TRY_CAST(
-            SUBSTR(REPORTDATE,7,4) || '-' || 
-            SUBSTR(REPORTDATE,4,2) || '-' || 
+            SUBSTR(REPORTDATE,7,4) || '-' ||
+            SUBSTR(REPORTDATE,4,2) || '-' ||
             SUBSTR(REPORTDATE,1,2) AS DATE
         ) AS REPTSAS
     FROM '{host_parquet_path("UNLOAD_CIREPTTT_FB.parquet")}'
-    WHERE REVIEWED IS NULL
-        AND BRCHCHECK IS NOT NULL
-        AND date_diff('day', REPTSAS, current_date) < 365
+    WHERE (BRCHCHECK IS NOT NULL AND TRIM(BRCHCHECK) <> '')
+      AND date_diff('day', REPTSAS, current_date) < 365
 """)
 
 # ============================================================
-# STEP 4: REMOVE DUPLICATES (EQUIV. TO NODUPKEY)
+# STEP 2: REMOVE DUPLICATES (SAS NODUPKEY)
 # ============================================================
 con.execute("""
     CREATE OR REPLACE TABLE REVDATA_NODUP AS
@@ -91,7 +116,7 @@ con.execute("""
 """)
 
 # ============================================================
-# STEP 5: KEEP ONLY REQUIRED COLUMNS
+# STEP 3: KEEP ONLY REQUIRED COLUMNS (ALLREV)
 # ============================================================
 con.execute("""
     CREATE OR REPLACE TABLE ALLREV AS
@@ -104,7 +129,7 @@ con.execute("""
 """)
 
 # ============================================================
-# STEP 6: MERGE REPTDATA_CLEAN & ALLREV TO GET UPDREPT
+# STEP 4: MERGE REPTDATA + ALLREV (equiv. to SAS MERGE)
 # ============================================================
 con.execute("""
     CREATE OR REPLACE TABLE UPDREPT AS
@@ -121,26 +146,10 @@ con.execute("""
         A.REPORTNO,
         A.BRANCHNO,
         A.NAME,
-        A.CODE1,
-        A.CODE2,
-        A.CODE3,
-        A.CODE4,
-        A.CODE5,
-        A.AMOUNT1,
-        A.AMOUNT2,
-        A.AMOUNT3,
-        A.AMOUNT4,
-        A.AMOUNT5,
-        A.DATE1,
-        A.DATE2,
-        A.DATE3,
-        A.DATE4,
-        A.DATE5,
-        A.REMARK1,
-        A.REMARK2,
-        A.REMARK3,
-        A.REMARK4,
-        A.REMARK5,
+        A.CODE1, A.CODE2, A.CODE3, A.CODE4, A.CODE5,
+        A.AMOUNT1, A.AMOUNT2, A.AMOUNT3, A.AMOUNT4, A.AMOUNT5,
+        A.DATE1, A.DATE2, A.DATE3, A.DATE4, A.DATE5,
+        A.REMARK1, A.REMARK2, A.REMARK3, A.REMARK4, A.REMARK5,
         A.VIEWED,
         A.CUSTASSESS,
         A.BRCHCOMMENTS,
@@ -155,13 +164,13 @@ con.execute("""
         A.INDORG,
         A.OCCUPDESC,
         A.NATUREDESC,
-        A.VIEWOFFICER,
-        A.REVIEWED
-    FROM REVDATA_NODUP A
+        A.VIEWOFF,
+        A.REVIEW
+    FROM REPTDATA A
     JOIN ALLREV B
-    ON A.APPLCODE = B.APPLCODE
-        AND A.APPLNO = B.APPLNO
-        AND A.NOTENO = B.NOTENO
+      ON A.APPLCODE = B.APPLCODE
+     AND A.APPLNO = B.APPLNO
+     AND A.NOTENO = B.NOTENO
     WHERE (
         SUBSTR(A.REPORTDATE,7,4) || SUBSTR(A.REPORTDATE,4,2) || SUBSTR(A.REPORTDATE,1,2)
     ) > (
@@ -170,9 +179,9 @@ con.execute("""
 """)
 
 # ============================================================
-# STEP 7: OUTPUT FINAL DATA
+# STEP 5: OUTPUT FINAL DATA (TEMPOUT equivalent)
 # ============================================================
-final_query = """
+final_query = f"""
     SELECT
         BANKNO,
         RECTYPE,
@@ -184,18 +193,18 @@ final_query = """
         BRANCHNO,
         NAME,
         '  ' AS PAD,
-        'Y' AS REVIEWFLAG
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-       FROM UPDREPT
-""".format(year=year,month=month,day=day)
+        'Y' AS REVIEWFLAG,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM UPDREPT
+"""
 
 # ============================================================
-# OUTPUT TO PARQUET & CSV
+# STEP 6: WRITE TO PARQUET & CSV
 # ============================================================
 queries = {
-    "CISREPT_UPDATE_REVIEW"                 : final_query
+    "CISREPT_UPDATE_REVIEW": final_query
 }
 
 for name, query in queries.items():
@@ -203,13 +212,13 @@ for name, query in queries.items():
     csv_path = csv_output_path(name)
 
     con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    """)
+
     con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);
+    """)
