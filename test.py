@@ -2,281 +2,647 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIHCMRHL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
-//*********************************************************************
-//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1
-//* THE MATCHING CRITERIA : (1) IC MATCH, (2) NAME AND IC MATCH, (3)
-//* NAME AND (4) NAME AND DATE OF BIRTH MATCH
+//CIHCMRPT JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB93372
 //*********************************************************************
 //MATCH#1  EXEC SAS609
-//HCMFILE  DD DISP=SHR,DSN=HCM.STAFF.LIST
-//RHOLD    DD DISP=SHR,DSN=UNLOAD.CIRHOLDT.FB
-//RHOBFILE  DD DISP=SHR,DSN=UNLOAD.CIRHOBCT.FB
-//RHODFILE  DD DISP=SHR,DSN=UNLOAD.CIRHODCT.FB
-//OUTPUT   DD DSN=HCM.RHOLD.MATCH(+1),
+//MRHOLD   DD DISP=SHR,DSN=HCM.RHOLD.MATCH(0)
+//*DOWJS   DD DISP=SHR,DSN=HCM.DOWJONES.MATCH.UNIQ(0)
+//MDOWJS   DD DISP=SHR,DSN=HCM.DOWJONES.MATCH(0)
+//OUTPBB   DD DSN=HCM.MATCH.PBB.RPT(+1),
 //            DISP=(NEW,CATLG,DELETE),
 //            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=550,BLKSIZE=0,RECFM=FB)
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
+//OUTPIB   DD DSN=HCM.MATCH.PIB.RPT(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
+//OUTPNSB  DD DSN=HCM.MATCH.PNSB.RPT(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
+//OUTPTS   DD DSN=HCM.MATCH.PTS.RPT(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
+//OUTPHSB  DD DSN=HCM.MATCH.PHSB.RPT(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
+//OUTOVER  DD DSN=HCM.MATCH.OVERSEA.RPT(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=600,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SYSIN    DD *
-DATA RHOB;
-   INFILE RHOBFILE;
-        INPUT @01   CLASSIFY       $10.
-              @11   NATURE         $10.
-              @21   KEY_CODE       $10.
-              @41   CLASSCODE      $10.;
+ /*----------------------------------------------------------------*/
+ /*    DOWJONES FILE                                               */
+ /*----------------------------------------------------------------*/
+    DATA DOWJ;
+      INFILE MDOWJS;
+      FORMAT REASON $10. REMARKS $300.;
+       INPUT  @001  HCMNAME      $40.
+              @042  OLDID        $15.
+              @058  IC           $12.
+              @070  MATCH_IND    $01.
+              @072  DOBDT        $10.
+              @085  BASE         $20.
+              @110  DESIGNATION  $30.
+              @145  REASOND      $30.
+              @179  MATCHNAME    $01.
+              @180  MATCHIND     $05.
+              @180  MDNIC        $01.
+              @181  MDNID        $01.
+              @182  MDIC         $01.
+              @183  MDID         $01.
+              @184  MDDOB        $01.
+              @185  COMPCODE     $05.
+              @190  STAFFID      $05.
+              @196  DREMARK      $150.
+              @347  DEPT         $150.;
+              IF MATCHNAME = 'Y' AND MATCHIND = '     ' THEN DELETE;
+              IF MDNIC = 'N'  AND MDNID = 'N' AND
+                 MDIC  = 'N'  AND MDID  = 'N' AND
+                 MDDOB = 'N'  THEN DELETE;
+              REASON = 'DOWJONES';
+              REMARKS = DREMARK;
+              DETAILS = DEPT;
+              M_NIC  = MDNIC ;
+              M_NID  = MDNID ;
+              M_IC   = MDIC ;
+              M_ID   = MDID ;
+              M_DOB  = MDDOB ;
+    RUN;
+    PROC SORT  DATA=DOWJ NODUPKEY;BY HCMNAME OLDID IC;RUN;
+    PROC PRINT DATA=DOWJ (OBS=10);TITLE 'DJW MATCH'; RUN;
 
+    DATA RHOLD;
+      INFILE MRHOLD;
+      FORMAT REASON $10. REMARKS $300.;
+       INPUT  @001  HCMNAME      $40.
+              @042  OLDID        $15.
+              @058  IC           $12.
+              @070  MATCH_IND    $01.
+              @072  DOBDT        $10.
+              @085  BASE         $20.
+              @110  DESIGNATION  $30.
+              @145  REASONR      $30.
+              @179  MATCHNAME    $06.
+              @180  MATCHIND     $05.
+              @180  MRNIC        $01.
+              @181  MRNID        $01.
+              @182  MRIC         $01.
+              @183  MRID         $01.
+              @184  MRDOB        $01.
+              @185  COMPCODE     $05.
+              @190  STAFFID      $05.
+              @196  RREMARK      $150.
+              @347  KEY_DESCRIBE $150.;
+              IF MATCHNAME = 'Y' AND MATCHIND = '     ' THEN DELETE;
+              IF MRNIC = 'N'  AND MRNID = 'N' AND
+                 MRIC  = 'N'  AND MRID  = 'N' AND
+                 MRDOB = 'N'  THEN DELETE;
+              REASON = 'RHOLD';
+              REMARKS = RREMARK;
+              DETAILS = KEY_DESCRIBE;
+              M_NIC  = MRNIC ;
+              M_NID  = MRNID ;
+              M_IC   = MRIC ;
+              M_ID   = MRID ;
+              M_DOB  = MRDOB ;
+    RUN;
+    PROC SORT  DATA=RHOLD NODUPKEY;BY HCMNAME OLDID IC;RUN;
+    PROC PRINT DATA=RHOLD (OBS=10);TITLE 'RHOLD MATCH'; RUN;
+
+DATA MPBB MPIB MPNSB MPTS MPHSB MOVERSEA;
+   SET DOWJ RHOLD;
+   IF COMPCODE = 'PBB' THEN OUTPUT MPBB;
+   IF COMPCODE = 'PBB' THEN DELETE;
+   IF COMPCODE = 'PIB' THEN OUTPUT MPIB;
+   IF COMPCODE = 'PIB' THEN DELETE;
+   IF COMPCODE = 'PNSB' THEN OUTPUT MPNSB;
+   IF COMPCODE = 'PTS' THEN OUTPUT MPTS;
+   IF COMPCODE = 'PHSB' THEN OUTPUT MPHSB;
+   IF COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
+   THEN OUTPUT MOVERSEA;
 RUN;
-PROC SORT DATA=RHOB NODUPKEY; BY CLASSCODE ;RUN;
+PROC SORT DATA=MPBB; BY HCMNAME OLDID IC; RUN;
+PROC SORT DATA=MPIB; BY HCMNAME OLDID IC; RUN;
+PROC SORT DATA=MPNSB; BY HCMNAME OLDID IC; RUN;
+PROC SORT DATA=MPTS; BY HCMNAME OLDID IC; RUN;
+PROC SORT DATA=MPHSB; BY HCMNAME OLDID IC; RUN;
+PROC SORT DATA=MOVERSEA; BY HCMNAME OLDID IC; RUN;
 
-DATA RHOD;
-   INFILE RHODFILE;
-         FORMAT CONTACT1 $50. CONTACT2 $50. CONTACT3 $50.
-               REMARKS $150.;
-         INPUT @001 KEY_ID                  $10.
-               @011 KEY_CODE                $10.
-               @021 KEY_DESCRIBE            $150.
-               @171 KEY_REMARK_ID1          $10.
-               @181 KEY_REMARK_1            $50.
-               @231 KEY_REMARK_ID2          $10.
-               @241 KEY_REMARK_2            $50.
-               @291 KEY_REMARK_ID3          $10.
-               @301 KEY_REMARK_3            $50.
-               @351 DESC_LASTOPERATOR       $8.
-               @359 DESC_LASTMNT_DATE       $10.
-               @369 DESC_LASTMNT_TIME       $8.  ;
-         IF KEY_ID = 'DEPT  ' ;
-         IF KEY_REMARK_1 NE ' ' THEN CONTACT1 = KEY_REMARK_1;
-         IF KEY_REMARK_2 NE ' ' THEN CONTACT2 = KEY_REMARK_2;
-         IF KEY_REMARK_3 NE ' ' THEN CONTACT3 = KEY_REMARK_3;
-         REMARKS = TRIM(KEY_DESCRIBE)||''||TRIM(CONTACT1)||''||
-                   TRIM(CONTACT2);
-RUN;
-PROC SORT DATA=RHOD NODUPKEY; BY KEY_CODE  ;RUN;
-PROC PRINT DATA=RHOD(OBS=15);TITLE 'RHOD LIST';
+  DATA OUTPBB;
+     IF TRN=0 THEN DO;
+        FILE OUTPBB;
+        PUT /@55 'EXCEPTION REPORT ON VALIDATION OF'
+             @90 'RHOLD AND DJWD (PBB)';
+        PUT /@55 '       NO MATCHING RECORDS      ';
+     END;
+   RETAIN TRN;
 
-DATA RHOD1;
-   INFILE RHODFILE;
-         INPUT @001 KEY_ID1                 $10.
-               @011 CLASSIFY                $10.
-               @021 KEY_DESCRIBE1           $150.;
-         IF KEY_ID1 = 'CLASS ' ;
-RUN;
-PROC SORT DATA=RHOD1 NODUPKEY; BY CLASSIFY  ;RUN;
-PROC PRINT DATA=RHOD1(OBS=15);TITLE 'RHOD1 LIST';
-
-DATA RHOLD;
-   FORMAT DOBDOR $8. CRTDATE $8.;
-   INFILE RHOLD;
-        INPUT @01   CLASSCODE      $10.
-              @11   INDORG         $1.
-              @12   NAME           $40.
-              @52   NEWIC          $15.
-              @72   OTHID          $20.
-              @292  CRTDTYYYY      $4.
-              @297  CRTDTMM        $2.
-              @300  CRTDTDD        $2.
-              @336  DOBDTYYYY      $4.
-              @341  DOBDTMM        $2.
-              @344  DOBDTDD        $2.;
-              DOBDOR=DOBDTYYYY||DOBDTMM||DOBDTDD;
-              CRTDATE=CRTDTYYYY||CRTDTMM||CRTDTDD;
-              REPTDATE=PUT(TODAY()-7,YYMMDDN8.);
-           IF CRTDATE >= REPTDATE;
-RUN;
-PROC SORT DATA=RHOLD; BY CLASSCODE ; RUN;
-
-DATA BRHOLD1;
-   MERGE RHOLD(IN=Y) RHOB(IN=Z); BY CLASSCODE;
-   IF Y THEN OUTPUT;
-RUN;
-PROC SORT DATA=BRHOLD1; BY CLASSIFY  ;RUN;
-
-DATA BRHOLD;
-   MERGE BRHOLD1(IN=S) RHOD1(IN=T); BY CLASSIFY;
-   IF S THEN OUTPUT;
-RUN;
-PROC SORT DATA=BRHOLD; BY KEY_CODE  ;RUN;
-
-DATA RNEW ROLD RNNEW RNOLD RNAME RNDOB;
-   MERGE BRHOLD(IN=W) RHOD(IN=X); BY KEY_CODE;
-   IF W ;
-   IF NEWIC NE ' ' THEN OUTPUT RNEW;
-   IF OTHID NE ' ' THEN OUTPUT ROLD;
-   IF NAME NE ' ' AND NEWIC NE ' ' THEN OUTPUT RNNEW;
-   IF NAME NE ' ' AND OTHID NE ' ' THEN OUTPUT RNOLD;
-   IF NAME NE ' ' THEN OUTPUT RNAME;
-   IF NAME NE ' ' AND DOBDOR NE ' ' THEN OUTPUT RNDOB;
-RUN;
-PROC SORT DATA=RNEW; BY NEWIC ;RUN;
-PROC SORT DATA=ROLD; BY OTHID ;RUN;
-PROC SORT DATA=RNNEW; BY NAME NEWIC  ;RUN;
-PROC SORT DATA=RNOLD; BY NAME OTHID  ;RUN;
-PROC SORT DATA=RNAME; BY NAME  ;RUN;
-PROC SORT DATA=RNDOB; BY NAME DOBDOR ;RUN;
-
-
-DATA HCMOLD HCMNEW HCMALL HCMNDOB HCMNOLD HCMNNEW;
-   INFILE HCMFILE DELIMITER = ';' MISSOVER DSD;
-        FORMAT OTHID $20. DOBDT $10. DOBDOR $8. DOBDD $2.
-        DOBMM $2. DOBYYYY $4.;
-        INFORMAT STAFFID        $05.;               /*  1  */
-        INFORMAT HCMNAME        $40.;               /*  2  */
-        INFORMAT OLDID          $15.;               /*  3  */
-        INFORMAT IC             $15.;               /*  4  */
-        INFORMAT DOB            $10.;               /*  5  */
-        INFORMAT BASE           $20.;               /*  6  */
-        INFORMAT COMPCODE       $05.;               /*  7  */
-        INFORMAT DESIGNATION    $30.;               /*  8  */
-        INFORMAT STATUS         $01.;               /*  9  */
-
-          FORMAT STAFFID        $05.;               /*  1  */
-          FORMAT HCMNAME        $40.;               /*  2  */
-          FORMAT OLDID          $15.;               /*  3  */
-          FORMAT IC             $15.;               /*  4  */
-          FORMAT DOB            $10.;               /*  5  */
-          FORMAT BASE           $20.;               /*  6  */
-          FORMAT COMPCODE       $05.;               /*  7  */
-          FORMAT DESIGNATION    $30.;               /*  8  */
-          FORMAT STATUS         $01.;               /*  9  */
-
-        INPUT  STAFFID        $                   /*  1  */
-               HCMNAME        $                   /*  2  */
-               OLDID          $                   /*  3  */
-               IC             $                   /*  4  */
-               DOB            $                   /*  5  */
-               BASE           $                   /*  6  */
-               COMPCODE       $                   /*  7  */
-               DESIGNATION    $                   /*  8  */
-               STATUS         $ ;                 /*  9  */
-              OTHID = OLDID;
-              NAME = HCMNAME;
-              NEWIC= IC;
-              DOBDD = SUBSTR(DOB,1,2);
-              DOBMM = SUBSTR(DOB,4,2);
-              DOBYYYY = SUBSTR(DOB,7,4);
-              DOBDT = DOBDD||'-'||DOBMM||'-'||DOBYYYY;
-              DOBDOR=DOBYYYY||DOBMM||DOBDD;
-              IF OTHID NE ' ' THEN OUTPUT HCMOLD;
-              IF NEWIC NE ' ' THEN OUTPUT HCMNEW;
-              IF NAME NE ' ' AND OTHID NE ' ' THEN OUTPUT HCMNOLD;
-              IF NAME NE ' ' AND NEWIC NE ' ' THEN OUTPUT HCMNNEW;
-              IF NAME  NE ' ' THEN OUTPUT HCMALL;
-              IF NAME NE ' ' AND DOBDOR NE ' ' THEN OUTPUT HCMNDOB;
-RUN;
-PROC SORT DATA=HCMOLD NODUPKEY; BY OTHID STAFFID ;RUN;
-PROC SORT DATA=HCMNEW NODUPKEY; BY NEWIC STAFFID;RUN;
-PROC SORT DATA=HCMNOLD NODUPKEY; BY NAME OTHID STAFFID;RUN;
-PROC SORT DATA=HCMNNEW NODUPKEY; BY NAME NEWIC STAFFID;RUN;
-PROC SORT DATA=HCMALL NODUPKEY; BY NAME STAFFID;RUN;
-PROC SORT DATA=HCMNDOB NODUPKEY; BY NAME DOBDOR STAFFID;RUN;
-
-DATA MRGNAME;
-   FORMAT MATCH_DESC $25.;
-   MERGE RNAME(IN=A) HCMALL(IN=B); BY NAME ;
-   IF A AND B;
-   MATCH_IND = '3';
-   M_NAME = 'Y';
-   REASON = 'RHOLD NAME MATCHED';
-RUN;
-PROC SORT DATA=MRGNAME; BY NAME OTHID; RUN;
-PROC PRINT DATA=MRGNAME(OBS=5);TITLE 'NAME MATCH';
-
-DATA MRGID;
-   FORMAT MATCH_DESC $25.;
-   MERGE ROLD(IN=C) HCMOLD(IN=D); BY OTHID ;
-   IF C AND D;
-   MATCH_IND = '1';
-   M_ID = 'Y';
-   REASON = 'RHOLD ID MATCHED';
-RUN;
-PROC SORT DATA=MRGID; BY NAME OTHID; RUN;
-PROC PRINT DATA=MRGID(OBS=5);TITLE 'ID MATCH';
-
-DATA MRGIC;
-   FORMAT MATCH_IND $01. ;
-   MERGE RNEW(IN=E) HCMNEW(IN=F); BY NEWIC ;
-   IF E AND F;
-   MATCH_IND = '1';
-   M_IC = 'Y';
-   REASON = 'RHOLD IC MATCHED';
-RUN;
-PROC SORT DATA=MRGIC; BY NAME OTHID; RUN;
-PROC PRINT DATA=MRGIC(OBS=5);TITLE 'IC MATCH';
-
-DATA MRGNNEW;
-   FORMAT MATCH_DESC $25.;
-   MERGE RNNEW(IN=G) HCMNNEW(IN=H); BY NAME NEWIC ;
-   IF G AND H;
-   MATCH_IND = '2';
-   M_NIC = 'Y';
-   REASON = 'RHOLD NAME AND IC MATCHED';
-RUN;
-PROC SORT DATA=MRGNNEW; BY NAME OTHID; RUN;
-PROC PRINT DATA=MRGNNEW(OBS=5);TITLE 'NAME IC MATCH';
-
-DATA MRGNOLD;
-   FORMAT MATCH_DESC $25.;
-   MERGE RNOLD(IN=I) HCMNOLD(IN=J); BY NAME OTHID ;
-   IF I AND J;
-   MATCH_IND = '2';
-   M_NID = 'Y';
-   REASON = 'RHOLD NAME AND ID MATCHED';
-RUN;
-PROC SORT DATA=MRGNOLD; BY NAME OTHID; RUN;
-PROC PRINT DATA=MRGNOLD(OBS=5);TITLE 'NAME ID MATCH';
-
-DATA MRGNDOB;
-   FORMAT MATCH_DESC $25.;
-   MERGE RNDOB(IN=K) HCMNDOB(IN=L); BY NAME DOBDOR ;
-   IF K AND L;
-   MATCH_IND = '4';
-   M_DOB = 'Y';
-   REASON = 'RHOLD NAME AND DOB MATCHED';
-RUN;
-PROC SORT DATA=MRGNDOB; BY NAME OTHID; RUN;
-PROC PRINT DATA=MRGNDOB(OBS=5);TITLE 'NAME DOB MATCH';
-
-DATA ALLMATCH;
-   MERGE MRGNAME(IN=M) MRGID(IN=N) MRGIC(IN=O) MRGNDOB(IN=P)
-         MRGNNEW(IN=Q) MRGNOLD(IN=R);
-   BY NAME OTHID;
-   IF M OR N OR O OR P OR Q OR R;
-   IF CLASSIFY = 'CLS0000004' THEN DELETE;
-RUN;
-PROC SORT DATA=ALLMATCH NODUPKEY; BY HCMNAME IC OLDID STAFFID; RUN;
-PROC PRINT DATA=ALLMATCH(OBS=15);TITLE 'ALL MATCH';
-
-  DATA OUTPUT;
-   SET ALLMATCH;
-       IF M_NAME EQ ' ' THEN M_NAME = 'N';
-       IF M_NIC  EQ ' ' THEN M_NIC  = 'N';
-       IF M_NID  EQ ' ' THEN M_NID  = 'N';
-       IF M_IC   EQ ' ' THEN M_IC   = 'N';
-       IF M_ID   EQ ' ' THEN M_ID   = 'N';
-       IF M_DOB  EQ ' ' THEN M_DOB  = 'N';
-   FILE OUTPUT;
-        PUT @001  HCMNAME       $40.
-            @042  OLDID         $15.
-            @058  IC            $12.
-            @070  MATCH_IND     $01.
-            @072  DOBDT         $10.
-            @085  BASE          $20.
-            @110  DESIGNATION   $30.
-            @145  REASON        $30.
-            @179  M_NAME        $01.
-            @180  M_NIC         $01.
-            @181  M_NID         $01.
-            @182  M_IC          $01.
-            @183  M_ID          $01.
-            @184  M_DOB         $01.
-            @185  COMPCODE      $05.
-            @190  STAFFID       $05.
-            @196  REMARKS       $150.
-            @347  KEY_DESCRIBE1 $150.;
+   SET MPBB NOBS=TRN;
+   FILE OUTPBB;
+        IF _N_ = 1 THEN DO;
+        PUT @055 'EXCEPTION REPORT ON VALIDATION OF'
+            @090 'RHOLD AND DJWD (PBB)';
+        PUT @001  'STAFF ID'
+            @009  ';'
+            @010  'NAME'
+            @050  ';'
+            @051  'OLD IC'
+            @066  ';'
+            @067  'NEW IC'
+            @080  ';'
+            @081  'DATE OF BIRTH'
+            @093  ';'
+            @094  'BASE'
+            @118  ';'
+            @119  'DESIGNATION'
+            @143  ';'
+            @144  'REASON'
+            @205  ';'
+            @206  'REMARKS'
+            @355  ';'
+            @356  'DETAILS';
+        PUT @009  ';'
+            @050  ';'
+            @066  ';'
+            @080  ';'
+            @093  ';'
+            @118  ';'
+            @143  ';'
+            @144  'SOURCE'
+            @154  ';'
+            @155  'NAMEIC'
+            @162  ';'
+            @163  'NAMEID'
+            @170  ';'
+            @171  'IC ONLY'
+            @178  ';'
+            @179  'ID ONLY'
+            @186  ';'
+            @187  'NAMEDOB'
+            @205  ';'
+            @355  ';' ;
+            END;
+        PUT @001  STAFFID      $05.
+            @009  ';'
+            @010  HCMNAME      $40.
+            @050  ';'
+            @051  OLDID        $15.
+            @066  ';'
+            @067  IC           $12.
+            @080  ';'
+            @081  DOBDT        $10.
+            @093  ';'
+            @094  BASE         $20.
+            @118  ';'
+            @119  DESIGNATION  $20.
+            @143  ';'
+            @144  REASON       $10.
+            @154  ';'
+            @155  M_NIC        $7.
+            @162  ';'
+            @163  M_NID        $7.
+            @170  ';'
+            @171  M_IC         $7.
+            @178  ';'
+            @179  M_ID         $7.
+            @186  ';'
+            @187  M_DOB        $7.
+            @205  ';'
+            @206  REMARKS      $150.
+            @355  ';'
+            @356  DETAILS      $150.;
   RUN;
-  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
+
+  DATA OUTPIB;
+     IF TRN=0 THEN DO;
+        FILE OUTPIB;
+        PUT /@55 'EXCEPTION REPORT ON VALIDATION OF'
+             @90 'RHOLD AND DJWD (PIB)';
+        PUT /@55 '       NO MATCHING RECORDS      ';
+     END;
+   RETAIN TRN;
+
+   SET MPIB NOBS=TRN;
+   FILE OUTPIB;
+        IF _N_ = 1 THEN DO;
+        PUT @055 'EXCEPTION REPORT ON VALIDATION OF'
+            @090 'RHOLD AND DJWD (PIB)';
+        PUT @001  'STAFF ID'
+            @009  ';'
+            @010  'NAME'
+            @050  ';'
+            @051  'OLD IC'
+            @066  ';'
+            @067  'NEW IC'
+            @080  ';'
+            @081  'DATE OF BIRTH'
+            @093  ';'
+            @094  'BASE'
+            @118  ';'
+            @119  'DESIGNATION'
+            @143  ';'
+            @144  'REASON'
+            @205  ';'
+            @206  'REMARKS'
+            @355  ';'
+            @356  'DETAILS';
+        PUT @009  ';'
+            @050  ';'
+            @066  ';'
+            @080  ';'
+            @093  ';'
+            @118  ';'
+            @143  ';'
+            @144  'SOURCE'
+            @154  ';'
+            @155  'NAMEIC'
+            @162  ';'
+            @163  'NAMEID'
+            @170  ';'
+            @171  'IC ONLY'
+            @178  ';'
+            @179  'ID ONLY'
+            @186  ';'
+            @187  'NAMEDOB'
+            @205  ';' ;
+            END;
+        PUT @001  STAFFID      $05.
+            @009  ';'
+            @010  HCMNAME      $40.
+            @050  ';'
+            @051  OLDID        $15.
+            @066  ';'
+            @067  IC           $12.
+            @080  ';'
+            @081  DOBDT        $10.
+            @093  ';'
+            @094  BASE         $20.
+            @118  ';'
+            @119  DESIGNATION  $20.
+            @143  ';'
+            @144  REASON       $10.
+            @154  ';'
+            @155  M_NIC        $7.
+            @162  ';'
+            @163  M_NID        $7.
+            @170  ';'
+            @171  M_IC         $7.
+            @178  ';'
+            @179  M_ID         $7.
+            @186  ';'
+            @187  M_DOB        $7.
+            @205  ';'
+            @206  REMARKS      $150.
+            @355  ';'
+            @356  DETAILS      $150.;
+
+  RUN;
+
+  DATA OUTPNSB;
+     IF TRN=0 THEN DO;
+        FILE OUTPNSB;
+        PUT /@55 'EXCEPTION REPORT ON VALIDATION OF'
+             @90 'RHOLD AND DJWD (PNSB)';
+        PUT /@55 '       NO MATCHING RECORDS      ';
+     END;
+   RETAIN TRN;
+
+   SET MPNSB NOBS=TRN;
+   FILE OUTPNSB;
+        IF _N_ = 1 THEN DO;
+        PUT @055 'EXCEPTION REPORT ON VALIDATION OF'
+            @090 'RHOLD AND DJWD (PNSB)';
+        PUT @001  'STAFF ID'
+            @009  ';'
+            @010  'NAME'
+            @050  ';'
+            @051  'OLD IC'
+            @066  ';'
+            @067  'NEW IC'
+            @080  ';'
+            @081  'DATE OF BIRTH'
+            @093  ';'
+            @094  'BASE'
+            @118  ';'
+            @119  'DESIGNATION'
+            @143  ';'
+            @144  'REASON'
+            @205  ';'
+            @206  'REMARKS'
+            @355  ';'
+            @356  'DETAILS';
+        PUT @009  ';'
+            @050  ';'
+            @066  ';'
+            @080  ';'
+            @093  ';'
+            @118  ';'
+            @143  ';'
+            @144  'SOURCE'
+            @154  ';'
+            @155  'NAMEIC'
+            @162  ';'
+            @163  'NAMEID'
+            @170  ';'
+            @171  'IC ONLY'
+            @178  ';'
+            @179  'ID ONLY'
+            @186  ';'
+            @187  'NAMEDOB'
+            @205  ';' ;
+            END;
+        PUT @001  STAFFID      $05.
+            @009  ';'
+            @010  HCMNAME      $40.
+            @050  ';'
+            @051  OLDID        $15.
+            @066  ';'
+            @067  IC           $12.
+            @080  ';'
+            @081  DOBDT        $10.
+            @093  ';'
+            @094  BASE         $20.
+            @118  ';'
+            @119  DESIGNATION  $20.
+            @143  ';'
+            @144  REASON       $10.
+            @154  ';'
+            @155  M_NIC        $7.
+            @162  ';'
+            @163  M_NID        $7.
+            @170  ';'
+            @171  M_IC         $7.
+            @178  ';'
+            @179  M_ID         $7.
+            @186  ';'
+            @187  M_DOB        $7.
+            @205  ';'
+            @206  REMARKS      $150.
+            @355  ';'
+            @356  DETAILS      $150.;
+
+
+  RUN;
+
+  DATA OUTPTS;
+     IF TRN=0 THEN DO;
+        FILE OUTPTS;
+        PUT /@55 'EXCEPTION REPORT ON VALIDATION OF'
+             @90 'RHOLD AND DJWD (PTS)';
+        PUT /@55 '       NO MATCHING RECORDS      ';
+     END;
+   RETAIN TRN;
+
+   SET MPTS NOBS=TRN;
+   FILE OUTPTS;
+        IF _N_ = 1 THEN DO;
+        PUT @055 'EXCEPTION REPORT ON VALIDATION OF'
+            @090 'RHOLD AND DJWD (PTS)';
+        PUT @001  'STAFF ID'
+            @009  ';'
+            @010  'NAME'
+            @050  ';'
+            @051  'OLD IC'
+            @066  ';'
+            @067  'NEW IC'
+            @080  ';'
+            @081  'DATE OF BIRTH'
+            @093  ';'
+            @094  'BASE'
+            @118  ';'
+            @119  'DESIGNATION'
+            @143  ';'
+            @144  'REASON'
+            @205  ';'
+            @206  'REMARKS'
+            @355  ';'
+            @356  'DETAILS';
+        PUT @009  ';'
+            @050  ';'
+            @066  ';'
+            @080  ';'
+            @093  ';'
+            @118  ';'
+            @143  ';'
+            @144  'SOURCE'
+            @154  ';'
+            @155  'NAMEIC'
+            @162  ';'
+            @163  'NAMEID'
+            @170  ';'
+            @171  'IC ONLY'
+            @178  ';'
+            @179  'ID ONLY'
+            @186  ';'
+            @187  'NAMEDOB'
+            @205  ';' ;
+            END;
+        PUT @001  STAFFID      $05.
+            @009  ';'
+            @010  HCMNAME      $40.
+            @050  ';'
+            @051  OLDID        $15.
+            @066  ';'
+            @067  IC           $12.
+            @080  ';'
+            @081  DOBDT        $10.
+            @093  ';'
+            @094  BASE         $20.
+            @118  ';'
+            @119  DESIGNATION  $20.
+            @143  ';'
+            @144  REASON       $10.
+            @154  ';'
+            @155  M_NIC        $7.
+            @162  ';'
+            @163  M_NID        $7.
+            @170  ';'
+            @171  M_IC         $7.
+            @178  ';'
+            @179  M_ID         $7.
+            @186  ';'
+            @187  M_DOB        $7.
+            @205  ';'
+            @206  REMARKS      $150.
+            @355  ';'
+            @356  DETAILS      $150.;
+
+
+  RUN;
+
+  DATA OUTPHSB;
+     IF TRN=0 THEN DO;
+        FILE OUTPHSB;
+        PUT /@55 'EXCEPTION REPORT ON VALIDATION OF'
+             @90 'RHOLD AND DJWD (PHSB)';
+        PUT /@55 '       NO MATCHING RECORDS      ';
+     END;
+   RETAIN TRN;
+
+   SET MPHSB NOBS=TRN;
+   FILE OUTPHSB;
+        IF _N_ = 1 THEN DO;
+        PUT @055 'EXCEPTION REPORT ON VALIDATION OF'
+            @090 'RHOLD AND DJWD (PHSB)';
+        PUT @001  'STAFF ID'
+            @009  ';'
+            @010  'NAME'
+            @050  ';'
+            @051  'OLD IC'
+            @066  ';'
+            @067  'NEW IC'
+            @080  ';'
+            @081  'DATE OF BIRTH'
+            @093  ';'
+            @094  'BASE'
+            @118  ';'
+            @119  'DESIGNATION'
+            @143  ';'
+            @144  'REASON'
+            @205  ';'
+            @206  'REMARKS'
+            @355  ';'
+            @356  'DETAILS';
+        PUT @009  ';'
+            @050  ';'
+            @066  ';'
+            @080  ';'
+            @093  ';'
+            @118  ';'
+            @143  ';'
+            @144  'SOURCE'
+            @154  ';'
+            @155  'NAMEIC'
+            @162  ';'
+            @163  'NAMEID'
+            @170  ';'
+            @171  'IC ONLY'
+            @178  ';'
+            @179  'ID ONLY'
+            @186  ';'
+            @187  'NAMEDOB'
+            @205  ';' ;
+            END;
+        PUT @001  STAFFID      $05.
+            @009  ';'
+            @010  HCMNAME      $40.
+            @050  ';'
+            @051  OLDID        $15.
+            @066  ';'
+            @067  IC           $12.
+            @080  ';'
+            @081  DOBDT        $10.
+            @093  ';'
+            @094  BASE         $20.
+            @118  ';'
+            @119  DESIGNATION  $20.
+            @143  ';'
+            @144  REASON       $10.
+            @154  ';'
+            @155  M_NIC        $7.
+            @162  ';'
+            @163  M_NID        $7.
+            @170  ';'
+            @171  M_IC         $7.
+            @178  ';'
+            @179  M_ID         $7.
+            @186  ';'
+            @187  M_DOB        $7.
+            @205  ';'
+            @206  REMARKS      $150.
+            @355  ';'
+            @356  DETAILS      $150.;
+
+  RUN;
+
+
+  DATA OUTOVER;
+     IF TRN=0 THEN DO;
+        FILE OUTOVER;
+        PUT /@55 'EXCEPTION REPORT ON VALIDATION OF'
+             @90 'RHOLD AND DJWD (PTL/PBL/OVERSEA)';
+        PUT /@55 '       NO MATCHING RECORDS      ';
+     END;
+   RETAIN TRN;
+
+   SET MOVERSEA NOBS=TRN;
+   FILE OUTOVER;
+        IF _N_ = 1 THEN DO;
+        PUT @055 'EXCEPTION REPORT ON VALIDATION OF'
+            @090 'RHOLD AND DJWD (PTL/PBL/OVERSEA)';
+        PUT @001  'STAFF ID'
+            @009  ';'
+            @010  'NAME'
+            @050  ';'
+            @051  'OLD IC'
+            @066  ';'
+            @067  'NEW IC'
+            @080  ';'
+            @081  'DATE OF BIRTH'
+            @093  ';'
+            @094  'BASE'
+            @118  ';'
+            @119  'DESIGNATION'
+            @143  ';'
+            @144  'REASON'
+            @205  ';'
+            @206  'REMARKS'
+            @355  ';'
+            @356  'DETAILS';
+        PUT @009  ';'
+            @050  ';'
+            @066  ';'
+            @080  ';'
+            @093  ';'
+            @118  ';'
+            @143  ';'
+            @144  'SOURCE'
+            @154  ';'
+            @155  'NAMEIC'
+            @162  ';'
+            @163  'NAMEID'
+            @170  ';'
+            @171  'IC ONLY'
+            @178  ';'
+            @179  'ID ONLY'
+            @186  ';'
+            @187  'NAMEDOB'
+            @205  ';' ;
+            END;
+        PUT @001  STAFFID      $05.
+            @009  ';'
+            @010  HCMNAME      $40.
+            @050  ';'
+            @051  OLDID        $15.
+            @066  ';'
+            @067  IC           $12.
+            @080  ';'
+            @081  DOBDT        $10.
+            @093  ';'
+            @094  BASE         $20.
+            @118  ';'
+            @119  DESIGNATION  $20.
+            @143  ';'
+            @144  REASON       $10.
+            @154  ';'
+            @155  M_NIC        $7.
+            @162  ';'
+            @163  M_NID        $7.
+            @170  ';'
+            @171  M_IC         $7.
+            @178  ';'
+            @179  M_ID         $7.
+            @186  ';'
+            @187  M_DOB        $7.
+            @205  ';'
+            @206  REMARKS      $150.
+            @355  ';'
+            @356  DETAILS      $150.;
+
+  RUN;
