@@ -1,7 +1,3 @@
-error:
-duckdb.duckdb.BinderException: Binder Error: Column "M_NIC" referenced that exists in the SELECT clause - but this column cannot be referenced before it is defined
-
-program:
 import duckdb
 import datetime
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
@@ -167,16 +163,39 @@ con.execute("""
 # ======================================================
 con.execute("""
     CREATE TABLE ALLMATCH AS
-    SELECT DISTINCT *
-    FROM (
-        SELECT * FROM MRGNAME
-        UNION ALL SELECT * FROM MRGID
-        UNION ALL SELECT * FROM MRGIC
-        UNION ALL SELECT * FROM MRGNDOB
-        UNION ALL SELECT * FROM MRGNID
-        UNION ALL SELECT * FROM MRGNIC
+    SELECT DISTINCT * FROM (
+        SELECT HCMNAME, OLDID, IC, DOB, BASE, DESIGNATION, COMPCODE, STAFFID,
+               MATCH_IND, REASON,
+               'Y' AS M_NAME, NULL AS M_NIC, NULL AS M_NID, NULL AS M_IC, NULL AS M_ID, NULL AS M_DOB
+        FROM MRGNAME
+        UNION ALL
+        SELECT HCMNAME, OLDID, IC, DOB, BASE, DESIGNATION, COMPCODE, STAFFID,
+               MATCH_IND, REASON,
+               NULL AS M_NAME, NULL AS M_NIC, NULL AS M_NID, NULL AS M_IC, 'Y' AS M_ID, NULL AS M_DOB
+        FROM MRGID
+        UNION ALL
+        SELECT HCMNAME, OLDID, IC, DOB, BASE, DESIGNATION, COMPCODE, STAFFID,
+               MATCH_IND, REASON,
+               NULL AS M_NAME, NULL AS M_NIC, NULL AS M_NID, 'Y' AS M_IC, NULL AS M_ID, NULL AS M_DOB
+        FROM MRGIC
+        UNION ALL
+        SELECT HCMNAME, OLDID, IC, DOB, BASE, DESIGNATION, COMPCODE, STAFFID,
+               MATCH_IND, REASON,
+               NULL AS M_NAME, NULL AS M_NIC, NULL AS M_NID, NULL AS M_IC, NULL AS M_ID, 'Y' AS M_DOB
+        FROM MRGNDOB
+        UNION ALL
+        SELECT HCMNAME, OLDID, IC, DOB, BASE, DESIGNATION, COMPCODE, STAFFID,
+               MATCH_IND, REASON,
+               NULL AS M_NAME, NULL AS M_NIC, 'Y' AS M_NID, NULL AS M_IC, NULL AS M_ID, NULL AS M_DOB
+        FROM MRGNID
+        UNION ALL
+        SELECT HCMNAME, OLDID, IC, DOB, BASE, DESIGNATION, COMPCODE, STAFFID,
+               MATCH_IND, REASON,
+               NULL AS M_NAME, 'Y' AS M_NIC, NULL AS M_NID, NULL AS M_IC, NULL AS M_ID, NULL AS M_DOB
+        FROM MRGNIC
     )
 """)
+
 
 # ======================================================
 # Final Output (Equivalent to DATA OUTPUT)
@@ -206,4 +225,31 @@ con.execute("""
     FROM ALLMATCH
 """)
 
-print("✅ Processing complete. Output tables created successfully.")
+out = """
+    SELECT 
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM OUTPUT
+""".format(year=year,month=month,day=day)
+
+queries = {
+    "HCM_DOWJONES_MATCH"                 : out
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
