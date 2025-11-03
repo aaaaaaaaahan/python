@@ -1,56 +1,34 @@
 import duckdb
-import pyarrow.parquet as pq
-import pyarrow as pa
-from pathlib import Path
+from CIS_PY_READER import get_hive_parquet, csv_output_path
 
-# Paths for parquet input and txt output
-input_dowj = "MDOWJS.parquet"
-input_rhold = "MRHOLD.parquet"
+# --- Input parquet files (assume already converted) ---
+dowj_parquet = get_hive_parquet('HCM_DOWJONES_MATCH')
+rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
 
-output_dir = Path("./output_txt")
-output_dir.mkdir(exist_ok=True)
+# --- Connect DuckDB ---
+con = duckdb.connect(database=':memory:')
 
-# Load parquet files into DuckDB tables
-con = duckdb.connect()
-
+# --- Load data ---
 con.execute(f"""
-CREATE OR REPLACE TABLE dowj AS
-SELECT *,
-       'DOWJONES' AS reason,
-       dreason AS remarks,
-       dept AS details,
-       mdnic AS m_nic,
-       mdnid AS m_nid,
-       mdic AS m_ic,
-       mdid AS m_id,
-       mddob AS m_dob
-FROM read_parquet('{input_dowj}')
-WHERE NOT (matchname='Y' AND matchind='     ')
-  AND NOT (mdnic='N' AND mdnid='N' AND mdic='N' AND mdid='N' AND mddob='N')
+    CREATE TABLE DOWJ AS
+    SELECT *,
+           'DOWJONES' AS REASON,
+           REMARKS,
+           DEPT AS DETAILS,
+           M_NIC,
+           M_NID,
+           M_IC,
+           M_ID,
+           M_DOB
+    FROM read_parquet('{dowj_parquet[0]}')
+    WHERE NOT (M_NAME = 'Y' AND M_NID = '     ')
+      AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
 """)
 
-con.execute(f"""
-CREATE OR REPLACE TABLE rhold AS
-SELECT *,
-       'RHOLD' AS reason,
-       rremark AS remarks,
-       key_describe AS details,
-       mrnic AS m_nic,
-       mrnid AS m_nid,
-       mric AS m_ic,
-       mrid AS m_id,
-       mrdob AS m_dob
-FROM read_parquet('{input_rhold}')
-WHERE NOT (matchname='Y' AND matchind='     ')
-  AND NOT (mrnic='N' AND mrnid='N' AND mric='N' AND mrid='N' AND mrdob='N')
-""")
-
-# Combine both datasets
+# --- Merge DOWJ + RHOLD ---
 con.execute("""
-CREATE OR REPLACE TABLE combined AS
-SELECT * FROM dowj
-UNION ALL
-SELECT * FROM rhold
+    CREATE TABLE ALL_MATCH AS
+    SELECT * FROM DOWJ
 """)
 
 # Split by COMPCODE
@@ -89,15 +67,13 @@ def write_fixed_width_txt(table_name, filename, title):
 
 # Write all output files
 outputs = {
-    "MPBB": "OUTPBB.txt",
-    "MPIB": "OUTPIB.txt",
-    "MPNSB": "OUTPNSB.txt",
-    "MPTS": "OUTPTS.txt",
-    "MPHSB": "OUTPHSB.txt",
-    "MOVERSEA": "OUTOVER.txt"
+    "MPBB": "HCM_MATCH_PBB_RPT.txt",
+    "MPIB": "HCM_MATCH_PIB_RPT.txt",
+    "MPNSB": "HCM_MATCH_PNSB_RPT.txt",
+    "MPTS": "HCM_MATCH_PTS_RPT.txt",
+    "MPHSB": "HCM_MATCH_PHSB_RPT.txt",
+    "MOVERSEA": "HCM_MATCH_OVERSEA_RPT.txt"
 }
 
 for table, filename in outputs.items():
-    write_fixed_width_txt(table, output_dir / filename, title=table)
-
-print("All reports generated successfully!")
+    write_fixed_width_txt(table, csv_output_path / filename, title=table)
