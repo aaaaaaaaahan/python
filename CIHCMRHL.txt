@@ -1,0 +1,282 @@
+//CIHCMRHL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
+//**********************************************************************
+//* ESMR 2017-1324
+//* MATCHING RHOLD AND EMPLOYEE MASTER FILE
+//* ESMR 2018-1194 ENHANCE REPORT
+//*********************************************************************
+//* MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1
+//* THE MATCHING CRITERIA : (1) IC MATCH, (2) NAME AND IC MATCH, (3)
+//* NAME AND (4) NAME AND DATE OF BIRTH MATCH
+//*********************************************************************
+//MATCH#1  EXEC SAS609
+//HCMFILE  DD DISP=SHR,DSN=RBP2.B033.HCM.STAFF.LIST
+//RHOLD    DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHOLDT.FB
+//RHOBFILE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHOBCT.FB
+//RHODFILE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIRHODCT.FB
+//OUTPUT   DD DSN=RBP2.B033.HCM.RHOLD.MATCH(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(50,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=550,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SYSIN    DD *
+DATA RHOB;
+   INFILE RHOBFILE;
+        INPUT @01   CLASSIFY       $10.
+              @11   NATURE         $10.
+              @21   KEY_CODE       $10.
+              @41   CLASSCODE      $10.;
+
+RUN;
+PROC SORT DATA=RHOB NODUPKEY; BY CLASSCODE ;RUN;
+
+DATA RHOD;
+   INFILE RHODFILE;
+         FORMAT CONTACT1 $50. CONTACT2 $50. CONTACT3 $50.
+               REMARKS $150.;
+         INPUT @001 KEY_ID                  $10.
+               @011 KEY_CODE                $10.
+               @021 KEY_DESCRIBE            $150.
+               @171 KEY_REMARK_ID1          $10.
+               @181 KEY_REMARK_1            $50.
+               @231 KEY_REMARK_ID2          $10.
+               @241 KEY_REMARK_2            $50.
+               @291 KEY_REMARK_ID3          $10.
+               @301 KEY_REMARK_3            $50.
+               @351 DESC_LASTOPERATOR       $8.
+               @359 DESC_LASTMNT_DATE       $10.
+               @369 DESC_LASTMNT_TIME       $8.  ;
+         IF KEY_ID = 'DEPT  ' ;
+         IF KEY_REMARK_1 NE ' ' THEN CONTACT1 = KEY_REMARK_1;
+         IF KEY_REMARK_2 NE ' ' THEN CONTACT2 = KEY_REMARK_2;
+         IF KEY_REMARK_3 NE ' ' THEN CONTACT3 = KEY_REMARK_3;
+         REMARKS = TRIM(KEY_DESCRIBE)||''||TRIM(CONTACT1)||''||
+                   TRIM(CONTACT2);
+RUN;
+PROC SORT DATA=RHOD NODUPKEY; BY KEY_CODE  ;RUN;
+PROC PRINT DATA=RHOD(OBS=15);TITLE 'RHOD LIST';
+
+DATA RHOD1;
+   INFILE RHODFILE;
+         INPUT @001 KEY_ID1                 $10.
+               @011 CLASSIFY                $10.
+               @021 KEY_DESCRIBE1           $150.;
+         IF KEY_ID1 = 'CLASS ' ;
+RUN;
+PROC SORT DATA=RHOD1 NODUPKEY; BY CLASSIFY  ;RUN;
+PROC PRINT DATA=RHOD1(OBS=15);TITLE 'RHOD1 LIST';
+
+DATA RHOLD;
+   FORMAT DOBDOR $8. CRTDATE $8.;
+   INFILE RHOLD;
+        INPUT @01   CLASSCODE      $10.
+              @11   INDORG         $1.
+              @12   NAME           $40.
+              @52   NEWIC          $15.
+              @72   OTHID          $20.
+              @292  CRTDTYYYY      $4.
+              @297  CRTDTMM        $2.
+              @300  CRTDTDD        $2.
+              @336  DOBDTYYYY      $4.
+              @341  DOBDTMM        $2.
+              @344  DOBDTDD        $2.;
+              DOBDOR=DOBDTYYYY||DOBDTMM||DOBDTDD;
+              CRTDATE=CRTDTYYYY||CRTDTMM||CRTDTDD;
+              REPTDATE=PUT(TODAY()-7,YYMMDDN8.);
+           IF CRTDATE >= REPTDATE;
+RUN;
+PROC SORT DATA=RHOLD; BY CLASSCODE ; RUN;
+
+DATA BRHOLD1;
+   MERGE RHOLD(IN=Y) RHOB(IN=Z); BY CLASSCODE;
+   IF Y THEN OUTPUT;
+RUN;
+PROC SORT DATA=BRHOLD1; BY CLASSIFY  ;RUN;
+
+DATA BRHOLD;
+   MERGE BRHOLD1(IN=S) RHOD1(IN=T); BY CLASSIFY;
+   IF S THEN OUTPUT;
+RUN;
+PROC SORT DATA=BRHOLD; BY KEY_CODE  ;RUN;
+
+DATA RNEW ROLD RNNEW RNOLD RNAME RNDOB;
+   MERGE BRHOLD(IN=W) RHOD(IN=X); BY KEY_CODE;
+   IF W ;
+   IF NEWIC NE ' ' THEN OUTPUT RNEW;
+   IF OTHID NE ' ' THEN OUTPUT ROLD;
+   IF NAME NE ' ' AND NEWIC NE ' ' THEN OUTPUT RNNEW;
+   IF NAME NE ' ' AND OTHID NE ' ' THEN OUTPUT RNOLD;
+   IF NAME NE ' ' THEN OUTPUT RNAME;
+   IF NAME NE ' ' AND DOBDOR NE ' ' THEN OUTPUT RNDOB;
+RUN;
+PROC SORT DATA=RNEW; BY NEWIC ;RUN;
+PROC SORT DATA=ROLD; BY OTHID ;RUN;
+PROC SORT DATA=RNNEW; BY NAME NEWIC  ;RUN;
+PROC SORT DATA=RNOLD; BY NAME OTHID  ;RUN;
+PROC SORT DATA=RNAME; BY NAME  ;RUN;
+PROC SORT DATA=RNDOB; BY NAME DOBDOR ;RUN;
+
+
+DATA HCMOLD HCMNEW HCMALL HCMNDOB HCMNOLD HCMNNEW;
+   INFILE HCMFILE DELIMITER = ';' MISSOVER DSD;
+        FORMAT OTHID $20. DOBDT $10. DOBDOR $8. DOBDD $2.
+        DOBMM $2. DOBYYYY $4.;
+        INFORMAT STAFFID        $05.;               /*  1  */
+        INFORMAT HCMNAME        $40.;               /*  2  */
+        INFORMAT OLDID          $15.;               /*  3  */
+        INFORMAT IC             $15.;               /*  4  */
+        INFORMAT DOB            $10.;               /*  5  */
+        INFORMAT BASE           $20.;               /*  6  */
+        INFORMAT COMPCODE       $05.;               /*  7  */
+        INFORMAT DESIGNATION    $30.;               /*  8  */
+        INFORMAT STATUS         $01.;               /*  9  */
+
+          FORMAT STAFFID        $05.;               /*  1  */
+          FORMAT HCMNAME        $40.;               /*  2  */
+          FORMAT OLDID          $15.;               /*  3  */
+          FORMAT IC             $15.;               /*  4  */
+          FORMAT DOB            $10.;               /*  5  */
+          FORMAT BASE           $20.;               /*  6  */
+          FORMAT COMPCODE       $05.;               /*  7  */
+          FORMAT DESIGNATION    $30.;               /*  8  */
+          FORMAT STATUS         $01.;               /*  9  */
+
+        INPUT  STAFFID        $                   /*  1  */
+               HCMNAME        $                   /*  2  */
+               OLDID          $                   /*  3  */
+               IC             $                   /*  4  */
+               DOB            $                   /*  5  */
+               BASE           $                   /*  6  */
+               COMPCODE       $                   /*  7  */
+               DESIGNATION    $                   /*  8  */
+               STATUS         $ ;                 /*  9  */
+              OTHID = OLDID;
+              NAME = HCMNAME;
+              NEWIC= IC;
+              DOBDD = SUBSTR(DOB,1,2);
+              DOBMM = SUBSTR(DOB,4,2);
+              DOBYYYY = SUBSTR(DOB,7,4);
+              DOBDT = DOBDD||'-'||DOBMM||'-'||DOBYYYY;
+              DOBDOR=DOBYYYY||DOBMM||DOBDD;
+              IF OTHID NE ' ' THEN OUTPUT HCMOLD;
+              IF NEWIC NE ' ' THEN OUTPUT HCMNEW;
+              IF NAME NE ' ' AND OTHID NE ' ' THEN OUTPUT HCMNOLD;
+              IF NAME NE ' ' AND NEWIC NE ' ' THEN OUTPUT HCMNNEW;
+              IF NAME  NE ' ' THEN OUTPUT HCMALL;
+              IF NAME NE ' ' AND DOBDOR NE ' ' THEN OUTPUT HCMNDOB;
+RUN;
+PROC SORT DATA=HCMOLD NODUPKEY; BY OTHID STAFFID ;RUN;
+PROC SORT DATA=HCMNEW NODUPKEY; BY NEWIC STAFFID;RUN;
+PROC SORT DATA=HCMNOLD NODUPKEY; BY NAME OTHID STAFFID;RUN;
+PROC SORT DATA=HCMNNEW NODUPKEY; BY NAME NEWIC STAFFID;RUN;
+PROC SORT DATA=HCMALL NODUPKEY; BY NAME STAFFID;RUN;
+PROC SORT DATA=HCMNDOB NODUPKEY; BY NAME DOBDOR STAFFID;RUN;
+
+DATA MRGNAME;
+   FORMAT MATCH_DESC $25.;
+   MERGE RNAME(IN=A) HCMALL(IN=B); BY NAME ;
+   IF A AND B;
+   MATCH_IND = '3';
+   M_NAME = 'Y';
+   REASON = 'RHOLD NAME MATCHED';
+RUN;
+PROC SORT DATA=MRGNAME; BY NAME OTHID; RUN;
+PROC PRINT DATA=MRGNAME(OBS=5);TITLE 'NAME MATCH';
+
+DATA MRGID;
+   FORMAT MATCH_DESC $25.;
+   MERGE ROLD(IN=C) HCMOLD(IN=D); BY OTHID ;
+   IF C AND D;
+   MATCH_IND = '1';
+   M_ID = 'Y';
+   REASON = 'RHOLD ID MATCHED';
+RUN;
+PROC SORT DATA=MRGID; BY NAME OTHID; RUN;
+PROC PRINT DATA=MRGID(OBS=5);TITLE 'ID MATCH';
+
+DATA MRGIC;
+   FORMAT MATCH_IND $01. ;
+   MERGE RNEW(IN=E) HCMNEW(IN=F); BY NEWIC ;
+   IF E AND F;
+   MATCH_IND = '1';
+   M_IC = 'Y';
+   REASON = 'RHOLD IC MATCHED';
+RUN;
+PROC SORT DATA=MRGIC; BY NAME OTHID; RUN;
+PROC PRINT DATA=MRGIC(OBS=5);TITLE 'IC MATCH';
+
+DATA MRGNNEW;
+   FORMAT MATCH_DESC $25.;
+   MERGE RNNEW(IN=G) HCMNNEW(IN=H); BY NAME NEWIC ;
+   IF G AND H;
+   MATCH_IND = '2';
+   M_NIC = 'Y';
+   REASON = 'RHOLD NAME AND IC MATCHED';
+RUN;
+PROC SORT DATA=MRGNNEW; BY NAME OTHID; RUN;
+PROC PRINT DATA=MRGNNEW(OBS=5);TITLE 'NAME IC MATCH';
+
+DATA MRGNOLD;
+   FORMAT MATCH_DESC $25.;
+   MERGE RNOLD(IN=I) HCMNOLD(IN=J); BY NAME OTHID ;
+   IF I AND J;
+   MATCH_IND = '2';
+   M_NID = 'Y';
+   REASON = 'RHOLD NAME AND ID MATCHED';
+RUN;
+PROC SORT DATA=MRGNOLD; BY NAME OTHID; RUN;
+PROC PRINT DATA=MRGNOLD(OBS=5);TITLE 'NAME ID MATCH';
+
+DATA MRGNDOB;
+   FORMAT MATCH_DESC $25.;
+   MERGE RNDOB(IN=K) HCMNDOB(IN=L); BY NAME DOBDOR ;
+   IF K AND L;
+   MATCH_IND = '4';
+   M_DOB = 'Y';
+   REASON = 'RHOLD NAME AND DOB MATCHED';
+RUN;
+PROC SORT DATA=MRGNDOB; BY NAME OTHID; RUN;
+PROC PRINT DATA=MRGNDOB(OBS=5);TITLE 'NAME DOB MATCH';
+
+DATA ALLMATCH;
+   MERGE MRGNAME(IN=M) MRGID(IN=N) MRGIC(IN=O) MRGNDOB(IN=P)
+         MRGNNEW(IN=Q) MRGNOLD(IN=R);
+   BY NAME OTHID;
+   IF M OR N OR O OR P OR Q OR R;
+   IF CLASSIFY = 'CLS0000004' THEN DELETE;
+RUN;
+PROC SORT DATA=ALLMATCH NODUPKEY; BY HCMNAME IC OLDID STAFFID; RUN;
+PROC PRINT DATA=ALLMATCH(OBS=15);TITLE 'ALL MATCH';
+
+  DATA OUTPUT;
+   SET ALLMATCH;
+       IF M_NAME EQ ' ' THEN M_NAME = 'N';
+       IF M_NIC  EQ ' ' THEN M_NIC  = 'N';
+       IF M_NID  EQ ' ' THEN M_NID  = 'N';
+       IF M_IC   EQ ' ' THEN M_IC   = 'N';
+       IF M_ID   EQ ' ' THEN M_ID   = 'N';
+       IF M_DOB  EQ ' ' THEN M_DOB  = 'N';
+   FILE OUTPUT;
+        PUT @001  HCMNAME       $40.
+            @042  OLDID         $15.
+            @058  IC            $12.
+            @070  MATCH_IND     $01.
+            @072  DOBDT         $10.
+            @085  BASE          $20.
+            @110  DESIGNATION   $30.
+            @145  REASON        $30.
+            @179  M_NAME        $01.
+            @180  M_NIC         $01.
+            @181  M_NID         $01.
+            @182  M_IC          $01.
+            @183  M_ID          $01.
+            @184  M_DOB         $01.
+            @185  COMPCODE      $05.
+            @190  STAFFID       $05.
+            @196  REMARKS       $150.
+            @347  KEY_DESCRIBE1 $150.;
+  RUN;
+  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
