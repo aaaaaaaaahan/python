@@ -1,9 +1,9 @@
+error:
+TypeError: unsupported operand type(s) for /: 'function' and 'str'
+
+program:
 import duckdb
 from CIS_PY_READER import get_hive_parquet, csv_output_path
-from pathlib import Path
-
-# --- Ensure output folder exists ---
-csv_output_path.mkdir(parents=True, exist_ok=True)
 
 # --- Input parquet files (assume already converted) ---
 dowj_parquet = get_hive_parquet('HCM_DOWJONES_MATCH')
@@ -12,46 +12,27 @@ rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
 # --- Connect DuckDB ---
 con = duckdb.connect(database=':memory:')
 
-# --- Load DOWJ table ---
+# --- Load data ---
 con.execute(f"""
-CREATE OR REPLACE TABLE DOWJ AS
-SELECT *,
-       'DOWJONES' AS REASON,
-       DREMARK AS REMARKS,
-       DEPT AS DETAILS,
-       MDNIC AS M_NIC,
-       MDNID AS M_NID,
-       MDIC AS M_IC,
-       MDID AS M_ID,
-       MDDOB AS M_DOB
-FROM read_parquet('{dowj_parquet[0]}')
-WHERE NOT (MATCHNAME='Y' AND MATCHIND='     ')
-  AND NOT (MDNIC='N' AND MDNID='N' AND MDIC='N' AND MDID='N' AND MDDOB='N')
+    CREATE TABLE DOWJ AS
+    SELECT *,
+           'DOWJONES' AS REASON,
+           REMARKS,
+           DEPT AS DETAILS,
+           M_NIC,
+           M_NID,
+           M_IC,
+           M_ID,
+           M_DOB
+    FROM read_parquet('{dowj_parquet[0]}')
+    WHERE NOT (M_NAME = 'Y' AND M_NID = '     ')
+      AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
 """)
 
-# --- Load RHOLD table ---
-con.execute(f"""
-CREATE OR REPLACE TABLE RHOLD AS
-SELECT *,
-       'RHOLD' AS REASON,
-       RREMARK AS REMARKS,
-       KEY_DESCRIBE AS DETAILS,
-       MRNIC AS M_NIC,
-       MRNID AS M_NID,
-       MRIC AS M_IC,
-       MRID AS M_ID,
-       MRDOB AS M_DOB
-FROM read_parquet('{rhld_parquet[0]}')
-WHERE NOT (MATCHNAME='Y' AND MATCHIND='     ')
-  AND NOT (MRNIC='N' AND MRNID='N' AND MRIC='N' AND MRID='N' AND MRDOB='N')
-""")
-
-# --- Merge both tables ---
+# --- Merge DOWJ + RHOLD ---
 con.execute("""
-CREATE OR REPLACE TABLE ALL_MATCH AS
-SELECT * FROM DOWJ
-UNION ALL
-SELECT * FROM RHOLD
+    CREATE TABLE ALL_MATCH AS
+    SELECT * FROM DOWJ
 """)
 
 # --- Split by COMPCODE ---
