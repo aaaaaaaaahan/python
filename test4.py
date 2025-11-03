@@ -1,110 +1,103 @@
 import duckdb
-from CIS_PY_READER import get_hive_parquet
+import pyarrow.parquet as pq
+import pyarrow as pa
+from pathlib import Path
 
-# --- Input parquet files (assume already converted) ---
-dowj_parquet = get_hive_parquet('HCM_DOWJONES_MATCH')
-rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
+# Paths for parquet input and txt output
+input_dowj = "MDOWJS.parquet"
+input_rhold = "MRHOLD.parquet"
 
-# --- Connect DuckDB ---
-con = duckdb.connect(database=':memory:')
+output_dir = Path("./output_txt")
+output_dir.mkdir(exist_ok=True)
 
-# --- Load data ---
+# Load parquet files into DuckDB tables
+con = duckdb.connect()
+
 con.execute(f"""
-    CREATE TABLE DOWJ AS
-    SELECT *,
-           'DOWJONES' AS REASON,
-           REMARKS,
-           DEPT AS DETAILS,
-           M_NIC,
-           M_NID,
-           M_IC,
-           M_ID,
-           M_DOB
-    FROM read_parquet('{dowj_parquet[0]}')
-    WHERE NOT (M_NAME = 'Y' AND M_NID = '     ')
-      AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
+CREATE OR REPLACE TABLE dowj AS
+SELECT *,
+       'DOWJONES' AS reason,
+       dreason AS remarks,
+       dept AS details,
+       mdnic AS m_nic,
+       mdnid AS m_nid,
+       mdic AS m_ic,
+       mdid AS m_id,
+       mddob AS m_dob
+FROM read_parquet('{input_dowj}')
+WHERE NOT (matchname='Y' AND matchind='     ')
+  AND NOT (mdnic='N' AND mdnid='N' AND mdic='N' AND mdid='N' AND mddob='N')
 """)
 
-# --- Merge DOWJ + RHOLD ---
+con.execute(f"""
+CREATE OR REPLACE TABLE rhold AS
+SELECT *,
+       'RHOLD' AS reason,
+       rremark AS remarks,
+       key_describe AS details,
+       mrnic AS m_nic,
+       mrnid AS m_nid,
+       mric AS m_ic,
+       mrid AS m_id,
+       mrdob AS m_dob
+FROM read_parquet('{input_rhold}')
+WHERE NOT (matchname='Y' AND matchind='     ')
+  AND NOT (mrnic='N' AND mrnid='N' AND mric='N' AND mrid='N' AND mrdob='N')
+""")
+
+# Combine both datasets
 con.execute("""
-    CREATE TABLE ALL_MATCH AS
-    SELECT * FROM DOWJ
+CREATE OR REPLACE TABLE combined AS
+SELECT * FROM dowj
+UNION ALL
+SELECT * FROM rhold
 """)
 
-# --- Split by COMPCODE with flexible field selection ---
+# Split by COMPCODE
+comp_codes = ["PBB", "PIB", "PNSB", "PTS", "PHSB"]
+for code in comp_codes:
+    table_name = f"mp{code.lower()}"
+    con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM combined WHERE compcode='{code}'")
+
+# MOVERSEA: everything else
 con.execute("""
-    CREATE TABLE MPBB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PBB';
+CREATE OR REPLACE TABLE moversea AS
+SELECT * FROM combined
+WHERE compcode NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
 """)
 
-con.execute("""
-    CREATE TABLE MPIB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PIB';
-""")
-
-con.execute("""
-    CREATE TABLE MPNSB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PNSB';
-""")
-
-con.execute("""
-    CREATE TABLE MPTS AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PTS';
-""")
-
-con.execute("""
-    CREATE TABLE MPHSB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PHSB';
-""")
-
-con.execute("""
-    CREATE TABLE MOVERSEA AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB');
-""")
-
-# --- Function to write TXT report with flexible fields using tuple indices ---
-def write_report(table_name, filename, title, fields):
-    # Fetch rows as tuples
-    res = con.execute(f"SELECT {', '.join(fields)} FROM {table_name} ORDER BY HCMNAME, OLDID, IC").fetchall()
+# Function to write fixed-width txt file
+def write_fixed_width_txt(table_name, filename, title):
+    df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
     
-    with open(filename, "w", encoding="utf-8") as f:
-        # No records
-        if len(res) == 0:
-            f.write(f"{' ' * 55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
-            f.write(f"{' ' * 55}       NO MATCHING RECORDS\n")
-        else:
-            # Header
-            f.write(';'.join(fields) + '\n')
-            # Data rows
-            for row in res:
-                f.write(';'.join([str(row[i]) if row[i] is not None else '' for i in range(len(fields))]) + '\n')
+    if df.empty:
+        with open(filename, "w") as f:
+            f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
+            f.write(f"{' '*55}       NO MATCHING RECORDS\n")
+        return
 
-# --- Define flexible field list for each output ---
-fields_mpbb = ['STAFFID','HCMNAME','OLDID','IC','DOB','BASE','DESIGNATION','REASON','REMARKS','DETAILS','M_NIC','M_NID','M_IC','M_ID','M_DOB']
-fields_mpib = fields_mpbb.copy()  # Could customize if needed
-fields_mpnsb = fields_mpbb.copy()
-fields_mpts = fields_mpbb.copy()
-fields_mphsb = fields_mpbb.copy()
-fields_moversea = fields_mpbb.copy()
+    with open(filename, "w") as f:
+        # Header
+        f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
+        f.write(f"{'STAFF ID':<8};{'NAME':<40};{'OLD IC':<15};{'NEW IC':<12};{'DATE OF BIRTH':<12};"
+                f"{'BASE':<24};{'DESIGNATION':<24};{'REASON':<10};{'REMARKS':<150};{'DETAILS':<150}\n")
+        # Data
+        for idx, row in df.iterrows():
+            f.write(f"{row['staffid']:<5};{row['hcmname']:<40};{row['oldid']:<15};{row['ic']:<12};"
+                    f"{row['dobdt']:<10};{row['base']:<20};{row['designation']:<20};{row['reason']:<10};"
+                    f"{row['remarks']:<150};{row['details']:<150}\n")
 
-# --- Write TXT reports ---
-write_report("MPBB", "/host/cis/output/HCM_MATCH_PBB_RPT.txt", "RHOLD AND DJWD (PBB)", fields_mpbb)
-write_report("MPIB", "/host/cis/output/HCM_MATCH_PIB_RPT.txt", "RHOLD AND DJWD (PIB)", fields_mpib)
-write_report("MPNSB", "/host/cis/output/HCM_MATCH_PNSB_RPT.txt", "RHOLD AND DJWD (PNSB)", fields_mpnsb)
-write_report("MPTS", "/host/cis/output/HCM_MATCH_PTS_RPT.txt", "RHOLD AND DJWD (PTS)", fields_mpts)
-write_report("MPHSB", "/host/cis/output/HCM_MATCH_PHSB_RPT.txt", "RHOLD AND DJWD (PHSB)", fields_mphsb)
-write_report("MOVERSEA", "/host/cis/output/HCM_MATCH_OVERSEA_RPT.txt", "RHOLD AND DJWD (PTL/PBL/OVERSEA)", fields_moversea)
+# Write all output files
+outputs = {
+    "MPBB": "OUTPBB.txt",
+    "MPIB": "OUTPIB.txt",
+    "MPNSB": "OUTPNSB.txt",
+    "MPTS": "OUTPTS.txt",
+    "MPHSB": "OUTPHSB.txt",
+    "MOVERSEA": "OUTOVER.txt"
+}
 
-print("All TXT reports generated successfully!")
+for table, filename in outputs.items():
+    write_fixed_width_txt(table, output_dir / filename, title=table)
+
+print("All reports generated successfully!")
