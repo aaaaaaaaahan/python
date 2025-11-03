@@ -8,10 +8,12 @@ rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
 
 # --- Connect DuckDB ---
 con = duckdb.connect()
-output_folder = Path(csv_output_path("hcm_reports"))  # note the parentheses!
+
+# --- Prepare output folder ---
+output_folder = Path(csv_output_path("hcm_reports"))
 output_folder.mkdir(parents=True, exist_ok=True)
 
-# --- Load data ---
+# --- Load DOWJ data ---
 con.execute(f"""
     CREATE TABLE DOWJ AS
     SELECT *,
@@ -28,10 +30,29 @@ con.execute(f"""
       AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
 """)
 
-# --- Merge DOWJ + RHOLD ---
+# --- Load RHOLD data ---
+con.execute(f"""
+    CREATE TABLE RHOLD AS
+    SELECT *,
+           'RHOLD' AS REASON,
+           REMARKS,
+           DEPT AS DETAILS,
+           M_NIC,
+           M_NID,
+           M_IC,
+           M_ID,
+           M_DOB
+    FROM read_parquet('{rhld_parquet[0]}')
+    WHERE NOT (M_NAME = 'Y' AND M_NID = '     ')
+      AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
+""")
+
+# --- Merge DOWJ + RHOLD into ALL_MATCH ---
 con.execute("""
     CREATE TABLE ALL_MATCH AS
     SELECT * FROM DOWJ
+    UNION ALL
+    SELECT * FROM RHOLD
 """)
 
 # --- Split by COMPCODE ---
@@ -50,7 +71,7 @@ SELECT * FROM ALL_MATCH
 WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
 """)
 
-# --- Function to write fixed-width txt file ---
+# --- Function to write fixed-width TXT file ---
 def write_fixed_width_txt(table_name, filename, title):
     df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
     
@@ -66,18 +87,18 @@ def write_fixed_width_txt(table_name, filename, title):
         f.write(f"{'STAFF ID':<8};{'NAME':<40};{'OLD IC':<15};{'NEW IC':<12};{'DATE OF BIRTH':<12};"
                 f"{'BASE':<24};{'DESIGNATION':<24};{'REASON':<10};{'REMARKS':<150};{'DETAILS':<150}\n")
         
-        # Data rows
+        # Data rows (adjust column names to match parquet)
         for idx, row in df.iterrows():
-            f.write(f"{str(row.get('STAFFID','')):<5};"
-                    f"{str(row.get('HCMNAME','')):<40};"
-                    f"{str(row.get('OLDID','')):<15};"
-                    f"{str(row.get('IC','')):<12};"
-                    f"{str(row.get('DOBDT','')):<10};"
-                    f"{str(row.get('BASE','')):<20};"
-                    f"{str(row.get('DESIGNATION','')):<20};"
-                    f"{str(row.get('REASON','')):<10};"
-                    f"{str(row.get('REMARKS','')):<150};"
-                    f"{str(row.get('DETAILS','')):<150}\n")
+            f.write(f"{str(row.get('staffid','')):<8};"
+                    f"{str(row.get('hcmname','')):<40};"
+                    f"{str(row.get('oldid','')):<15};"
+                    f"{str(row.get('ic','')):<12};"
+                    f"{str(row.get('dobdt','')):<12};"
+                    f"{str(row.get('base','')):<24};"
+                    f"{str(row.get('designation','')):<24};"
+                    f"{str(row.get('reason','')):<10};"
+                    f"{str(row.get('remarks','')):<150};"
+                    f"{str(row.get('details','')):<150}\n")
 
 # --- Write all output files ---
 outputs = {
