@@ -1,4 +1,3 @@
-import os
-
-for table, filename in outputs.items():
-    write_fixed_width_txt(table, os.path.join(csv_output_path, filename), title=table)
+File "/usr/lib64/python3.9/posixpath.py", line 76, in join
+    a = os.fspath(a)
+TypeError: expected str, bytes or os.PathLike object, not function
