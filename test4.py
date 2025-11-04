@@ -15,7 +15,6 @@ con = duckdb.connect()
 
 # --- Prepare output folder ---
 output_folder = Path(csv_output_path("hcm_reports"))
-output_folder.mkdir(parents=True, exist_ok=True)
 
 # --- Load DOWJ data ---
 con.execute(f"""
