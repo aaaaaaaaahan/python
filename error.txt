@@ -1,0 +1,11 @@
+File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 102, in <module>
+    write_fixed_width_txt(table, title, report_code)
+  File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 59, in write_fixed_width_txt
+    base_folder = Path(csv_output_path)  # <-- no subfolder
+  File "/usr/lib64/python3.9/pathlib.py", line 1000, in __new__
+    self = cls._from_parts(args, init=False)
+  File "/usr/lib64/python3.9/pathlib.py", line 625, in _from_parts
+    drv, root, parts = self._parse_args(args)
+  File "/usr/lib64/python3.9/pathlib.py", line 609, in _parse_args
+    a = os.fspath(a)
+TypeError: expected str, bytes or os.PathLike object, not function
