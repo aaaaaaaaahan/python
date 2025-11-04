@@ -4,22 +4,10 @@ assumed all the input file ady convert to parquet can directly use it
 
 
 //CICISRPM JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB72128
-//*--- -----------------------------------------------------------------
-//* ESMR2019-1394 - REPORT DAILY
-//*-CUSTOMER DELTA FILE - TO GET CHANGES OF THE DAY
 //*---------------------------------------------------------------------
 //DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.CIS.IDIC.MONTHLY.RPT,
+//DEL1     DD DSN=CIS.IDIC.MONTHLY.RPT,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//COPYFIL1 EXEC PGM=ICEGENER
-//SYSPRINT DD SYSOUT=X
-//SYSUT1   DD DISP=SHR,DSN=RBP2.B033.CIS.IDIC.DAILY.RALL
-//SYSUT2   DD DSN=RBP2.B033.CIS.IDIC.DAILY.MON(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(500,500),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
-//SYSIN    DD DUMMY
 //*---------------------------------------------------------------------
 //* FORMAT THE REPORT
 //*---------------------------------------------------------------------
@@ -27,8 +15,8 @@ assumed all the input file ady convert to parquet can directly use it
 //SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//ALLDAILY  DD DISP=SHR,DSN=RBP2.B033.CIS.IDIC.DAILY.RALL
-//OUTFILE  DD DSN=RBP2.B033.CIS.IDIC.MONTHLY.RPT,
+//ALLDAILY  DD DISP=SHR,DSN=CIS.IDIC.DAILY.RALL
+//OUTFILE  DD DSN=CIS.IDIC.MONTHLY.RPT,
 //            DISP=(NEW,CATLG,DELETE),
 //            SPACE=(CYL,(500,500),RLSE),UNIT=SYSDA,
 //            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
@@ -83,9 +71,3 @@ RUN;
           @424   UPDDATX         $10.
           ;
      RUN;
-//*---------------------------------------------------------------------
-//* DELETE DATASETS TO CLEAROFF
-//*---------------------------------------------------------------------
-//CLEAROF  EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.CIS.IDIC.DAILY.RALL,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
