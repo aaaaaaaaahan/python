@@ -54,10 +54,9 @@ SELECT * FROM ALL_MATCH
 WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
 """)
 
-# --- Function to write fixed-width TXT file using csv_output_path ---
+# --- Function to write fixed-width TXT file directly in csv_output_path ---
 def write_fixed_width_txt(table_name, title, report_code):
-    # Create the full filename in the same CSV folder
-    base_folder = Path(csv_output_path("hcm_reports"))
+    base_folder = Path(csv_output_path)  # <-- no subfolder
     txt_path = base_folder / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
 
     df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
