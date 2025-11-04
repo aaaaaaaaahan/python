@@ -24,7 +24,7 @@ rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
 # Get current date for filenames
 # ======================================================
 today = datetime.date.today()
-date_str = today.strftime("%-d-%-m-%Y")  
+date_str = today.strftime("%-d-%-m-%Y")
 
 # ======================================================
 # Load DOWJ data
@@ -74,41 +74,7 @@ WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
 """)
 
 # ======================================================
-# Function to write fixed-width TXT file
-# ======================================================
-def write_fixed_width_txt(table_name, title, report_code):
-    base_path = '/host/cis/output'
-    txt_path = Path(base_path) / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
-
-    df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
-    
-    with open(txt_path, "w") as f:
-        # Handle empty table
-        if df.empty:
-            f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
-            f.write(f"{' '*55}       NO MATCHING RECORDS\n")
-            return
-
-        # Header
-        f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
-        f.write(f"{'STAFF ID':<8};{'NAME':<40};{'OLD IC':<15};{'NEW IC':<12};{'DATE OF BIRTH':<12};"
-                f"{'BASE':<24};{'DESIGNATION':<24};{'REASON':<17};{'REMARKS':<150};{'DETAILS':<150}\n")
-        
-        # Data rows
-        for _, row in df.iterrows():
-            f.write(f"{str(row.get('STAFFID','')):<8};"
-                    f"{str(row.get('HCMNAME','')):<40};"
-                    f"{str(row.get('OLDID','')):<15};"
-                    f"{str(row.get('IC','')):<12};"
-                    f"{str(row.get('DOB','')):<13};"
-                    f"{str(row.get('BASE','')):<24};"
-                    f"{str(row.get('DESIGNATION','')):<24};"
-                    f"{str(row.get('REASON','')):<10};"
-                    f"{str(row.get('REMARKS','')):<150};"
-                    f"{str(row.get('DETAILS','')):<150}\n")
-
-# ======================================================
-# Generate all 6 reports
+# Generate all 6 reports (direct write)
 # ======================================================
 outputs = {
     "MPBB": ("RHOLD AND DJWD (PBB)", "PBB"),
@@ -119,5 +85,36 @@ outputs = {
     "MOVERSEA": ("RHOLD AND DJWD (OVERSEA)", "OVERSEA")
 }
 
+base_path = Path("/host/cis/output")
+
 for table, (title, report_code) in outputs.items():
-    write_fixed_width_txt(table, title, report_code)
+    txt_path = base_path / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
+    df = con.execute(f"SELECT * FROM {table}").fetchdf()
+
+    with open(txt_path, "w") as f:
+        # Empty report
+        if df.empty:
+            f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
+            f.write(f"{' '*55}       NO MATCHING RECORDS\n")
+        else:
+            # Header
+            f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
+            f.write(f"{'STAFF ID':<8};{'NAME':<40};{'OLD IC':<15};{'NEW IC':<12};{'DATE OF BIRTH':<12};"
+                    f"{'BASE':<24};{'DESIGNATION':<24};{'REASON':<17};{'REMARKS':<150};{'DETAILS':<150}\n")
+
+            # Data rows
+            for _, row in df.iterrows():
+                f.write(f"{str(row.get('STAFFID','')):<8};"
+                        f"{str(row.get('HCMNAME','')):<40};"
+                        f"{str(row.get('OLDID','')):<15};"
+                        f"{str(row.get('IC','')):<12};"
+                        f"{str(row.get('DOB','')):<13};"
+                        f"{str(row.get('BASE','')):<24};"
+                        f"{str(row.get('DESIGNATION','')):<24};"
+                        f"{str(row.get('REASON','')):<10};"
+                        f"{str(row.get('REMARKS','')):<150};"
+                        f"{str(row.get('DETAILS','')):<150}\n")
+
+    print(f"✅ TXT report generated: {txt_path}")
+
+print("All 6 dated TXT reports generated successfully!")
