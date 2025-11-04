@@ -1,21 +1,34 @@
 import duckdb
 import datetime
 from pathlib import Path
-from CIS_PY_READER import get_hive_parquet, csv_output_path
+from CIS_PY_READER import get_hive_parquet
 
-# --- Input parquet files (assume already converted) ---
+#---------------------------------------------------------------------#
+# Original Program: CIHCMRHL                                          #
+#---------------------------------------------------------------------#
+# ESMR 2017-1324                                                      #
+# MATCHING DOWJONES AND EMPLOYEE MASTER FILE                          #
+# ESMR 2018-1194 ENHANCE REPORT                                       #
+#---------------------------------------------------------------------#
+# MATCH STAFF IC AND NAME AGAINST CIS RECORDS ICIRHHC1                #
+#---------------------------------------------------------------------#
+
+# ======================================================
+# Connect DuckDB
+# ======================================================
+con = duckdb.connect()
 dowj_parquet = get_hive_parquet('HCM_DOWJONES_MATCH')
 rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
 
-# --- Connect DuckDB ---
-con = duckdb.connect()
-
-# --- Get current date for filenames ---
+# ======================================================
+# Get current date for filenames
+# ======================================================
 today = datetime.date.today()
-# For Windows, replace %-d/%-m with %#d/%#m if needed
 date_str = today.strftime("%-d-%-m-%Y")  
 
-# --- Load DOWJ data ---
+# ======================================================
+# Load DOWJ data
+# ======================================================
 con.execute(f"""
     CREATE TABLE DOWJ AS
     SELECT *,
@@ -32,13 +45,17 @@ con.execute(f"""
       AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
 """)
 
-# --- Merge DOWJ + RHOLD into ALL_MATCH ---
+# ======================================================
+# Merge DOWJ + RHOLD into ALL_MATCH
+# ======================================================
 con.execute("""
     CREATE TABLE ALL_MATCH AS
     SELECT * FROM DOWJ
 """)
 
-# --- Split by COMPCODE ---
+# ======================================================
+# Split by COMPCODE
+# ======================================================
 comp_codes = ["PBB", "PIB", "PNSB", "PTS", "PHSB"]
 for code in comp_codes:
     table_name = f"M{code}"
@@ -47,17 +64,21 @@ for code in comp_codes:
     SELECT * FROM ALL_MATCH WHERE COMPCODE='{code}'
     """)
 
-# --- MOVERSEA: everything else ---
+# ======================================================
+# MOVERSEA
+# ======================================================
 con.execute("""
 CREATE OR REPLACE TABLE MOVERSEA AS
 SELECT * FROM ALL_MATCH
 WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
 """)
 
-# --- Function to write fixed-width TXT file directly in csv_output_path ---
+# ======================================================
+# Function to write fixed-width TXT file
+# ======================================================
 def write_fixed_width_txt(table_name, title, report_code):
-    base_folder = Path(csv_output_path)  # <-- no subfolder
-    txt_path = base_folder / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
+    base_path = '/host/cis/output'
+    txt_path = Path(base_path) / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
 
     df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
     
@@ -86,9 +107,9 @@ def write_fixed_width_txt(table_name, title, report_code):
                     f"{str(row.get('REMARKS','')):<150};"
                     f"{str(row.get('DETAILS','')):<150}\n")
 
-    print(f"✅ TXT report generated: {txt_path}")
-
-# --- Generate all 6 reports ---
+# ======================================================
+# Generate all 6 reports
+# ======================================================
 outputs = {
     "MPBB": ("RHOLD AND DJWD (PBB)", "PBB"),
     "MPIB": ("RHOLD AND DJWD (PIB)", "PIB"),
@@ -100,5 +121,3 @@ outputs = {
 
 for table, (title, report_code) in outputs.items():
     write_fixed_width_txt(table, title, report_code)
-
-print("All 6 dated TXT reports generated successfully!")
