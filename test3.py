@@ -1,24 +1,21 @@
-error:
-File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 103, in <module>
-    write_report("MPBB", "/host/cis/output/HCM_MATCH_PBB_RPT.txt", "RHOLD AND DJWD (PBB)", fields_mpbb)
-  File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 92, in write_report
-    f.write(';'.join([str(row[field]) if row[field] is not None else '' for field in fields]) + '\n')
-  File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 92, in <listcomp>
-    f.write(';'.join([str(row[field]) if row[field] is not None else '' for field in fields]) + '\n')
-TypeError: tuple indices must be integers or slices, not str
-
-program:
 import duckdb
-from CIS_PY_READER import get_hive_parquet
+import datetime
+from pathlib import Path
+from CIS_PY_READER import get_hive_parquet, csv_output_path
 
 # --- Input parquet files (assume already converted) ---
 dowj_parquet = get_hive_parquet('HCM_DOWJONES_MATCH')
 rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
 
 # --- Connect DuckDB ---
-con = duckdb.connect(database=':memory:')
+con = duckdb.connect()
 
-# --- Load data ---
+# --- Get current date for filenames ---
+today = datetime.date.today()
+# For Windows, replace %-d/%-m with %#d/%#m if needed
+date_str = today.strftime("%-d-%-m-%Y")  
+
+# --- Load DOWJ data ---
 con.execute(f"""
     CREATE TABLE DOWJ AS
     SELECT *,
@@ -35,86 +32,74 @@ con.execute(f"""
       AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
 """)
 
-# --- Merge DOWJ + RHOLD ---
+# --- Merge DOWJ + RHOLD into ALL_MATCH ---
 con.execute("""
     CREATE TABLE ALL_MATCH AS
     SELECT * FROM DOWJ
 """)
 
-# --- Split by COMPCODE with flexible field selection ---
+# --- Split by COMPCODE ---
+comp_codes = ["PBB", "PIB", "PNSB", "PTS", "PHSB"]
+for code in comp_codes:
+    table_name = f"M{code}"
+    con.execute(f"""
+    CREATE OR REPLACE TABLE {table_name} AS
+    SELECT * FROM ALL_MATCH WHERE COMPCODE='{code}'
+    """)
+
+# --- MOVERSEA: everything else ---
 con.execute("""
-    CREATE TABLE MPBB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PBB';
+CREATE OR REPLACE TABLE MOVERSEA AS
+SELECT * FROM ALL_MATCH
+WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
 """)
 
-con.execute("""
-    CREATE TABLE MPIB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PIB';
-""")
+# --- Function to write fixed-width TXT file using csv_output_path ---
+def write_fixed_width_txt(table_name, title, report_code):
+    # Create the full filename in the same CSV folder
+    base_folder = Path(csv_output_path("hcm_reports"))
+    txt_path = base_folder / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
 
-con.execute("""
-    CREATE TABLE MPNSB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PNSB';
-""")
-
-con.execute("""
-    CREATE TABLE MPTS AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PTS';
-""")
-
-con.execute("""
-    CREATE TABLE MPHSB AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE='PHSB';
-""")
-
-con.execute("""
-    CREATE TABLE MOVERSEA AS
-    SELECT STAFFID,HCMNAME,OLDID,IC,DOB,BASE,DESIGNATION,REASON,REMARKS,DETAILS,M_NIC,M_NID,M_IC,M_ID,M_DOB
-    FROM ALL_MATCH
-    WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB');
-""")
-
-# --- Function to write TXT report with flexible fields ---
-def write_report(table_name, filename, title, fields):
-    # Fetch rows from DuckDB
-    res = con.execute(f"SELECT {', '.join(fields)} FROM {table_name} ORDER BY HCMNAME, OLDID, IC").fetchall()
+    df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
     
-    with open(filename, "w", encoding="utf-8") as f:
-        # No records
-        if len(res) == 0:
-            f.write(f"{' ' * 55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
-            f.write(f"{' ' * 55}       NO MATCHING RECORDS\n")
-        else:
-            # Header
-            f.write(';'.join(fields) + '\n')
-            # Data rows
-            for row in res:
-                f.write(';'.join([str(row[field]) if row[field] is not None else '' for field in fields]) + '\n')
+    with open(txt_path, "w") as f:
+        # Handle empty table
+        if df.empty:
+            f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
+            f.write(f"{' '*55}       NO MATCHING RECORDS\n")
+            return
 
-# --- Define flexible field list for each output ---
-fields_mpbb = ['STAFFID','HCMNAME','OLDID','IC','DOB','BASE','DESIGNATION','REASON','REMARKS','DETAILS','M_NIC','M_NID','M_IC','M_ID','M_DOB']
-fields_mpib = fields_mpbb.copy()  # Could customize if needed
-fields_mpnsb = fields_mpbb.copy()
-fields_mpts = fields_mpbb.copy()
-fields_mphsb = fields_mpbb.copy()
-fields_moversea = fields_mpbb.copy()
+        # Header
+        f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
+        f.write(f"{'STAFF ID':<8};{'NAME':<40};{'OLD IC':<15};{'NEW IC':<12};{'DATE OF BIRTH':<12};"
+                f"{'BASE':<24};{'DESIGNATION':<24};{'REASON':<17};{'REMARKS':<150};{'DETAILS':<150}\n")
+        
+        # Data rows
+        for _, row in df.iterrows():
+            f.write(f"{str(row.get('STAFFID','')):<8};"
+                    f"{str(row.get('HCMNAME','')):<40};"
+                    f"{str(row.get('OLDID','')):<15};"
+                    f"{str(row.get('IC','')):<12};"
+                    f"{str(row.get('DOB','')):<13};"
+                    f"{str(row.get('BASE','')):<24};"
+                    f"{str(row.get('DESIGNATION','')):<24};"
+                    f"{str(row.get('REASON','')):<10};"
+                    f"{str(row.get('REMARKS','')):<150};"
+                    f"{str(row.get('DETAILS','')):<150}\n")
 
-# --- Write TXT reports ---
-write_report("MPBB", "/host/cis/output/HCM_MATCH_PBB_RPT.txt", "RHOLD AND DJWD (PBB)", fields_mpbb)
-write_report("MPIB", "/host/cis/output/HCM_MATCH_PIB_RPT.txt", "RHOLD AND DJWD (PIB)", fields_mpib)
-write_report("MPNSB", "/host/cis/output/HCM_MATCH_PNSB_RPT.txt", "RHOLD AND DJWD (PNSB)", fields_mpnsb)
-write_report("MPTS", "/host/cis/output/HCM_MATCH_PTS_RPT.txt", "RHOLD AND DJWD (PTS)", fields_mpts)
-write_report("MPHSB", "/host/cis/output/HCM_MATCH_PHSB_RPT.txt", "RHOLD AND DJWD (PHSB)", fields_mphsb)
-write_report("MOVERSEA", "/host/cis/output/HCM_MATCH_OVERSEA_RPT.txt", "RHOLD AND DJWD (PTL/PBL/OVERSEA)", fields_moversea)
+    print(f"✅ TXT report generated: {txt_path}")
 
-print("All TXT reports generated successfully!")
+# --- Generate all 6 reports ---
+outputs = {
+    "MPBB": ("RHOLD AND DJWD (PBB)", "PBB"),
+    "MPIB": ("RHOLD AND DJWD (PIB)", "PIB"),
+    "MPNSB": ("RHOLD AND DJWD (PNSB)", "PNSB"),
+    "MPTS": ("RHOLD AND DJWD (PTS)", "PTS"),
+    "MPHSB": ("RHOLD AND DJWD (PHSB)", "PHSB"),
+    "MOVERSEA": ("RHOLD AND DJWD (OVERSEA)", "OVERSEA")
+}
+
+for table, (title, report_code) in outputs.items():
+    write_fixed_width_txt(table, title, report_code)
+
+print("All 6 dated TXT reports generated successfully!")
