@@ -1,40 +1,71 @@
-@001  U_CIS_HOLD_CO_NO           2.
-@003  U_CIS_BANK_NO              2.
-@005  C_CIS_APPL_CODE            $5.
-@010  U_CIS_APPL_NO              $20.
-@030  H_CIS_PROCESS_TIME         $8.
-@038  C_CIS_STATUS               $1.
-@039  U_CIS_BRANCH               4.
-@043  U_CIS_COST_CNTR            4.
-@047  D_CIS_LST_MNT_DATE         $10.
-@057  C_CIS_LST_MNT_OPER         $8.
-@065  C_CIS_TAX_ID               $1.
-@066  U_CIS_TAX_NO               $9.
-@075  S_CIS_PAS_IND              $1.
-@076  S_CIS_WITHHOLDING          $1.
-@077  C_CIS_ACCT_TYPE            $5.
-@082  U_CIS_PRIM_OFF             3.
-@085  U_CIS_SEC_OFF              3.
-@088  U_CIS_PRIM_LN_OFF          3.
-@091  U_CIS_SEC_LN_OFF           3.
-@094  C_CIS_CYC_CODE             $3.
-@097  C_CIS_MAIL_CODE            $3.
-@100  C_CIS_RESTRICT_CD          $3.
-@103  U_CIS_CENSUS_TRACT         5.
-@108  C_CIS_CR_RATING            $5.
-@113  C_CIS_SOURCE               $3.
-@117  D_CIS_ACCT_OPEN            $10.
-@128  D_CIS_ACCT_CLOSED          $10.
-@138  C_CIS_MISC_DEMO_1          $10.
-@148  C_CIS_MISC_DEMO_2          $10.
-@158  C_CIS_MISC_DEMO_3          $10.
-@168  C_CIS_MISC_DEMO_4          $10.
-@178  C_CIS_MISC_DEMO_5          $10.
-@188  C_CIS_MISC_DEMO_6          $10.
-@198  C_CIS_MISC_DEMO_7          $10.
-@208  C_CIS_MISC_DEMO_8          $10.
-@218  C_CIS_MISC_DEMO_9          $10.
-@228  C_CIS_MISC_DEMO_10         $10.
-@238  LAST_MAINT_TIME            $8.
-@247  PREV_MAINT_DATE            $10.
-@257  CURR_CDE                   $3.
+# ---------------------------------------------------------------------
+# Output as Parquet and CSV (explicit fields, match SAS PUT layout)
+# ---------------------------------------------------------------------
+
+goodot_fields = """
+    SELECT
+        BANKNUM,
+        CUSTBRCH,
+        CUSTNO,
+        CUSTNAME,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
+        PRIMSEC,
+        CUSTLASTDATECC,
+        CUSTLASTDATEYY,
+        CUSTLASTDATEMM,
+        CUSTLASTDATEDD,
+        ALIASKEY,
+        ALIAS,
+        HRCCODES,
+        BRANCH,
+        ACCTCODE,
+        ACCTNO,
+        OPDATE,
+        ACCSTAT,
+        COSTCTR,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM GOODOT
+""".format(year=year, month=month, day=day)
+
+badot_fields = """
+    SELECT
+        BANKNUM,
+        CUSTBRCH,
+        CUSTNO,
+        CUSTNAME,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
+        PRIMSEC,
+        CUSTLASTDATECC,
+        CUSTLASTDATEYY,
+        CUSTLASTDATEMM,
+        CUSTLASTDATEDD,
+        ALIASKEY,
+        ALIAS,
+        HRCCODES,
+        BRANCH,
+        ACCTCODE,
+        ACCTNO,
+        OPDATE,
+        ACCSTAT,
+        COSTCTR,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM BADOT
+""".format(year=year, month=month, day=day)
+
+conv_fields = """
+    SELECT
+        BANKNUM,
+        CUSTBRCH,
+        CUSTNO,
+        CUSTNAME,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
