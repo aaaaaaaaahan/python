@@ -1,100 +1,14 @@
-import duckdb
-from pathlib import Path
-from CIS_PY_READER import get_hive_parquet, csv_output_path
+Python Challenges
 
-# 03/11/2025
-#error: Output got folder - but i dont want
-#error: got header but no data inside
-
-# --- Input parquet files (assume already converted) ---
-dowj_parquet = get_hive_parquet('HCM_DOWJONES_MATCH')
-rhld_parquet = get_hive_parquet('HCM_RHOLD_MATCH')
-
-# --- Connect DuckDB ---
-con = duckdb.connect()
-
-# --- Prepare output folder ---
-output_folder = Path(csv_output_path("hcm_reports"))
-
-# --- Load DOWJ data ---
-con.execute(f"""
-    CREATE TABLE DOWJ AS
-    SELECT *,
-           'DOWJONES' AS REASON,
-           REMARKS,
-           DEPT AS DETAILS,
-           M_NIC,
-           M_NID,
-           M_IC,
-           M_ID,
-           M_DOB
-    FROM read_parquet('{dowj_parquet[0]}')
-    WHERE NOT (M_NAME = 'Y' AND M_NID = '     ')
-      AND NOT (M_NIC='N' AND M_NID='N' AND M_IC='N' AND M_ID='N' AND M_DOB='N')
-""")
-
-# --- Merge DOWJ + RHOLD into ALL_MATCH ---
-con.execute("""
-    CREATE TABLE ALL_MATCH AS
-    SELECT * FROM DOWJ
-""")
-
-# --- Split by COMPCODE ---
-comp_codes = ["PBB", "PIB", "PNSB", "PTS", "PHSB"]
-for code in comp_codes:
-    table_name = f"M{code}"
-    con.execute(f"""
-    CREATE OR REPLACE TABLE {table_name} AS
-    SELECT * FROM ALL_MATCH WHERE COMPCODE='{code}'
-    """)
-
-# --- MOVERSEA: everything else ---
-con.execute("""
-CREATE OR REPLACE TABLE MOVERSEA AS
-SELECT * FROM ALL_MATCH
-WHERE COMPCODE NOT IN ('PBB','PIB','PNSB','PTS','PHSB')
-""")
-
-# --- Function to write fixed-width TXT file ---
-def write_fixed_width_txt(table_name, filename, title):
-    df = con.execute(f"SELECT * FROM {table_name}").fetchdf()
-    
-    with open(filename, "w") as f:  # Overwrite if exists
-        # Handle empty table
-        if df.empty:
-            f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
-            f.write(f"{' '*55}       NO MATCHING RECORDS\n")
-            return
-
-        # Header
-        f.write(f"{' '*55}EXCEPTION REPORT ON VALIDATION OF {title}\n")
-        f.write(f"{'STAFF ID':<8};{'NAME':<40};{'OLD IC':<15};{'NEW IC':<12};{'DATE OF BIRTH':<12};"
-                f"{'BASE':<24};{'DESIGNATION':<24};{'REASON':<17};{'REMARKS':<150};{'DETAILS':<150}\n")
-        
-        # Data rows (adjust column names to match parquet)
-        for idx, row in df.iterrows():
-            f.write(f"{str(row.get('STAFFID','')):<8};"
-                    f"{str(row.get('HCMNAME','')):<40};"
-                    f"{str(row.get('OLDID','')):<15};"
-                    f"{str(row.get('IC','')):<12};"
-                    f"{str(row.get('DOB','')):<13};"
-                    f"{str(row.get('BASE','')):<24};"
-                    f"{str(row.get('DESIGNATION','')):<24};"
-                    f"{str(row.get('REASON','')):<10};"
-                    f"{str(row.get('REMARKS','')):<150};"
-                    f"{str(row.get('DETAILS','')):<150}\n")
-
-# --- Write all output files ---
-outputs = {
-    "MPBB": "HCM_MATCH_PBB_RPT.txt",
-    "MPIB": "HCM_MATCH_PIB_RPT.txt",
-    "MPNSB": "HCM_MATCH_PNSB_RPT.txt",
-    "MPTS": "HCM_MATCH_PTS_RPT.txt",
-    "MPHSB": "HCM_MATCH_PHSB_RPT.txt",
-    "MOVERSEA": "HCM_MATCH_OVERSEA_RPT.txt"
-}
-
-for table, filename in outputs.items():
-    write_fixed_width_txt(table, output_folder / filename, title=table)
-
-print("All 6 reports generated successfully!")
+1.	Challenge to find dataset:
+-	Find fields layout
+-	some of the job is not schedule in Site 5 so need take time to create UAT data
+2.	Create new function:
+-	Need to create new function when facing some issue
+-	Like Hive parquet, to call the parquet path, read the hive parquet or other team parquet
+3.	Challenge in Setup:
+-	Seen the server and the whole python progress still in between setup and development concurrent doing.
+-	Python migration project from starting until now still keep setting up something, like  trigger file for start the python flow, folder setup for clearly naming, housekeeping depend on server not enough storage, and other.
+4.	Challenge in get parquet from other team:
+-	Each team started point are different so the parquet needed for each team is different.
+-	For this case, if the parquet file can convert will convert from our side else will wait for other team like SAS dataset, not fixed format binary dataset. 
