@@ -2,168 +2,314 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&csv
 assumed all the input file ady convert to parquet can directly use it
 
-//CIHRCALL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB65417
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DELE0    DD DSN=CIS.HRCCUST.DPACCTS,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE1    DD DSN=CIS.HRCCUST.LNACCTS,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE2    DD DSN=CIS.HRCCUST.OTACCTS,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* PROCESSES STARTS HERE
-//*---------------------------------------------------------------------
-//ALLACCT  EXEC SAS609,REGION=4M,WORK='50000,50000'
-//IEFRDER   DD DUMMY
-//*OUTPUT FROM JOB CICUSCD1
-//HRCFILE   DD DISP=SHR,DSN=CUSTCODE
-//*OUTPUT FROM JOB CCRNMALS
-//CISFILE   DD DISP=SHR,DSN=CIS.CUST.DAILY
-//OUTDPACC  DD DSN=CIS.HRCCUST.DPACCTS,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//OUTLNACC  DD DSN=CIS.HRCCUST.LNACCTS,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//OUTOTACC  DD DSN=CIS.HRCCUST.OTACCTS,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SYSIN     DD *
+//CIHRCDR1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB24841
+//*--------------------------------------------------------------------
+//DLY#REPT EXEC SAS609
+//* UNLOAD JOB FROM CIULHRCA
+//HRCUNLD  DD DISP=SHR,DSN=UNLOAD.CIHRCAPT.FB
+//* UNLOAD JOB FROM CIULHSTT
+//HSTUNLD  DD DISP=SHR,DSN=UNLOAD.CIHRCHST.FB
+//OUTFILE  DD DSN=CISHRC.STATUS.DAILY(+1),
+//            DISP=(NEW,CATLG,DELETE),SPACE=(CYL,(1,5),RLSE),
+//            UNIT=SYSDA,DCB=(LRECL=400,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
+//SYSIN    DD *
 OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
 OPTIONS NODATE NONUMBER NOCENTER;
 TITLE;
  /*----------------------------------------------------------------*/
- /*    HIGH RISK CUSTOMERS FILE DECLARATION                        */
+ /*    GET SAS DATE AND TODAY REPORTING DATE                       */
  /*----------------------------------------------------------------*/
-  DATA HRCCUST;
-      INFILE HRCFILE;
-      INPUT @01   CUSTNO             $20.
-            @29   HRCCODES           $60.;
-  RUN;
-  PROC SORT DATA=HRCCUST; BY CUSTNO; RUN;
+ DATA SRSDATE;
+    INFILE CTRLDATE;
+    INPUT @001  SRSYY    4.
+          @005  SRSMM    2.
+          @007  SRSDD    2.;
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          TODAY=PUT(TODAYSAS,YYMMDD10.);
+          CALL SYMPUT('TODAYDATE',TODAY);
+ RUN;
+ PROC PRINT DATA=SRSDATE(OBS=5);TITLE 'DATE';RUN;
+ /*----------------------------------------------------------------*/
+ /*    INPUT FILE DATA DECLARATION                                 */
+ /*----------------------------------------------------------------*/
+ DATA HRCRECS;
+    INFILE HRCUNLD;
+    INPUT  @001  ALIAS             $40.
+           @041  BRCHCODE           $7.
+           @048  ACCTTYPE           $5.
+           @053  APPROVALSTATUS     $2.
+           @055  ACCTNO            $20.
+           @075  CISNO             $20.
+           @095  CREATIONDATE      $10.
+           @105  PRIMARYJOINT      $40.
+           @145  CISJOINTID1       $40.
+           @185  CISJOINTID2       $40.
+           @225  CISJOINTID3       $40.
+           @265  CISJOINTID4       $40.
+           @305  CISJOINTID5       $40.
+           @345  CUSTTYPE           $1.
+           @346  CUSTNAME         $120.
+           @466  CUSTGENDER        $10.
+           @476  CUSTDOBDOR        $10.
+           @486  CUSTEMPLOYER     $120.
+           @606  CUSTADDR1         $40.
+           @646  CUSTADDR2         $40.
+           @686  CUSTADDR3         $40.
+           @726  CUSTADDR4         $40.
+           @766  CUSTADDR5         $40.
+           @806  CUSTPHONE         $15.
+           @821  CUSTPEP            $1.
+           @822  DTCORGUNIT        $10.
+           @832  DTCINDUSTRY       $10.
+           @842  DTCNATION         $10.
+           @852  DTCOCCUP          $10.
+           @862  DTCACCTTYPE       $10.
+           @872  DTCCOMPFORM       $10.
+           @882  DTCWEIGHTAGE       $1.
+           @883  DTCTOTAL           $5.
+           @888  DTCSCORE1          $5.
+           @893  DTCSCORE2          $5.
+           @898  DTCSCORE3          $5.
+           @903  DTCSCORE4          $5.
+           @908  DTCSCORE5          $5.
+           @913  DTCSCORE6          $5.
+           @918  ACCTPURPOSE        $5.
+           @923  ACCTREMARKS       $60.
+           @983  SOURCEFUND         $5.
+           @988  SOURCEDETAILS     $60.
+           @1048 PEPINFO          $150.
+           @1198 PEPWEALTH         $60.
+           @1258 PEPFUNDS          $60.
+           @1320 BRCHRECOMDETAILS $900.
+           @2220 BRCHEDITOPER       $8.
+           @2228 BRCHAPPROVEOPER    $8.
+           @2236 BRCHCOMMENTS     $150.
+           @2386 BRCHREWORK       $150.
+           @2536 HOVERIFYOPER       $8.
+           @2544 HOVERIFYDATE      $10.
+           @2554 HOVERIFYCOMMENTS $150.
+           @2704 HOVERIFYREMARKS  $150.
+           @2854 HOVERIFYREWORK   $150.
+           @3004 HOAPPROVEOPER      $8.
+           @3012 HOAPPROVEDATE     $10.
+           @3022 HOAPPROVEREMARKS $150.
+           @3172 HOCOMPLYREWORK   $150.
+           @3322 UPDATEDATE        $10.
+           @3332 UPDATETIME         $8.;
+
+           IF UPDATEDATE EQ "&TODAYDATE"
+              THEN OUTPUT;
+ RUN;
+ PROC SORT  DATA=HRCRECS; BY ALIAS BRCHCODE ACCTTYPE
+      PRIMARYJOINT CISJOINTID1 CISJOINTID2 CISJOINTID3
+      CISJOINTID4 CISJOINTID5; RUN;
+ PROC PRINT DATA=HRCRECS(OBS=5);TITLE 'MASTER HRC RECORDS';RUN;
 
  /*----------------------------------------------------------------*/
- /*    CIS CUSTOMER FILE DECLARATION                               */
+ /*    INPUT FILE DATA DECLARATION FOR HISTORY TABLE               */
  /*----------------------------------------------------------------*/
-  DATA CIS;
-      KEEP CUSTBRCH CUSTNO RACE CITIZENSHIP INDORG PRISEC
-           ALIASKEY ALIAS ACCTCODE ACCTNO CUSTNAME
-           CUSTLASTDATECC CUSTLASTDATEYY CUSTLASTDATEMM CUSTLASTDATEDD;
-      SET CISFILE.CUSTDLY;
-  RUN;
-  PROC SORT DATA=CIS; BY CUSTNO ACCTNO; RUN;
+ DATA HISRECS;
+    INFILE HSTUNLD;
+    INPUT  @001  ALIAS             $40.
+           @041  BRCHCODE           $7.
+           @051  PRIMARYJOINT      $40.
+           @091  CISJOINTID1       $40.
+           @131  CISJOINTID2       $40.
+           @171  CISJOINTID3       $40.
+           @211  CISJOINTID4       $40.
+           @251  CISJOINTID5       $40.
+           @291  UPDATEDATE        $10.
+           @301  UPDATETIME         $8.
+           @309  SUBTYPE           $30.
+           @339  ACCTTYPE           $5.
+           @344  OPERATOR           $8.
+           @352  REMARKS          $150.;
+           IF SUBTYPE IN ('DELAPP','HOEDEL','DELHOE') AND
+              UPDATEDATE EQ "&TODAYDATE" THEN OUTPUT;
+ RUN;
+ PROC SORT  DATA=HISRECS; BY ALIAS BRCHCODE ACCTTYPE
+      PRIMARYJOINT CISJOINTID1 CISJOINTID2 CISJOINTID3
+      CISJOINTID4 CISJOINTID5 DESCENDING UPDATETIME
+      SUBTYPE OPERATOR; RUN;
+ PROC SORT  DATA=HISRECS NODUPKEY; BY ALIAS BRCHCODE ACCTTYPE
+      PRIMARYJOINT CISJOINTID1 CISJOINTID2 CISJOINTID3
+      CISJOINTID4 CISJOINTID5 SUBTYPE; RUN;
+ PROC PRINT DATA=HISRECS(OBS=10);TITLE 'MASTER HISTORY RECORDS';RUN;
 
  /*----------------------------------------------------------------*/
- /*    GET ALL HIGH RISK CUSTOMERS THEN ONLY RELATED ACCTS         */
- /*    SPLIT INTO THREE MAIN CATEGORIES DP, LN ,AND OTHER ACCT TYPE*/
- /*    INCLUDES JOINT ACCOUNT CUSTOMERS                            */
+ /*    MERGE TWO DATASETS TO GET DELETE BY HOE OR BRANCH STATUS    */
  /*----------------------------------------------------------------*/
-  DATA MRGCISDP MRGCISLN MRGCISOT;
-      MERGE HRCCUST(IN=A) CIS(IN=B); BY CUSTNO;
-      IF A AND B THEN DO;
-         IF ACCTCODE = 'DP' THEN OUTPUT MRGCISDP;
-         IF ACCTCODE = 'LN' THEN OUTPUT MRGCISLN;
-         IF ACCTCODE NE 'DP' AND ACCTCODE NE 'LN' THEN OUTPUT MRGCISOT;
-      END;
-  RUN;
-  PROC SORT DATA=MRGCISDP; BY ACCTNO; RUN;
-  PROC SORT DATA=MRGCISLN; BY ACCTNO; RUN;
-  PROC SORT DATA=MRGCISOT; BY ACCTNO; RUN;
-  PROC PRINT DATA=MRGCISDP(OBS=10);TITLE 'HRC WITH DP ACCTS ONLY';RUN;
-  PROC PRINT DATA=MRGCISLN(OBS=10);TITLE 'HRC WITH LN ACCTS ONLY';RUN;
-  PROC PRINT DATA=MRGCISOT(OBS=10);TITLE 'HRC WITH OT ACCTS ONLY';RUN;
+ DATA MRGHRC;
+    FORMAT HOEREJ 8. HOEDEL 8. HOEPDREV 8. HOEPDAPPR 8. HOEAPPR 8.
+           HOEPDNOTE 8. HOENOTED 8. HOEACCT 8. HOEXACCT 8.
+           BRHREJ 8. BRHDEL 8. BRHCOM 8. BRHEDD 8.
+           BRHAPPR 8. BRHACCT 8. BRHXACCT 8. DELHOE 8. DELAP1 8.
+           HOENOTED1 8. HOEPDNOTE1 8.;
+    MERGE HRCRECS(IN=A) HISRECS(IN=B); BY ALIAS BRCHCODE ACCTTYPE
+    PRIMARYJOINT CISJOINTID1 CISJOINTID2 CISJOINTID3
+    CISJOINTID4 CISJOINTID5;
+    IF A;
+           HOEREJ    = 0;
+           HOEDEL    = 0;
+           HOEPDREV  = 0;
+           HOEPDAPPR = 0;
+           HOEAPPR   = 0;
+           HOEPDNOTE = 0;
+           HOENOTED  = 0;
+           HOEACCT   = 0;
+           HOEXACCT  = 0;
+           BRHREJ    = 0;
+           BRHDEL    = 0;
+           BRHCOM    = 0;
+           BRHEDD    = 0;
+           BRHAPPR   = 0;
+           BRHACCT   = 0;
+           BRHXACCT  = 0;
+           DELHOE    = 0;
+           DELAP1    = 0;
+           HOEPDNOTE1= 0;
+           HOENOTED1 = 0;
+
+         /*IF APPROVALSTATUS IN ('10','07') THEN DELETE; */ /*20192599*/
+           SELECT (APPROVALSTATUS);
+              WHEN('01') HOEREJ  = 1;
+              WHEN('02')
+                  DO;
+                     IF ACCTTYPE NOT
+                     IN('CA','SA','SDB','FD','FC','FCI','O','FDF')
+                        THEN DELETE;
+                     HOEAPPR = 1;
+                     IF ACCTNO EQ ' ' THEN HOEXACCT = 1;
+                     ELSE HOEACCT = 1;
+                  END;
+              WHEN('03') HOEPDAPPR = 1;
+              WHEN('04') HOEPDREV  = 1;
+              WHEN('05') BRHCOM  = 1;
+              WHEN('06') BRHEDD  = 1;
+              WHEN('07')
+                  DO;
+                     IF SUBTYPE = 'HOEDEL' THEN HOEDEL=1;
+                     ELSE BRHDEL = 1;
+                  END;
+              WHEN('08')
+                  DO;
+                     BRHAPPR = 1;
+                     IF ACCTNO EQ ' ' THEN BRHXACCT = 1;
+                     ELSE BRHACCT = 1;
+                     IF ACCTNO NE ' ' AND
+                        INDEX(HOVERIFYREMARKS,'Noted by')<= 0
+                        THEN HOEPDNOTE = 1;
+                     IF ACCTNO NE ' ' AND
+                        INDEX(HOVERIFYREMARKS,'Noted by')> 0
+                        THEN HOENOTED = 1;
+                     IF ACCTNO NE ' ' AND
+                        (ACCTTYPE IN ('CA','FD','FC','SDB')) AND
+                        INDEX(HOVERIFYREMARKS,'Noted by')<= 0
+                        THEN HOEPDNOTE1 = 1;
+                     IF ACCTNO NE ' ' AND
+                        (ACCTTYPE IN ('CA','FD','FC','SDB')) AND
+                        INDEX(HOVERIFYREMARKS,'Noted by')> 0
+                        THEN HOENOTED1 = 1;
+                  END;
+              WHEN('09') BRHREJ = 1;
+              WHEN('10') DELAP1 = 1;
+              WHEN('11') DELHOE = 1;
+              OTHERWISE;
+           END;
+ RUN;
+ PROC SORT  DATA=MRGHRC; BY BRCHCODE; RUN;
+ PROC PRINT DATA=MRGHRC(OBS=20);TITLE 'ALL HRC RECORDS';RUN;
+ /*PROC PRINT DATA=MRGHRC; WHERE CNTBDEL = 0;*/
+ /*----------------------------------------------------------------*/
+ /*  PROC SUMMARY FOR ALL APPROVAL COUNTS                          */
+ /*----------------------------------------------------------------*/
+ PROC SUMMARY DATA=MRGHRC;
+ BY BRCHCODE;
+ VAR HOEREJ HOEDEL HOEPDREV HOEPDAPPR HOEAPPR HOEPDNOTE HOEACCT HOEXACCT
+     BRHREJ BRHDEL BRHCOM BRHEDD BRHAPPR BRHACCT BRHXACCT DELAP1 DELHOE
+     HOENOTED HOENOTED1 HOEPDNOTE1;
+ OUTPUT OUT=TEMP (DROP=_TYPE_ RENAME=(_FREQ_=TOTAL))
+        SUM=HOEREJ HOEDEL HOEPDREV HOEPDAPPR HOEAPPR HOEPDNOTE
+            HOEACCT HOEXACCT BRHREJ BRHDEL BRHCOM BRHEDD
+            BRHAPPR BRHACCT BRHXACCT DELAP1 DELHOE HOENOTED
+            HOENOTED1 HOEPDNOTE1;
+        RUN;
+ PROC SORT  DATA=TEMP; BY BRCHCODE ;RUN;
+ PROC PRINT DATA=TEMP(OBS=5);TITLE 'REPORT SUMMARY';RUN;
 
  /*----------------------------------------------------------------*/
- /*   OUTPUT DEPOSIT ACCOUNTS RELATED CUSTOMERS DATASETS           */
+ /* OUTPUT DAILY SUMMARY REPORT DATA                             */
  /*----------------------------------------------------------------*/
-  DATA TEMPDP;
-  SET MRGCISDP;
-  FILE OUTDPACC;
-     IF PRISEC = 901 THEN PRIMSEC = 'P';
-     IF PRISEC = 902 THEN PRIMSEC = 'S';
-     PUT @01   '033'
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  ACCTCODE           $5.
-         @161  ACCTNO             20.;
-  RETURN;
-  RUN;
- /*----------------------------------------------------------------*/
- /*   OUTPUT LOANS ACCOUNTS RELATED CUSTOMERS DATASETS             */
- /*----------------------------------------------------------------*/
-  DATA TEMPLN;
-  SET MRGCISLN;
-  FILE OUTLNACC;
-     IF PRISEC = 901 THEN PRIMSEC = 'P';
-     IF PRISEC = 902 THEN PRIMSEC = 'S';
-     PUT @01   '033'
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  ACCTCODE           $5.
-         @161  ACCTNO             20.;
-  RETURN;
-  RUN;
- /*----------------------------------------------------------------*/
- /*   OUTPUT OTHERS ACCOUNTS RELATED CUSTOMERS DATASETS            */
- /*----------------------------------------------------------------*/
-  DATA TEMPOT;
-  SET MRGCISOT;
-  FILE OUTOTACC;
-     IF PRISEC = 901 THEN PRIMSEC = 'P';
-     IF PRISEC = 902 THEN PRIMSEC = 'S';
-     PUT @01   '033'
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  ACCTCODE           $5.
-         @161  ACCTNO             20.;
-  RETURN;
-  RUN;
+ DATA OUTRECS;
+   SET TEMP;
+   FILE OUTFILE;
+   IF _N_ = 1 THEN
+   PUT  @001  'BRANCH'
+        @010  'HOE REJECT'
+        @030  'HOE DELETE'
+        @050  'PEND REVIEW'
+        @070  'PEND APPROVAL'
+        @090  'HOE APPROVED'
+        @110  'HOE PEND NOTE'
+        @130  'HOE APPR ACCT OPEN'
+        @150  'HOE APPR NO ACCT'
+        @170  'BRANCH REJECT'
+        @190  'BRANCH DELETE'
+        @210  'BRANCH RECOM'
+        @230  'BRANCH EDD'
+        @250  'BRANCH APPROVED'
+        @270  'BRANCH APPR ACCT'
+        @290  'BRANCH APPR NO ACCT'
+        @310  'HOE NOTED'
+        @330  'PENDING NOTING (HOE)'
+        @350  'NOTED (HOE)'
+        @370  'TOTAL';
+   PUT  @001  BRCHCODE           $7.
+        @008  ', '
+        @010  HOEREJ             Z8.
+        @028  ', '
+        @030  DELHOE             Z8.
+        @048  ', '
+        @050  HOEPDREV           Z8.
+        @068  ', '
+        @070  HOEPDAPPR          Z8.
+        @088  ', '
+        @090  HOEAPPR            Z8.
+        @108  ', '
+        @110  HOEPDNOTE          Z8.
+        @128  ', '
+        @130  HOEACCT            Z8.
+        @148  ', '
+        @150  HOEXACCT           Z8.
+        @168  ', '
+        @170  BRHREJ             Z8.
+        @188  ', '
+     /* @190  BRHDEL             Z8. */
+        @190  DELAP1             Z8. /* SMR2019-2599 */
+        @208  ', '
+        @210  BRHCOM             Z8.
+        @228  ', '
+        @230  BRHEDD             Z8.
+        @248  ', '
+        @250  BRHAPPR            Z8.
+        @268  ', '
+        @270  BRHACCT            Z8.
+        @288  ', '
+        @290  BRHXACCT           Z8.
+        @308  ', '
+        @310  HOENOTED           Z8.
+        @328  ', '
+        @330  HOEPDNOTE1         Z8.
+        @348  ', '
+        @350  HOENOTED1          Z8.
+        @368  ', '
+        @370  TOTAL              Z8.;
+   RUN;
