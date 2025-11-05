@@ -1,84 +1,165 @@
-( "U_CIS_HOLD_CO_NO"                   
- POSITION(  00001:00002) DECIMAL       
-, "U_CIS_BANK_NO"                      
- POSITION(  00003:00004) DECIMAL       
-, "C_CIS_APPL_CODE"                    
- POSITION(  00005:00009) CHAR(00005)   
-, "U_CIS_APPL_NO"                      
- POSITION(  00010:00029) CHAR(00020)   
-, "H_CIS_PROCESS_TIME"                 
- POSITION(  00030:00037) TIME EXTERNAL 
-, "C_CIS_STATUS"                       
- POSITION(  00038:00038) CHAR(00001)   
-, "U_CIS_BRANCH"                       
- POSITION(  00039:00042) DECIMAL       
-, "U_CIS_COST_CNTR"                    
- POSITION(  00043:00046) DECIMAL       
-, "D_CIS_LST_MNT_DATE"                 
- POSITION(  00047:00056) DATE EXTERNAL 
-, "C_CIS_LST_MNT_OPER"                 
- POSITION(  00057:00064) CHAR(00008) 
-, "C_CIS_TAX_ID"                     
- POSITION(  00065:00065) CHAR(00001) 
-, "U_CIS_TAX_NO"                     
- POSITION(  00066:00074) CHAR(00009) 
-, "S_CIS_PAS_IND"                    
- POSITION(  00075:00075) CHAR(00001) 
-, "S_CIS_WITHHOLDING"                
- POSITION(  00076:00076) CHAR(00001) 
-, "C_CIS_ACCT_TYPE"                  
- POSITION(  00077:00081) CHAR(00005) 
-, "U_CIS_PRIM_OFF"                   
- POSITION(  00082:00084) DECIMAL     
-, "U_CIS_SEC_OFF"                    
- POSITION(  00085:00087) DECIMAL     
-, "U_CIS_PRIM_LN_OFF"                
- POSITION(  00088:00090) DECIMAL     
-, "U_CIS_SEC_LN_OFF"                 
- POSITION(  00091:00093) DECIMAL     
- , "C_CIS_CYC_CODE"                          
- POSITION(  00094:00096) CHAR(00003)        
-, "C_CIS_MAIL_CODE"                         
- POSITION(  00097:00099) CHAR(00003)        
-, "C_CIS_RESTRICT_CD"                       
- POSITION(  00100:00102) CHAR(00003)        
-, "U_CIS_CENSUS_TRACT"                      
- POSITION(  00103:00107) DECIMAL            
-, "C_CIS_CR_RATING"                         
- POSITION(  00108:00112) CHAR(00005)        
-, "C_CIS_SOURCE"                            
- POSITION(  00113:00115) CHAR(00003)        
-, "D_CIS_ACCT_OPEN"                         
- POSITION(  00117:00126) DATE EXTERNAL      
-                         NULLIF(00116)=X'FF'
-, "D_CIS_ACCT_CLOSED"                       
- POSITION(  00128:00137) DATE EXTERNAL      
-                         NULLIF(00127)=X'FF'
-, "C_CIS_MISC_DEMO_1"                       
- POSITION(  00138:00147) CHAR(00010) 
-, "C_CIS_MISC_DEMO_2"                
- POSITION(  00148:00157) CHAR(00010) 
-, "C_CIS_MISC_DEMO_3"                
- POSITION(  00158:00167) CHAR(00010) 
-, "C_CIS_MISC_DEMO_4"                
- POSITION(  00168:00177) CHAR(00010) 
-, "C_CIS_MISC_DEMO_5"                
- POSITION(  00178:00187) CHAR(00010) 
-, "C_CIS_MISC_DEMO_6"                
- POSITION(  00188:00197) CHAR(00010) 
-, "C_CIS_MISC_DEMO_7"                
- POSITION(  00198:00207) CHAR(00010) 
-, "C_CIS_MISC_DEMO_8"                
- POSITION(  00208:00217) CHAR(00010) 
-, "C_CIS_MISC_DEMO_9"                
- POSITION(  00218:00227) CHAR(00010) 
-, "C_CIS_MISC_DEMO_10"               
- POSITION(  00228:00237) CHAR(00010) 
- , "LAST_MAINT_TIME"                          
- POSITION(  00238:00245) TIME EXTERNAL       
-, "PREV_MAINT_DATE"                          
- POSITION(  00247:00256) DATE EXTERNAL       
-                         NULLIF(00246)=X'FF' 
-, "CURR_CDE"                                 
- POSITION(  00257:00259) CHAR(00003)         
-)                                            
+import duckdb
+from CIS_PY_READER import host_parquet_path, get_hive_parquet, parquet_output_path, csv_output_path
+import datetime
+
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+
+# ---------------------------------------------------------------------
+# Job: CIHRCOT1  |  Converted from SAS to Python + DuckDB
+# Purpose: Process high-risk customer OT account declarations
+# Split by first character of COSTCTR into:
+#   PBB  (Conventional) = COSTCTR[1] <> '3'
+#   PIBB (Islamic)       = COSTCTR[1] = '3'
+# ---------------------------------------------------------------------
+
+# ---------------------------
+# Connect to DuckDB
+# ---------------------------
+con = duckdb.connect()
+hrcstot = get_hive_parquet('CIS_HRCCUST_OTACCTS')
+
+# ---------------------------------------------------------------------
+# Step 1: Load Input Tables
+# ---------------------------------------------------------------------
+con.execute(f"""
+    CREATE OR REPLACE TABLE CISOT AS
+    SELECT 
+        BANKNUM,
+        CUSTBRCH,
+        CUSTNO,
+        CUSTNAME,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
+        PRIMSEC,
+        CUSTLASTDATECC,
+        CUSTLASTDATEYY,
+        CUSTLASTDATEMM,
+        CUSTLASTDATEDD,
+        ALIASKEY,
+        ALIAS,
+        HRCCODES,
+        ACCTCODE,
+        ACCTNO
+    FROM read_parquet('{hrcstot[0]}')
+""")
+
+con.execute(f"""
+    CREATE OR REPLACE TABLE OTDATA AS
+    SELECT DISTINCT
+        C_CIS_APPL_CODE AS ACCTCODE,
+        U_CIS_APPL_NO AS ACCTNO,
+        C_CIS_STATUS AS ACCSTAT,
+        LPAD(CAST(CAST(U_CIS_BRANCH AS BIGINT) AS VARCHAR), 7, '0') AS BRANCH,
+        LPAD(CAST(CAST(U_CIS_COST_CNTR AS BIGINT) AS VARCHAR), 4, '0') AS COSTCTR,
+        REPLACE(D_CIS_ACCT_OPEN, '-', '') AS OPDATE,
+        REPLACE(D_CIS_ACCT_CLOSED, '-', '') AS CLDATE
+    FROM '{host_parquet_path("UNLOAD_CIACCTT_FB.parquet")}'
+""")
+
+# ---------------------------------------------------------------------
+# Step 2: Merge & Classify GOOD / BAD OT Accounts
+# ---------------------------------------------------------------------
+con.execute("""
+    CREATE OR REPLACE TABLE MERGED AS
+    SELECT 
+        A.*,
+        B.BANKNUM, B.CUSTBRCH, B.CUSTNO, B.CUSTNAME,
+        B.RACE, B.CITIZENSHIP, B.INDORG, B.PRIMSEC,
+        B.CUSTLASTDATECC, B.CUSTLASTDATEYY, B.CUSTLASTDATEMM, B.CUSTLASTDATEDD,
+        B.ALIASKEY, B.ALIAS, B.HRCCODES
+    FROM OTDATA A
+    JOIN CISOT B USING (ACCTNO)
+""")
+
+# GOOD: ACCSTAT not in ('C','B','P','Z') and ACCTNO not blank
+con.execute("""
+    CREATE OR REPLACE TABLE GOODOT AS
+    SELECT * FROM MERGED
+    WHERE ACCSTAT NOT IN ('C','B','P','Z') AND ACCTNO <> ''
+""")
+
+# BAD: Remaining or closed
+con.execute("""
+    CREATE OR REPLACE TABLE BADOT AS
+    SELECT * FROM MERGED
+    WHERE ACCSTAT IN ('C','B','P','Z') OR ACCTNO = ''
+""")
+
+# ---------------------------------------------------------------------
+# Step 4: Split GOOD accounts into PBB and PIBB using first char of COSTCTR
+# COSTCTR[1] = '3' → PIBB (Islamic)
+# COSTCTR[1] <> '3' → PBB (Conventional)
+# ---------------------------------------------------------------------
+con.execute("""
+    CREATE OR REPLACE TABLE OTCONV AS
+    SELECT * FROM GOODOT WHERE SUBSTR(COSTCTR, 1, 1) <> '3'
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE OTPIBB AS
+    SELECT * FROM GOODOT WHERE SUBSTR(COSTCTR, 1, 1) = '3'
+""")
+
+# ---------------------------------------------------------------------
+# Output as Parquet and CSV
+# ---------------------------------------------------------------------
+out1 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM GOODOT
+""".format(year=year,month=month,day=day)
+
+out2 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM BADOT
+""".format(year=year,month=month,day=day)
+
+out3 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM OTCONV
+""".format(year=year,month=month,day=day)
+
+out4 = """
+    SELECT
+        *
+        ,{year} AS year
+        ,{month} AS month 
+        ,{day} AS day
+    FROM OTPIBB
+""".format(year=year,month=month,day=day)
+
+queries = {
+    "CIS_HRCCUST_OTACCTS_GOOD"                      : out1,
+    "CIS_HRCCUST_OTACCTS_CLOSED"                    : out2,
+    "CIS_HRCCUST_OTACCTS_GOOD_PBB"                  : out3,
+    "CIS_HRCCUST_OTACCTS_GOOD_PIBB"                 : out4
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
