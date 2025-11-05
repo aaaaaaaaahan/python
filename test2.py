@@ -1,132 +1,306 @@
 import duckdb
+import datetime
 from pathlib import Path
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-# ---------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------
-input_hrc = "/host/cis/input/CUSTCODE.parquet"          # HRCFILE
-input_cis = "/host/cis/input/CIS_CUST_DAILY.parquet"    # CISFILE.CUSTDLY
-output_dir = Path("/host/cis/output")
-output_dir.mkdir(parents=True, exist_ok=True)
+# -------------------------------------------------------------------
+# CONFIGURATION
+# -------------------------------------------------------------------
+input_path = Path("/host/cis/input")
+output_path = Path("/host/cis/output")
 
-# Output paths
-out_dp_parquet = output_dir / "HRCCUST_DPACCTS.parquet"
-out_ln_parquet = output_dir / "HRCCUST_LNACCTS.parquet"
-out_ot_parquet = output_dir / "HRCCUST_OTACCTS.parquet"
+hrc_unld = input_path / "UNLOAD_CIHRCAPT.parquet"
+hst_unld = input_path / "UNLOAD_CIHRCHST.parquet"
 
-out_dp_csv = output_dir / "HRCCUST_DPACCTS.csv"
-out_ln_csv = output_dir / "HRCCUST_LNACCTS.csv"
-out_ot_csv = output_dir / "HRCCUST_OTACCTS.csv"
+parquet_out = output_path / "CISHRC_STATUS_DAILY.parquet"
+csv_out = output_path / "CISHRC_STATUS_DAILY.csv"
 
-# ---------------------------------------------------------------------
-# Connect to DuckDB
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------
+# GET TODAY'S DATE
+# -------------------------------------------------------------------
+today = datetime.date.today().strftime("%Y-%m-%d")
+
+# -------------------------------------------------------------------
+# CONNECT TO DUCKDB
+# -------------------------------------------------------------------
 con = duckdb.connect()
 
-# ---------------------------------------------------------------------
-# Create Tables
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------
+# LOAD HRC RECORDS
+# -------------------------------------------------------------------
 con.execute(f"""
-    CREATE TABLE HRCCUST AS 
-    SELECT 
-        CUSTNO,
-        HRCCODES
-    FROM read_parquet('{input_hrc}');
+CREATE OR REPLACE TABLE HRCRECS AS
+SELECT
+    ALIAS,
+    BRCHCODE,
+    ACCTTYPE,
+    APPROVALSTATUS,
+    ACCTNO,
+    CISNO,
+    CREATIONDATE,
+    PRIMARYJOINT,
+    CISJOINTID1,
+    CISJOINTID2,
+    CISJOINTID3,
+    CISJOINTID4,
+    CISJOINTID5,
+    CUSTTYPE,
+    CUSTNAME,
+    CUSTGENDER,
+    CUSTDOBDOR,
+    CUSTEMPLOYER,
+    CUSTADDR1,
+    CUSTADDR2,
+    CUSTADDR3,
+    CUSTADDR4,
+    CUSTADDR5,
+    CUSTPHONE,
+    CUSTPEP,
+    DTCORGUNIT,
+    DTCINDUSTRY,
+    DTCNATION,
+    DTCOCCUP,
+    DTCACCTTYPE,
+    DTCCOMPFORM,
+    DTCWEIGHTAGE,
+    DTCTOTAL,
+    DTCSCORE1,
+    DTCSCORE2,
+    DTCSCORE3,
+    DTCSCORE4,
+    DTCSCORE5,
+    DTCSCORE6,
+    ACCTPURPOSE,
+    ACCTREMARKS,
+    SOURCEFUND,
+    SOURCEDETAILS,
+    PEPINFO,
+    PEPWEALTH,
+    PEPFUNDS,
+    BRCHRECOMDETAILS,
+    BRCHEDITOPER,
+    BRCHAPPROVEOPER,
+    BRCHCOMMENTS,
+    BRCHREWORK,
+    HOVERIFYOPER,
+    HOVERIFYDATE,
+    HOVERIFYCOMMENTS,
+    HOVERIFYREMARKS,
+    HOVERIFYREWORK,
+    HOAPPROVEOPER,
+    HOAPPROVEDATE,
+    HOAPPROVEREMARKS,
+    HOCOMPLYREWORK,
+    UPDATEDATE,
+    UPDATETIME
+FROM read_parquet('{hrc_unld}')
+WHERE UPDATEDATE = '{today}'
 """)
 
+# -------------------------------------------------------------------
+# LOAD HISTORY RECORDS
+# -------------------------------------------------------------------
 con.execute(f"""
-    CREATE TABLE CIS AS 
-    SELECT 
-        CUSTBRCH,
-        CUSTNO,
-        RACE,
-        CITIZENSHIP,
-        INDORG,
-        PRISEC,
-        ALIASKEY,
-        ALIAS,
-        ACCTCODE,
-        ACCTNO,
-        CUSTNAME,
-        CUSTLASTDATECC,
-        CUSTLASTDATEYY,
-        CUSTLASTDATEMM,
-        CUSTLASTDATEDD
-    FROM read_parquet('{input_cis}');
+CREATE OR REPLACE TABLE HISRECS AS
+SELECT
+    ALIAS,
+    BRCHCODE,
+    PRIMARYJOINT,
+    CISJOINTID1,
+    CISJOINTID2,
+    CISJOINTID3,
+    CISJOINTID4,
+    CISJOINTID5,
+    UPDATEDATE,
+    UPDATETIME,
+    SUBTYPE,
+    ACCTTYPE,
+    OPERATOR,
+    REMARKS
+FROM read_parquet('{hst_unld}')
+WHERE SUBTYPE IN ('DELAPP','HOEDEL','DELHOE')
+  AND UPDATEDATE = '{today}'
 """)
 
-# ---------------------------------------------------------------------
-# Merge HRCCUST and CIS
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------
+# MERGE HRC + HISTORY
+# -------------------------------------------------------------------
 con.execute("""
-    CREATE TABLE MERGED AS
-    SELECT
-        CIS.CUSTBRCH,
-        CIS.CUSTNO,
-        CIS.CUSTNAME,
-        CIS.RACE,
-        CIS.CITIZENSHIP,
-        CIS.INDORG,
-        CIS.PRISEC,
-        CASE 
-            WHEN CIS.PRISEC = 901 THEN 'P'
-            WHEN CIS.PRISEC = 902 THEN 'S'
-            ELSE '' 
-        END AS PRIMSEC,
-        CIS.CUSTLASTDATECC,
-        CIS.CUSTLASTDATEYY,
-        CIS.CUSTLASTDATEMM,
-        CIS.CUSTLASTDATEDD,
-        CIS.ALIASKEY,
-        CIS.ALIAS,
-        HRCCUST.HRCCODES,
-        CIS.ACCTCODE,
-        CIS.ACCTNO
-    FROM CIS
-    JOIN HRCCUST
-    ON CIS.CUSTNO = HRCCUST.CUSTNO;
+CREATE OR REPLACE TABLE MRGHRC AS
+SELECT
+    A.ALIAS,
+    A.BRCHCODE,
+    A.ACCTTYPE,
+    A.APPROVALSTATUS,
+    A.ACCTNO,
+    A.CISNO,
+    A.CREATIONDATE,
+    A.PRIMARYJOINT,
+    A.CISJOINTID1,
+    A.CISJOINTID2,
+    A.CISJOINTID3,
+    A.CISJOINTID4,
+    A.CISJOINTID5,
+    A.CUSTTYPE,
+    A.CUSTNAME,
+    A.CUSTGENDER,
+    A.CUSTDOBDOR,
+    A.CUSTEMPLOYER,
+    A.CUSTADDR1,
+    A.CUSTADDR2,
+    A.CUSTADDR3,
+    A.CUSTADDR4,
+    A.CUSTADDR5,
+    A.CUSTPHONE,
+    A.CUSTPEP,
+    A.DTCORGUNIT,
+    A.DTCINDUSTRY,
+    A.DTCNATION,
+    A.DTCOCCUP,
+    A.DTCACCTTYPE,
+    A.DTCCOMPFORM,
+    A.DTCWEIGHTAGE,
+    A.DTCTOTAL,
+    A.DTCSCORE1,
+    A.DTCSCORE2,
+    A.DTCSCORE3,
+    A.DTCSCORE4,
+    A.DTCSCORE5,
+    A.DTCSCORE6,
+    A.ACCTPURPOSE,
+    A.ACCTREMARKS,
+    A.SOURCEFUND,
+    A.SOURCEDETAILS,
+    A.PEPINFO,
+    A.PEPWEALTH,
+    A.PEPFUNDS,
+    A.BRCHRECOMDETAILS,
+    A.BRCHEDITOPER,
+    A.BRCHAPPROVEOPER,
+    A.BRCHCOMMENTS,
+    A.BRCHREWORK,
+    A.HOVERIFYOPER,
+    A.HOVERIFYDATE,
+    A.HOVERIFYCOMMENTS,
+    A.HOVERIFYREMARKS,
+    A.HOVERIFYREWORK,
+    A.HOAPPROVEOPER,
+    A.HOAPPROVEDATE,
+    A.HOAPPROVEREMARKS,
+    A.HOCOMPLYREWORK,
+    A.UPDATEDATE,
+    A.UPDATETIME,
+    B.SUBTYPE,
+    B.OPERATOR,
+    B.REMARKS AS HIS_REMARKS,
+    0 AS HOEREJ,
+    0 AS HOEDEL,
+    0 AS HOEPDREV,
+    0 AS HOEPDAPPR,
+    0 AS HOEAPPR,
+    0 AS HOEPDNOTE,
+    0 AS HOENOTED,
+    0 AS HOEACCT,
+    0 AS HOEXACCT,
+    0 AS BRHREJ,
+    0 AS BRHDEL,
+    0 AS BRHCOM,
+    0 AS BRHEDD,
+    0 AS BRHAPPR,
+    0 AS BRHACCT,
+    0 AS BRHXACCT,
+    0 AS DELHOE,
+    0 AS DELAP1,
+    0 AS HOENOTED1,
+    0 AS HOEPDNOTE1
+FROM HRCRECS A
+LEFT JOIN HISRECS B
+ON A.ALIAS = B.ALIAS
+AND A.BRCHCODE = B.BRCHCODE
+AND A.ACCTTYPE = B.ACCTTYPE
+AND A.PRIMARYJOINT = B.PRIMARYJOINT
+AND A.CISJOINTID1 = B.CISJOINTID1
+AND A.CISJOINTID2 = B.CISJOINTID2
+AND A.CISJOINTID3 = B.CISJOINTID3
+AND A.CISJOINTID4 = B.CISJOINTID4
+AND A.CISJOINTID5 = B.CISJOINTID5
 """)
 
-# ---------------------------------------------------------------------
-# Split into 3 account categories
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------
+# APPLY STATUS LOGIC
+# -------------------------------------------------------------------
 con.execute("""
-    CREATE TABLE MRGCISDP AS
-    SELECT * FROM MERGED WHERE ACCTCODE = 'DP'
-    ORDER BY ACCTNO;
+UPDATE MRGHRC
+SET HOEREJ = CASE WHEN APPROVALSTATUS = '01' THEN 1 ELSE 0 END,
+    HOEAPPR = CASE WHEN APPROVALSTATUS = '02' THEN 1 ELSE 0 END,
+    HOEPDAPPR = CASE WHEN APPROVALSTATUS = '03' THEN 1 ELSE 0 END,
+    HOEPDREV = CASE WHEN APPROVALSTATUS = '04' THEN 1 ELSE 0 END,
+    BRHCOM = CASE WHEN APPROVALSTATUS = '05' THEN 1 ELSE 0 END,
+    BRHEDD = CASE WHEN APPROVALSTATUS = '06' THEN 1 ELSE 0 END,
+    BRHDEL = CASE WHEN APPROVALSTATUS = '07' AND (SUBTYPE <> 'HOEDEL' OR SUBTYPE IS NULL) THEN 1 ELSE 0 END,
+    HOEDEL = CASE WHEN APPROVALSTATUS = '07' AND SUBTYPE = 'HOEDEL' THEN 1 ELSE 0 END,
+    BRHAPPR = CASE WHEN APPROVALSTATUS = '08' THEN 1 ELSE 0 END,
+    BRHREJ = CASE WHEN APPROVALSTATUS = '09' THEN 1 ELSE 0 END,
+    DELAP1 = CASE WHEN APPROVALSTATUS = '10' THEN 1 ELSE 0 END,
+    DELHOE = CASE WHEN APPROVALSTATUS = '11' THEN 1 ELSE 0 END
 """)
 
 con.execute("""
-    CREATE TABLE MRGCISLN AS
-    SELECT * FROM MERGED WHERE ACCTCODE = 'LN'
-    ORDER BY ACCTNO;
+UPDATE MRGHRC
+SET
+    HOEACCT = CASE WHEN APPROVALSTATUS = '02' AND ACCTNO <> '' THEN 1 ELSE 0 END,
+    HOEXACCT = CASE WHEN APPROVALSTATUS = '02' AND ACCTNO = '' THEN 1 ELSE 0 END,
+    BRHACCT = CASE WHEN APPROVALSTATUS = '08' AND ACCTNO <> '' THEN 1 ELSE 0 END,
+    BRHXACCT = CASE WHEN APPROVALSTATUS = '08' AND ACCTNO = '' THEN 1 ELSE 0 END,
+    HOEPDNOTE = CASE WHEN APPROVALSTATUS = '08' AND ACCTNO <> '' AND INSTR(HOVERIFYREMARKS, 'Noted by') <= 0 THEN 1 ELSE 0 END,
+    HOENOTED = CASE WHEN APPROVALSTATUS = '08' AND ACCTNO <> '' AND INSTR(HOVERIFYREMARKS, 'Noted by') > 0 THEN 1 ELSE 0 END,
+    HOEPDNOTE1 = CASE WHEN APPROVALSTATUS = '08' AND ACCTNO <> '' 
+                          AND ACCTTYPE IN ('CA','FD','FC','SDB') 
+                          AND INSTR(HOVERIFYREMARKS, 'Noted by') <= 0 THEN 1 ELSE 0 END,
+    HOENOTED1 = CASE WHEN APPROVALSTATUS = '08' AND ACCTNO <> '' 
+                          AND ACCTTYPE IN ('CA','FD','FC','SDB') 
+                          AND INSTR(HOVERIFYREMARKS, 'Noted by') > 0 THEN 1 ELSE 0 END
 """)
 
-con.execute("""
-    CREATE TABLE MRGCISOT AS
-    SELECT * FROM MERGED WHERE ACCTCODE NOT IN ('DP','LN')
-    ORDER BY ACCTNO;
-""")
+# -------------------------------------------------------------------
+# BRANCH SUMMARY
+# -------------------------------------------------------------------
+summary_arrow = con.execute("""
+SELECT
+    BRCHCODE,
+    SUM(HOEREJ) AS HOEREJ,
+    SUM(HOEDEL) AS HOEDEL,
+    SUM(HOEPDREV) AS HOEPDREV,
+    SUM(HOEPDAPPR) AS HOEPDAPPR,
+    SUM(HOEAPPR) AS HOEAPPR,
+    SUM(HOEPDNOTE) AS HOEPDNOTE,
+    SUM(HOEACCT) AS HOEACCT,
+    SUM(HOEXACCT) AS HOEXACCT,
+    SUM(BRHREJ) AS BRHREJ,
+    SUM(BRHDEL) AS BRHDEL,
+    SUM(BRHCOM) AS BRHCOM,
+    SUM(BRHEDD) AS BRHEDD,
+    SUM(BRHAPPR) AS BRHAPPR,
+    SUM(BRHACCT) AS BRHACCT,
+    SUM(BRHXACCT) AS BRHXACCT,
+    SUM(DELAP1) AS DELAP1,
+    SUM(DELHOE) AS DELHOE,
+    SUM(HOENOTED) AS HOENOTED,
+    SUM(HOENOTED1) AS HOENOTED1,
+    SUM(HOEPDNOTE1) AS HOEPDNOTE1,
+    COUNT(*) AS TOTAL
+FROM MRGHRC
+GROUP BY BRCHCODE
+ORDER BY BRCHCODE
+""").arrow()
 
-# ---------------------------------------------------------------------
-# Output as Parquet and CSV
-# ---------------------------------------------------------------------
-con.execute(f"COPY MRGCISDP TO '{out_dp_parquet}' (FORMAT PARQUET);")
-con.execute(f"COPY MRGCISLN TO '{out_ln_parquet}' (FORMAT PARQUET);")
-con.execute(f"COPY MRGCISOT TO '{out_ot_parquet}' (FORMAT PARQUET);")
+# -------------------------------------------------------------------
+# WRITE OUTPUT PARQUET & CSV
+# -------------------------------------------------------------------
+pq.write_table(summary_arrow, parquet_out)
+con.execute(f"COPY (SELECT * FROM read_parquet('{parquet_out}')) TO '{csv_out}' (HEADER, DELIMITER ',');")
 
-con.execute(f"COPY MRGCISDP TO '{out_dp_csv}' (HEADER, DELIMITER ',');")
-con.execute(f"COPY MRGCISLN TO '{out_ln_csv}' (HEADER, DELIMITER ',');")
-con.execute(f"COPY MRGCISOT TO '{out_ot_csv}' (HEADER, DELIMITER ',');")
-
-# ---------------------------------------------------------------------
-# Display sample records
-# ---------------------------------------------------------------------
-print("=== HRC WITH DP ACCTS ONLY ===")
-print(con.execute("SELECT * FROM MRGCISDP LIMIT 10;").fetchdf())
-
-print("\n=== HRC WITH LN ACCTS ONLY ===")
-print(con.execute("SELECT * FROM MRGCISLN LIMIT 10;").fetchdf())
-
-print("\n=== HRC WITH OT ACCTS ONLY ===")
-print(con.execute("SELECT * FROM MRGCISOT LIMIT 10;").fetchdf())
+print(f"✅ CIHRCDR1 Report generated for {today}")
+print(f"   Parquet: {parquet_out}")
+print(f"   CSV: {csv_out}")
