@@ -1,74 +1,132 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
+from pathlib import Path
 
-#---------------------------------------------------------------------#
-# CICISRPM - Convert Monthly Report Generation from SAS to Python
-#---------------------------------------------------------------------#
-# Input Parquet: CIS.IDIC.DAILY.RALL → daily_rall.parquet
-# Output: CIS_IDIC_MONTHLY_RPT.txt
-#---------------------------------------------------------------------#
+# ---------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------
+input_hrc = "/host/cis/input/CUSTCODE.parquet"          # HRCFILE
+input_cis = "/host/cis/input/CIS_CUST_DAILY.parquet"    # CISFILE.CUSTDLY
+output_dir = Path("/host/cis/output")
+output_dir.mkdir(parents=True, exist_ok=True)
 
-# === Configuration ===
-input_parquet = "daily_rall.parquet"
-output_txt = "CIS_IDIC_MONTHLY_RPT.txt"
+# Output paths
+out_dp_parquet = output_dir / "HRCCUST_DPACCTS.parquet"
+out_ln_parquet = output_dir / "HRCCUST_LNACCTS.parquet"
+out_ot_parquet = output_dir / "HRCCUST_OTACCTS.parquet"
 
-# === Step 1: Read the Parquet file using DuckDB (no CAST needed) ===
+out_dp_csv = output_dir / "HRCCUST_DPACCTS.csv"
+out_ln_csv = output_dir / "HRCCUST_LNACCTS.csv"
+out_ot_csv = output_dir / "HRCCUST_OTACCTS.csv"
+
+# ---------------------------------------------------------------------
+# Connect to DuckDB
+# ---------------------------------------------------------------------
 con = duckdb.connect()
 
-df = con.execute(f"""
+# ---------------------------------------------------------------------
+# Create Tables
+# ---------------------------------------------------------------------
+con.execute(f"""
+    CREATE TABLE HRCCUST AS 
     SELECT 
-        UPDOPER,
         CUSTNO,
-        ACCTNOC,
+        HRCCODES
+    FROM read_parquet('{input_hrc}');
+""")
+
+con.execute(f"""
+    CREATE TABLE CIS AS 
+    SELECT 
+        CUSTBRCH,
+        CUSTNO,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
+        PRISEC,
+        ALIASKEY,
+        ALIAS,
+        ACCTCODE,
+        ACCTNO,
         CUSTNAME,
-        FIELDS,
-        OLDVALUE,
-        NEWVALUE,
-        UPDDATX
-    FROM parquet_scan('{input_parquet}')
-    ORDER BY CUSTNO
-""").fetch_df()
+        CUSTLASTDATECC,
+        CUSTLASTDATEYY,
+        CUSTLASTDATEMM,
+        CUSTLASTDATEDD
+    FROM read_parquet('{input_cis}');
+""")
 
-# === Step 2: Prepare header lines ===
-header_1 = (
-    f"{'USER ID':<20}"
-    f"{'CIS NO':<20}"
-    f"{'ACCOUNT NO':<20}"
-    f"{'CUSTOMER NAME':<40}"
-    f"{'FIELD':<20}"
-    f"{'OLD VALUE':<150}"
-    f"{'NEW VALUE':<150}"
-    f"{'UPDATE DATE':<10}"
-)
+# ---------------------------------------------------------------------
+# Merge HRCCUST and CIS
+# ---------------------------------------------------------------------
+con.execute("""
+    CREATE TABLE MERGED AS
+    SELECT
+        CIS.CUSTBRCH,
+        CIS.CUSTNO,
+        CIS.CUSTNAME,
+        CIS.RACE,
+        CIS.CITIZENSHIP,
+        CIS.INDORG,
+        CIS.PRISEC,
+        CASE 
+            WHEN CIS.PRISEC = 901 THEN 'P'
+            WHEN CIS.PRISEC = 902 THEN 'S'
+            ELSE '' 
+        END AS PRIMSEC,
+        CIS.CUSTLASTDATECC,
+        CIS.CUSTLASTDATEYY,
+        CIS.CUSTLASTDATEMM,
+        CIS.CUSTLASTDATEDD,
+        CIS.ALIASKEY,
+        CIS.ALIAS,
+        HRCCUST.HRCCODES,
+        CIS.ACCTCODE,
+        CIS.ACCTNO
+    FROM CIS
+    JOIN HRCCUST
+    ON CIS.CUSTNO = HRCCUST.CUSTNO;
+""")
 
-header_2 = (
-    f"{'-'*7:<20}"
-    f"{'-'*6:<20}"
-    f"{'-'*10:<20}"
-    f"{'-'*13:<40}"
-    f"{'-'*5:<20}"
-    f"{'-'*9:<150}"
-    f"{'-'*9:<150}"
-    f"{'-'*11:<10}"
-)
+# ---------------------------------------------------------------------
+# Split into 3 account categories
+# ---------------------------------------------------------------------
+con.execute("""
+    CREATE TABLE MRGCISDP AS
+    SELECT * FROM MERGED WHERE ACCTCODE = 'DP'
+    ORDER BY ACCTNO;
+""")
 
-# === Step 3: Write to fixed-length text file ===
-with open(output_txt, "w", encoding="utf-8") as f:
-    f.write(header_1 + "\n")
-    f.write(header_2 + "\n")
+con.execute("""
+    CREATE TABLE MRGCISLN AS
+    SELECT * FROM MERGED WHERE ACCTCODE = 'LN'
+    ORDER BY ACCTNO;
+""")
 
-    for _, row in df.iterrows():
-        line = (
-            f"{(row['UPDOPER'] or ''):<20}"
-            f"{(row['CUSTNO'] or ''):<20}"
-            f"{(row['ACCTNOC'] or ''):<20}"
-            f"{(row['CUSTNAME'] or ''):<40}"
-            f"{(row['FIELDS'] or ''):<20}"
-            f"{(row['OLDVALUE'] or ''):<150}"
-            f"{(row['NEWVALUE'] or ''):<150}"
-            f"{(row['UPDDATX'] or ''):<10}"
-        )
-        f.write(line + "\n")
+con.execute("""
+    CREATE TABLE MRGCISOT AS
+    SELECT * FROM MERGED WHERE ACCTCODE NOT IN ('DP','LN')
+    ORDER BY ACCTNO;
+""")
 
-print(f"✅ Report generated successfully: {output_txt}")
+# ---------------------------------------------------------------------
+# Output as Parquet and CSV
+# ---------------------------------------------------------------------
+con.execute(f"COPY MRGCISDP TO '{out_dp_parquet}' (FORMAT PARQUET);")
+con.execute(f"COPY MRGCISLN TO '{out_ln_parquet}' (FORMAT PARQUET);")
+con.execute(f"COPY MRGCISOT TO '{out_ot_parquet}' (FORMAT PARQUET);")
+
+con.execute(f"COPY MRGCISDP TO '{out_dp_csv}' (HEADER, DELIMITER ',');")
+con.execute(f"COPY MRGCISLN TO '{out_ln_csv}' (HEADER, DELIMITER ',');")
+con.execute(f"COPY MRGCISOT TO '{out_ot_csv}' (HEADER, DELIMITER ',');")
+
+# ---------------------------------------------------------------------
+# Display sample records
+# ---------------------------------------------------------------------
+print("=== HRC WITH DP ACCTS ONLY ===")
+print(con.execute("SELECT * FROM MRGCISDP LIMIT 10;").fetchdf())
+
+print("\n=== HRC WITH LN ACCTS ONLY ===")
+print(con.execute("SELECT * FROM MRGCISLN LIMIT 10;").fetchdf())
+
+print("\n=== HRC WITH OT ACCTS ONLY ===")
+print(con.execute("SELECT * FROM MRGCISOT LIMIT 10;").fetchdf())
