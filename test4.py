@@ -1,3 +1,5 @@
-Challenge 5: Change few time Programming framework
--	From starting until now the framework already change 3 times.
--	From Pandas  Polars  Duckdb, the program same need to change 3 times to fix the framework
+Challenge 5: Frequent Changes in Programming Framework
+
+Since the beginning of the project, the programming framework has been changed three times.
+
+The development has transitioned from Pandas → Polars → DuckDB, requiring the same program to be redone each time to ensure compatibility with the new framework.
