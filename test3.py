@@ -5,103 +5,118 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-#---------------------------------------------------------------------#
-# Original Program: CIHRCPUR                                          #
-#---------------------------------------------------------------------#
-# ESMR 2023-0862 PURGE HRC RECORDS MORE THAN 60 DAYS FROM DB2         #
-#                WITH APPROVAL STATUS '05' OR '06'                    #
-#---------------------------------------------------------------------#
-
-# ---------------------------
+# ---------------------------------------------------------------------
 # Connect to DuckDB
-# ---------------------------
+# ---------------------------------------------------------------------
 con = duckdb.connect()
 
 # ---------------------------------------------------------------------
-# STEP 1: FILTER DATA (equivalent to SAS DATA step)
+# Input Parquet file paths
 # ---------------------------------------------------------------------
-# Apply the same filters and computed columns
 con.execute(f"""
-    CREATE TABLE hrc_filtered AS
-    SELECT
-        *,
-        substring(UPDATEDATE, 1, 4) AS UPDDATE,
-        CASE 
-            WHEN ACCTNO != ' ' AND POSITION('Noted by' IN HOVERIFYREMARKS) <= 0 THEN 1 
-            ELSE 0 
-        END AS HOEPDNOTE,
-        CASE 
-            WHEN ACCTNO != ' ' AND POSITION('Noted by' IN HOVERIFYREMARKS) > 0 THEN 1 
-            ELSE 0 
-        END AS HOENOTED
+    CREATE OR REPLACE TABLE INDATA AS 
+    SELECT * 
     FROM '{host_parquet_path("UNLOAD_CIHRCAPT_FB.parquet")}'
-    WHERE UPDDATE = '{year}'
-      AND ACCTTYPE IN ('CA','SA','SDB','FD','FC','FCI','O','FDF')
-      AND APPROVALSTATUS = '08'
 """)
 
-print("STEP 1:")
-print(con.execute("SELECT * FROM hrc_filtered LIMIT 500").fetchdf())
+# ---------------------------------------------------------------------
+# Queries (same logic as SAS)
+# ---------------------------------------------------------------------
+queries = {
+    "CIHRCFZX_HRC03": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '03'
+        ORDER BY BRCHCODE, CREATIONDATE, ALIAS
+    """,
+    "CIHRCFZX_HRC04": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '04'
+        ORDER BY BRCHCODE, CREATIONDATE, ALIAS
+    """,
+    "CIHRCFZX_HRC05": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '05'
+        ORDER BY BRCHCODE, CREATIONDATE, ALIAS
+    """,
+    "CIHRCFZX_HRC06": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '06'
+        ORDER BY BRCHCODE, CREATIONDATE, ALIAS
+    """,
+}
 
 # ---------------------------------------------------------------------
-# STEP 2: SUMMARY BY BRANCH
+# SAS-style titles for each report
 # ---------------------------------------------------------------------
+titles = {
+    "CIHRCFZX_HRC03": "HRC LISTING FOR 03 PENDING APPROVAL",
+    "CIHRCFZX_HRC04": "HRC LISTING FOR 04 PENDING REVIEW(HO)",
+    "CIHRCFZX_HRC05": "HRC LISTING FOR 05 PENDING CANCELLATION",
+    "CIHRCFZX_HRC06": "HRC LISTING FOR 06 PENDING CANCELLATION (HO)",
+    "UNLOAD_CIHRCAPT_DAY": "HRC DELETE MORE THAN 60 DAYS REPORT",
+}
+
+# ---------------------------------------------------------------------
+# Export logic (Parquet + TXT with title and header)
+# ---------------------------------------------------------------------
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+    txt_output_path = csv_path
+    if txt_output_path.lower().endswith('.csv'):
+        txt_path = txt_output_path[:-4] + '.txt'
+    else:
+        txt_path = txt_output_path + '.txt'
+
+    # 1️⃣ Export Parquet (structured output)
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    """)
+
+    # 2️⃣ Export TXT (human-readable report with title)
+    df = con.execute(query).fetchdf()
+
+    # Write title + header + data to TXT
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(f"{titles[name]}\n")
+        f.write(",".join(df.columns) + "\n")
+        df.to_csv(f, index=False, header=False)
+
+    print(f"✅ {name} exported to TXT and Parquet successfully.")
+
+# ---------------------------------------------------------------------
+# Combined OUT dataset (like SAS OUT)
+# ---------------------------------------------------------------------
+out_query = f"""
+    SELECT *
+          ,{year} AS year
+          ,{month} AS month
+          ,{day} AS day
+    FROM INDATA
+"""
+
+parquet_path = parquet_output_path("UNLOAD_CIHRCAPT_DAY")
+txt_path = txt_output_path("UNLOAD_CIHRCAPT_DAY")
+
+# Export Parquet
 con.execute(f"""
-    CREATE TABLE SUMMARY AS
-    SELECT 
-        BRCHCODE,
-        SUM(HOEPDNOTE) AS HOEPDNOTE,
-        SUM(HOENOTED) AS HOENOTED,
-        SUM(HOEPDNOTE + HOENOTED) AS TOTALX
-    FROM hrc_filtered
-    GROUP BY BRCHCODE
-    ORDER BY BRCHCODE
+    COPY ({out_query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
 """)
 
-print("STEP 2:")
-print(con.execute("SELECT * FROM SUMMARY LIMIT 500").fetchdf())
+# Export TXT
+df_out = con.execute(out_query).fetchdf()
+with open(txt_path, "w", encoding="utf-8") as f:
+    f.write(f"{titles['HRC_DELETE_MORE60D']}\n")
+    f.write(",".join(df_out.columns) + "\n")
+    df_out.to_csv(f, index=False, header=False)
 
-# ---------------------------------------------------------------------
-# STEP 3: WRITE OUTPUT TO TXT (SAS-LIKE FORMAT)
-# ---------------------------------------------------------------------
-# output "name" used by helper functions
-OUT_NAME = "CISHRC_STATUS_YEARLY"
-# Decide txt file path:
-csv_path = csv_output_path(OUT_NAME)
-txt_path = csv_path
-if txt_path.lower().endswith('.csv'):
-    txt_path = txt_path[:-4] + '.txt'
-else:
-    txt_path = txt_path + '.txt'
-
-# Fetch rows from SUMMARY (we used the same SELECT as out1 but without year/month/day)
-rows = con.execute("""
-    SELECT BRCHCODE, HOEPDNOTE, HOENOTED, TOTALX
-    FROM SUMMARY
-    ORDER BY BRCHCODE
-""").fetchall()
-
-header = (
-    f"{'BRANCH':<7}"
-    ",HOE PEND NOTE  ,HOE NOTED  ,TOTAL"
-)
-
-def z8(val):
-    try:
-        ival = int(val)
-    except Exception:
-        ival = 0
-    return f"{ival:0>8d}"  # zero-padded width 8
-
-with open(txt_path, 'w', encoding='utf-8') as f:
-    # write header line (SAS prints header only once at _N_=1)
-    f.write(header + "\n")
-    for r in rows:
-        brchcode = (r[0] or "").ljust(7)[:7]
-        parts = [
-            brchcode, ", ",
-            z8(r[1]), ", ",
-            z8(r[2]), ", ",
-            z8(r[3])
-        ]
-        f.write("".join(parts) + "\n")
+print("✅ HRC_DELETE_MORE60D exported successfully.")
+print("🎉 All reports generated successfully.")
