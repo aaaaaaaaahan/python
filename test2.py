@@ -1,130 +1,129 @@
 import duckdb
 import pyarrow.parquet as pq
 import pyarrow as pa
+import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------
-# Job: CIHRCOT1  |  Converted from SAS to Python + DuckDB
-# Purpose: Process high-risk customer OT account declarations
-# Split by first character of COSTCTR into:
-#   PBB  (Conventional) = COSTCTR[1] <> '3'
-#   PIBB (Islamic)       = COSTCTR[1] = '3'
+# Program: CIHRCPUR (Converted from SAS)
+# Purpose: Select accounts with approval status in ('05','06')
+#          and created more than 60 days ago
 # ---------------------------------------------------------------------
 
-# === CONFIGURATION ===
-input_dir = Path("/host/cis/input")
-output_dir = Path("/host/cis/output")
+# File paths (adjust to your environment)
+input_parquet = Path("/data/UNLOAD.CIHRCAPT.parquet")
+output_parquet = Path("/output/HRC_DELETE_MORE60D.parquet")
+output_csv = Path("/output/HRC_DELETE_MORE60D.csv")
 
-# Input Parquet files (already converted)
-hrcstot_parquet = input_dir / "HRCSTOT.parquet"    # CIS.HRCCUST.OTACCTS
-otfile_parquet = input_dir / "OTFILE.parquet"      # UNLOAD.CIACCTT.FB
-
-# Output Parquet/CSV files
-good_path = output_dir / "OTACCTS_GOOD.parquet"
-bad_path = output_dir / "OTACCTS_CLOSED.parquet"
-good_csv = output_dir / "OTACCTS_GOOD.csv"
-bad_csv = output_dir / "OTACCTS_CLOSED.csv"
-
-good_pbb_path = output_dir / "OTACCTS_GOOD_PBB.parquet"
-good_pibb_path = output_dir / "OTACCTS_GOOD_PIBB.parquet"
-
-# Create DuckDB connection
+# Connect to DuckDB (in-memory)
 con = duckdb.connect()
 
 # ---------------------------------------------------------------------
-# Step 1: Load Input Tables
+# Step 1: Define cutoff date (today - 60 days)
+# ---------------------------------------------------------------------
+start_date = (datetime.date.today() - datetime.timedelta(days=60)).strftime("%Y-%m-%d")
+
+# ---------------------------------------------------------------------
+# Step 2: Load input parquet (already converted from FB file)
 # ---------------------------------------------------------------------
 con.execute(f"""
-    CREATE OR REPLACE TABLE CISOT AS
+    CREATE OR REPLACE TABLE HRC AS
     SELECT 
-        BANKNUM,
-        CUSTBRCH,
-        CUSTNO,
-        CUSTNAME,
-        RACE,
-        CITIZENSHIP,
-        INDORG,
-        PRIMSEC,
-        CUSTLASTDATECC,
-        CUSTLASTDATEYY,
-        CUSTLASTDATEMM,
-        CUSTLASTDATEDD,
-        ALIASKEY,
         ALIAS,
-        HRCCODES,
-        ACCTCODE,
-        ACCTNO
-    FROM read_parquet('{hrcstot_parquet}')
-""")
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE OTDATA AS
-    SELECT DISTINCT
-        ACCTCODE,
+        BRCHCODE,
+        ACCTTYPE,
+        APPROVALSTATUS,
         ACCTNO,
-        ACCSTAT,
-        BRANCH,
-        COSTCTR,
-        REPLACE(OPENDATE, '-', '') AS OPDATE,
-        REPLACE(CLSDATE, '-', '') AS CLDATE
-    FROM read_parquet('{otfile_parquet}')
+        CISNO,
+        CREATIONDATE,
+        PRIMARYJOINT,
+        CISJOINTID1,
+        CISJOINTID2,
+        CISJOINTID3,
+        CISJOINTID4,
+        CISJOINTID5,
+        CUSTTYPE,
+        CUSTNAME,
+        CUSTGENDER,
+        CUSTDOBDOR,
+        CUSTEMPLOYER,
+        CUSTADDR1,
+        CUSTADDR2,
+        CUSTADDR3,
+        CUSTADDR4,
+        CUSTADDR5,
+        CUSTPHONE,
+        CUSTPEP,
+        DTCORGUNIT,
+        DTCINDUSTRY,
+        DTCNATION,
+        DTCOCCUP,
+        DTCACCTTYPE,
+        TEMPCOMPFORM,
+        DTCWEIGHTAGE,
+        DTCTOTAL,
+        DTCSCORE1,
+        DTCSCORE2,
+        DTCSCORE3,
+        DTCSCORE4,
+        DTCSCORE5,
+        DTCSCORE6,
+        ACCTPURPOSE,
+        ACCTREMARKS,
+        SOURCEFUND,
+        SOURCEDETAILS,
+        PEPINFO,
+        PEPWEALTH,
+        PEPFUNDS,
+        BRCHRECOMDETAILS,
+        BRCHREWORK,
+        HOVERIFYDATE,
+        HOAPPROVEDATE,
+        UPDATEDATE,
+        UPDATETIME
+    FROM read_parquet('{input_parquet}')
+    WHERE APPROVALSTATUS IN ('05','06')
 """)
 
 # ---------------------------------------------------------------------
-# Step 2: Merge & Classify GOOD / BAD OT Accounts
+# Step 3: Convert CREATIONDATE to date type and filter older than 60 days
+# ---------------------------------------------------------------------
+con.execute(f"""
+    CREATE OR REPLACE TABLE TODEL AS
+    SELECT *
+    FROM HRC
+    WHERE try_cast(CREATIONDATE AS DATE) < DATE '{start_date}'
+""")
+
+# ---------------------------------------------------------------------
+# Step 4: Select only required output fields
 # ---------------------------------------------------------------------
 con.execute("""
-    CREATE OR REPLACE TABLE MERGED AS
-    SELECT 
-        A.*,
-        B.BANKNUM, B.CUSTBRCH, B.CUSTNO, B.CUSTNAME,
-        B.RACE, B.CITIZENSHIP, B.INDORG, B.PRIMSEC,
-        B.CUSTLASTDATECC, B.CUSTLASTDATEYY, B.CUSTLASTDATEMM, B.CUSTLASTDATEDD,
-        B.ALIASKEY, B.ALIAS, B.HRCCODES
-    FROM OTDATA A
-    JOIN CISOT B USING (ACCTNO)
-""")
-
-# GOOD: ACCSTAT not in ('C','B','P','Z') and ACCTNO not blank
-con.execute("""
-    CREATE OR REPLACE TABLE GOODOT AS
-    SELECT * FROM MERGED
-    WHERE ACCSTAT NOT IN ('C','B','P','Z') AND ACCTNO <> ''
-""")
-
-# BAD: Remaining or closed
-con.execute("""
-    CREATE OR REPLACE TABLE BADOT AS
-    SELECT * FROM MERGED
-    WHERE ACCSTAT IN ('C','B','P','Z') OR ACCTNO = ''
+    CREATE OR REPLACE TABLE OUT AS
+    SELECT
+        ALIAS,
+        BRCHCODE,
+        ACCTTYPE,
+        APPROVALSTATUS,
+        ACCTNO,
+        CISNO,
+        CREATIONDATE,
+        PRIMARYJOINT,
+        CISJOINTID1,
+        CISJOINTID2,
+        CISJOINTID3,
+        CISJOINTID4,
+        CISJOINTID5
+    FROM TODEL
+    ORDER BY ALIAS
 """)
 
 # ---------------------------------------------------------------------
-# Step 3: Write Outputs (GOOD, BAD)
+# Step 5: Export results to Parquet and CSV
 # ---------------------------------------------------------------------
-con.execute(f"COPY GOODOT TO '{good_path}' (FORMAT PARQUET)")
-con.execute(f"COPY BADOT TO '{bad_path}' (FORMAT PARQUET)")
-con.execute(f"COPY GOODOT TO '{good_csv}' (HEADER, DELIMITER ',')")
-con.execute(f"COPY BADOT TO '{bad_csv}' (HEADER, DELIMITER ',')")
+con.execute(f"COPY OUT TO '{output_parquet}' (FORMAT PARQUET)")
+con.execute(f"COPY OUT TO '{output_csv}' (HEADER, DELIMITER ',')")
 
-# ---------------------------------------------------------------------
-# Step 4: Split GOOD accounts into PBB and PIBB using first char of COSTCTR
-# COSTCTR[1] = '3' → PIBB (Islamic)
-# COSTCTR[1] <> '3' → PBB (Conventional)
-# ---------------------------------------------------------------------
-con.execute("""
-    CREATE OR REPLACE TABLE OTCONV AS
-    SELECT * FROM GOODOT WHERE SUBSTR(COSTCTR, 1, 1) <> '3'
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE OTPIBB AS
-    SELECT * FROM GOODOT WHERE SUBSTR(COSTCTR, 1, 1) = '3'
-""")
-
-# Write to Parquet
-con.execute(f"COPY OTCONV TO '{good_pbb_path}' (FORMAT PARQUET)")
-con.execute(f"COPY OTPIBB TO '{good_pibb_path}' (FORMAT PARQUET)")
-
-print("✅ CIHRCOT1 conversion complete.")
-print(f"Outputs saved in: {output_dir}")
+# Optional: Preview first few rows
+print(con.execute("SELECT * FROM OUT LIMIT 5").df())
+print(f"\n✅ Output generated:\n- {output_parquet}\n- {output_csv}")
