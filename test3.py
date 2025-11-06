@@ -4,7 +4,6 @@ import datetime
 
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
-yyyy = batch_date.strftime("%Y")
 
 #---------------------------------------------------------------------#
 # Original Program: CIHRCPUR                                          #
@@ -27,7 +26,6 @@ con.execute(f"""
     SELECT
         *,
         substring(UPDATEDATE, 1, 4) AS UPDDATE,
-        CASE WHEN APPROVALSTATUS != '08' THEN 0 ELSE 1 END AS VALID_STATUS,
         CASE 
             WHEN ACCTNO != ' ' AND POSITION('Noted by' IN HOVERIFYREMARKS) <= 0 THEN 1 
             ELSE 0 
@@ -37,10 +35,13 @@ con.execute(f"""
             ELSE 0 
         END AS HOENOTED
     FROM '{host_parquet_path("UNLOAD_CIHRCAPT_FB.parquet")}'
-    WHERE substring(UPDATEDATE, 1, 4) = '{yyyy}'
+    WHERE UPDDATE = '{year}'
       AND ACCTTYPE IN ('CA','SA','SDB','FD','FC','FCI','O','FDF')
       AND APPROVALSTATUS = '08'
 """)
+
+print("STEP 1:")
+print(con.execute("SELECT * FROM hrc_filtered LIMIT 500").fetchdf())
 
 # ---------------------------------------------------------------------
 # STEP 2: SUMMARY BY BRANCH
@@ -56,6 +57,9 @@ con.execute(f"""
     GROUP BY BRCHCODE
     ORDER BY BRCHCODE
 """)
+
+print("STEP 2:")
+print(con.execute("SELECT * FROM SUMMARY LIMIT 500").fetchdf())
 
 # ---------------------------------------------------------------------
 # STEP 3: WRITE OUTPUT TO TXT (SAS-LIKE FORMAT)
@@ -78,8 +82,8 @@ rows = con.execute("""
 """).fetchall()
 
 header = (
-    f"{'BRANCH':<7}" +
-    "HOE PEND NOTE, HOE NOTED, TOTALX"
+    f"{'BRANCH':<7}"
+    "HOE PEND NOTE  HOE NOTED  TOTAL"
 )
 
 def z8(val):
