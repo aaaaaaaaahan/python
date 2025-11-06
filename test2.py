@@ -1,106 +1,144 @@
+# ---------------------------------------------------------------
+# CIHRCFZX Conversion (SAS → Python using DuckDB + PyArrow)
+# ---------------------------------------------------------------
+# This program reads input Parquet files, filters data into
+# multiple output reports (HRC03, HRC04, HRC05, HRC06),
+# and writes each to both Parquet and TXT.
+# TXT includes SAS-style title + column headers + data.
+# ---------------------------------------------------------------
+
 import duckdb
-import datetime
-from pathlib import Path
+import os
+from datetime import datetime
+import pandas as pd
 
 # ---------------------------------------------------------------------
-# Job: CIHRCYRP  -  YEARLY HRC SUMMARY REPORT BY STATUS
+# Helper functions for output paths
 # ---------------------------------------------------------------------
+def parquet_output_path(name):
+    return f"output/{name}.parquet"
 
-# Define file paths (update these paths as needed)
-input_parquet = Path("input/UNLOAD_CIHRCAPT_FB.parquet")
-ctrl_file = Path("input/SRSCTRL1.parquet")
-output_parquet = Path("output/CISHRC_STATUS_YEARLY.parquet")
-output_csv = Path("output/CISHRC_STATUS_YEARLY.csv")
+def txt_output_path(name):
+    return f"output/{name}.txt"
 
-# ---------------------------------------------------------------------
-# STEP 1: GET TODAY’S REPORT DATE
-# ---------------------------------------------------------------------
-ctrl_df = duckdb.query(f"SELECT * FROM read_parquet('{ctrl_file}')").to_df()
-# Assuming ctrl_file has columns SRSYY, SRSMM, SRSDD
-srs_year = int(ctrl_df.iloc[0]['SRSYY'])
-srs_month = int(ctrl_df.iloc[0]['SRSMM'])
-srs_day = int(ctrl_df.iloc[0]['SRSDD'])
-
-today = datetime.date(srs_year, srs_month, srs_day)
-yyyy = today.strftime("%Y")
-yyyymm = today.strftime("%Y%m")
-today_str = today.strftime("%Y-%m-%d")
-
-print(f"Reporting Date: {today_str}  (YYYY={yyyy}, YYYYMM={yyyymm})")
+# Ensure output folder exists
+os.makedirs("output", exist_ok=True)
 
 # ---------------------------------------------------------------------
-# STEP 2: CONNECT DUCKDB AND LOAD INPUT FILE
+# Runtime date info
+# ---------------------------------------------------------------------
+today = datetime.now()
+year = today.year
+month = today.month
+day = today.day
+
+# ---------------------------------------------------------------------
+# Connect to DuckDB
 # ---------------------------------------------------------------------
 con = duckdb.connect()
 
+# ---------------------------------------------------------------------
+# Input Parquet file paths
+# ---------------------------------------------------------------------
+INPUT_PATH = "input/UNLOAD_CIHRCAPT.parquet"
+CTRL_PATH  = "input/CTRLDATE.parquet"
+
+con.execute(f"CREATE OR REPLACE TABLE INDATA AS SELECT * FROM read_parquet('{INPUT_PATH}')")
+con.execute(f"CREATE OR REPLACE TABLE CTRL AS SELECT * FROM read_parquet('{CTRL_PATH}')")
+
+# ---------------------------------------------------------------------
+# Queries (same logic as SAS)
+# ---------------------------------------------------------------------
+queries = {
+    "HRC03": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '03'
+        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
+    """,
+    "HRC04": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '04'
+        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
+    """,
+    "HRC05": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '05'
+        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
+    """,
+    "HRC06": f"""
+        SELECT *, {year} AS year, {month} AS month, {day} AS day
+        FROM INDATA
+        WHERE APPROVALSTATUS = '06'
+        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
+    """,
+}
+
+# ---------------------------------------------------------------------
+# SAS-style titles for each report
+# ---------------------------------------------------------------------
+titles = {
+    "HRC03": "HRC LISTING FOR 03 PENDING APPROVAL",
+    "HRC04": "HRC LISTING FOR 04 PENDING REVIEW(HO)",
+    "HRC05": "HRC LISTING FOR 05 PENDING CANCELLATION",
+    "HRC06": "HRC LISTING FOR 06 PENDING CANCELLATION (HO)",
+    "HRC_DELETE_MORE60D": "HRC DELETE MORE THAN 60 DAYS REPORT",
+}
+
+# ---------------------------------------------------------------------
+# Export logic (Parquet + TXT with title and header)
+# ---------------------------------------------------------------------
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    txt_path = txt_output_path(name)
+
+    # 1️⃣ Export Parquet (structured output)
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    """)
+
+    # 2️⃣ Export TXT (human-readable report with title)
+    df = con.execute(query).fetchdf()
+
+    # Write title + header + data to TXT
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(f"{titles[name]}\n")
+        f.write(",".join(df.columns) + "\n")
+        df.to_csv(f, index=False, header=False)
+
+    print(f"✅ {name} exported to TXT and Parquet successfully.")
+
+# ---------------------------------------------------------------------
+# Combined OUT dataset (like SAS OUT)
+# ---------------------------------------------------------------------
+out_query = f"""
+    SELECT *
+          ,{year} AS year
+          ,{month} AS month
+          ,{day} AS day
+    FROM INDATA
+"""
+
+parquet_path = parquet_output_path("HRC_DELETE_MORE60D")
+txt_path = txt_output_path("HRC_DELETE_MORE60D")
+
+# Export Parquet
 con.execute(f"""
-    CREATE TABLE hrc AS
-    SELECT * FROM read_parquet('{input_parquet}');
+    COPY ({out_query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
 """)
 
-# ---------------------------------------------------------------------
-# STEP 3: FILTER DATA (equivalent to SAS DATA step)
-# ---------------------------------------------------------------------
-# Apply the same filters and computed columns
-query_filtered = f"""
-    SELECT
-        *,
-        substring(UPDATEDATE, 1, 4) AS UPDDATE,
-        CASE WHEN APPROVALSTATUS != '08' THEN 0 ELSE 1 END AS VALID_STATUS,
-        CASE 
-            WHEN ACCTNO != ' ' AND POSITION('Noted by' IN HOVERIFYREMARKS) <= 0 THEN 1 
-            ELSE 0 
-        END AS HOEPDNOTE,
-        CASE 
-            WHEN ACCTNO != ' ' AND POSITION('Noted by' IN HOVERIFYREMARKS) > 0 THEN 1 
-            ELSE 0 
-        END AS HOENOTED
-    FROM hrc
-    WHERE substring(UPDATEDATE, 1, 4) = '{yyyy}'
-      AND ACCTTYPE IN ('CA','SA','SDB','FD','FC','FCI','O','FDF')
-      AND APPROVALSTATUS = '08'
-"""
+# Export TXT
+df_out = con.execute(out_query).fetchdf()
+with open(txt_path, "w", encoding="utf-8") as f:
+    f.write(f"{titles['HRC_DELETE_MORE60D']}\n")
+    f.write(",".join(df_out.columns) + "\n")
+    df_out.to_csv(f, index=False, header=False)
 
-con.execute(f"CREATE TABLE hrc_filtered AS {query_filtered}")
-
-print("Filtered data preview:")
-print(con.execute("SELECT * FROM hrc_filtered LIMIT 5").fetchdf())
-
-# ---------------------------------------------------------------------
-# STEP 4: SUMMARY BY BRANCH
-# ---------------------------------------------------------------------
-query_summary = """
-    SELECT 
-        BRCHCODE,
-        SUM(HOEPDNOTE) AS HOEPDNOTE,
-        SUM(HOENOTED) AS HOENOTED,
-        SUM(HOEPDNOTE + HOENOTED) AS TOTALX
-    FROM hrc_filtered
-    GROUP BY BRCHCODE
-    ORDER BY BRCHCODE
-"""
-
-summary_df = con.execute(query_summary).fetchdf()
-
-print("Report Summary Preview:")
-print(summary_df.head())
-
-# ---------------------------------------------------------------------
-# STEP 5: OUTPUT TO PARQUET AND CSV
-# ---------------------------------------------------------------------
-# Save outputs
-summary_table = con.execute(query_summary).arrow()
-import pyarrow.parquet as pq
-
-pq.write_table(summary_table, output_parquet)
-summary_df.to_csv(output_csv, index=False)
-
-print(f"\n✅ Output files generated:")
-print(f"- Parquet: {output_parquet}")
-print(f"- CSV: {output_csv}")
-
-# Optional: print sample formatted text output
-print("\nSample Output Format:")
-print("BRANCH, HOE PEND NOTE, HOE NOTED, TOTAL")
-for _, row in summary_df.head(5).iterrows():
-    print(f"{row['BRCHCODE']}, {int(row['HOEPDNOTE'])}, {int(row['HOENOTED'])}, {int(row['TOTALX'])}")
+print("✅ HRC_DELETE_MORE60D exported successfully.")
+print("🎉 All reports generated successfully.")
