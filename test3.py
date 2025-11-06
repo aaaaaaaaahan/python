@@ -83,7 +83,7 @@ rows = con.execute("""
 
 header = (
     f"{'BRANCH':<7}"
-    "HOE PEND NOTE  HOE NOTED  TOTAL"
+    ",HOE PEND NOTE  ,HOE NOTED  ,TOTAL"
 )
 
 def z8(val):
