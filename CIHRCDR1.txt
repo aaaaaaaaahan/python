@@ -1,189 +1,122 @@
-//CIHRCOT1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB65417
-//*---------------------------------------------------------------------
-//* ESMR 2010-3600 LIST OF HIGH RISK CUSTOMERS
-//* WITH RELATED OTHER ACCOUNTS(EXCLUDE CLOSED ACCT STATUS ONLY)
-//* SPLIT INTO PBB AND PIBB BY COST CENTRE
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DELE1    DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE2    DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.CLOSED,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE3    DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD.PBB,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE4    DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD.PIBB,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* PROCESSES STARTS HERE
-//*---------------------------------------------------------------------
-//OTACCTS  EXEC SAS609,REGION=4M,WORK='50000,50000'
-//IEFRDER   DD DUMMY
-//*OUTPUT FROM CIHRCALL
-//*HRC CUSTOMERS WITH EQC AND CREDIT CARD ACCOUNTS ONLY
-//HRCSTOT   DD DISP=SHR,DSN=RBP2.B033.CIS.HRCCUST.OTACCTS
-//*OUTPUT FROM UNLOAD JOB CIUACCTB
-//OTFILE    DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIACCTT.FB
-//OUTOTGOD  DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//OUTOTBAD  DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.CLOSED,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- /*----------------------------------------------------------------*/
- /*    HIGH RISK CUSTOMERS WITH OT ACCT DECLARATION                */
- /*----------------------------------------------------------------*/
-  DATA CISOT;
-      INFILE HRCSTOT;
-      INPUT  @01   BANKNUM            $3.
-             @04   CUSTBRCH           5.
-             @09   CUSTNO             $11.
-             @20   CUSTNAME           $40.
-             @60   RACE               $1.
-             @61   CITIZENSHIP        $2.
-             @63   INDORG             $1.
-             @64   PRIMSEC            $1.
-             @65   CUSTLASTDATECC     $2.
-             @67   CUSTLASTDATEYY     $2.
-             @69   CUSTLASTDATEMM     $2.
-             @71   CUSTLASTDATEDD     $2.
-             @73   ALIASKEY           $3.
-             @76   ALIAS              $20.
-             @96   HRCCODES           $60.
-             @156  ACCTCODE           $5.
-             @161  ACCTNO             20.;
-  RUN;
-  PROC SORT DATA=CISOT; BY ACCTNO; RUN;
- /*----------------------------------------------------------------*/
- /*    UNLOAD CIACCTB MISCELLANOUS DB2 TABLE                       */
- /*    GET ALL ACTIVE ACCOUNTS(EQC AND CREDIT CARDS)               */
- /*    EXCLUDE CLOSED ACCT STATUS ONLY                             */
- /*----------------------------------------------------------------*/
-  DATA OTDATA;
-      INFILE OTFILE;FORMAT OPDATE 8. CLDATE 8.;
-      INPUT @05    ACCTCODE           $5.
-            @10    ACCTNO             20.
-            @38    ACCSTAT            $1.
-            @39    BRANCH             PD4.
-            @43    COSTCTR            PD4.
-            @117   OPENDATE           $10.
-            @128   CLSDATE            $10.;
-      OPDATE = COMPRESS(OPENDATE,'-');
-      CLDATE = COMPRESS(CLSDATE,'-');
-      OUTPUT;
-  RUN;
-
-  /****IF PRODUCTION CAN USE SAS 9.1 ABOVE VERSION, DUPOUT*****/
-  /*PROC SORT DATA=OTDATA NODUPKEY DUPOUT=OTDUPS; BY ACCTNO; RUN;*/
-  PROC SORT DATA=OTDATA NODUPKEY; BY ACCTNO; RUN;
-  PROC PRINT DATA=OTDATA(OBS=10);TITLE 'MISC ACCOUNT DETAILS ';
-  RUN;
-
-  DATA GOODOT BADOT;
-      MERGE OTDATA(IN=A) CISOT(IN=B); BY ACCTNO;
-      IF A AND B THEN DO;
-         IF (ACCSTAT NE 'C' AND ACCSTAT NE 'B' AND ACCSTAT NE 'P' AND
-             ACCSTAT NE 'Z' AND ACCTNO NE ' ' ) THEN
-            OUTPUT GOODOT;
-         ELSE DO;
-            OUTPUT BADOT;
-         END;
-      END;
-  RUN;
-
-  PROC SORT DATA=GOODOT; BY CUSTNO ACCTNO; RUN;
-  PROC SORT DATA=BADOT NODUPKEY; BY CUSTNO ACCTNO; RUN;
-
- /*----------------------------------------------------------------*/
- /*   OUTPUT OTHER ACCOUNT DATASET FOR PREPARATION OF REPORTS      */
- /*----------------------------------------------------------------*/
-  DATA TEMPOUT;
-  SET GOODOT;
-  FILE OUTOTGOD;
-     PUT @01   BANKNUM            $3.
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  BRANCH             Z7.
-         @163  ACCTCODE           $5.
-         @168  ACCTNO             20.
-         @188  OPDATE             8.
-       /*@196  LEDBAL             Z13.*/
-         @209  ACCSTAT            $1.
-         @210  COSTCTR            Z4.;
-  RETURN;
-  RUN;
-  DATA TEMPOUT1;
-  SET BADOT;
-  FILE OUTOTBAD;
-     PUT @01   BANKNUM            $3.
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  BRANCH             Z7.
-         @163  ACCTCODE           $5.
-         @168  ACCTNO             20.
-         @188  OPDATE             8.
-       /*@196  LEDBAL             Z13.*/
-         @209  ACCSTAT            $1.
-         @210  COSTCTR            Z4.;
-  RETURN;
-  RUN;
+//CIHRCPUR JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0065217
 //*--------------------------------------------------------------------
-//* SORT FILE TO SEPARATE CONVENTIONAL AND ISLAMIC ACCOUNTS
-//* OTHER ACCOUNTS ( EQC AND CREDIT CARD ACCTS CUSTOMERS )
+//* ESMR 2023-0862 PURGE HRC RECORDS MORE THAN 60 DAYS FROM DB2
+//*                WITH APPROVAL STATUS '05' OR '06'
 //*--------------------------------------------------------------------
-//COVISLOT EXEC PGM=SORT                                                00170000
-//SYSOUT   DD SYSOUT=*                                                  00170000
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
-//SORTIN   DD DISP=SHR,DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD
-//OTCONV   DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD.PBB,               00170000
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB),
-//            SPACE=(CYL,(5,10),RLSE)
-//OTPIBB   DD DSN=RBP2.B033.CIS.HRCCUST.OTACCTS.GOOD.PIBB,              00170000
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB),
-//            SPACE=(CYL,(5,10),RLSE)
-//SYSIN  DD *
- SORT FIELDS=COPY
- OUTFIL INCLUDE=(210,1,CH,NE,C'3'),FNAMES=OTCONV
- OUTFIL INCLUDE=(210,1,CH,EQ,C'3'),FNAMES=OTPIBB
+//* PROCESSING STARTS HERE
+//*--------------------------------------------------------------------
+//GET#CRS  EXEC SAS609
+//HRCUNLD  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIHRCAPT.FB
+//OUTFILE  DD DSN=RBP2.B033.HRC.DELETE.MORE60D(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+
+DATA REPTDATE;
+   STARTDTE = TODAY()-60;
+   CALL SYMPUT('STRTDT',STARTDTE);
+   RUN;
+PROC PRINT;RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    CIHRCAPT UNLOAD DATASET                                     */
+ /*----------------------------------------------------------------*/
+ DATA HRC;
+    INFILE HRCUNLD;
+    INPUT  @001  ALIAS             $40.
+           @041  BRCHCODE           $7.
+           @048  ACCTTYPE           $5.
+           @053  APPROVALSTATUS     $2.
+           @055  ACCTNO            $20.
+           @075  CISNO             $20.
+           @095  CREATIONDATE      $10.
+           @105  PRIMARYJOINT      $40.
+           @145  CISJOINTID1       $40.
+           @185  CISJOINTID2       $40.
+           @225  CISJOINTID3       $40.
+           @265  CISJOINTID4       $40.
+           @305  CISJOINTID5       $40.
+           @345  CUSTTYPE           $1.
+           @346  CUSTNAME         $120.
+           @466  CUSTGENDER        $10.
+           @476  CUSTDOBDOR        $10.
+           @486  CUSTEMPLOYER     $120.
+           @606  CUSTADDR1         $40.
+           @646  CUSTADDR2         $40.
+           @686  CUSTADDR3         $40.
+           @726  CUSTADDR4         $40.
+           @766  CUSTADDR5         $40.
+           @806  CUSTPHONE         $15.
+           @821  CUSTPEP            $1.
+           @822  DTCORGUNIT        $10.
+           @832  DTCINDUSTRY       $10.
+           @842  DTCNATION         $10.
+           @852  DTCOCCUP          $10.
+           @862  DTCACCTTYPE       $10.
+           @872  TEMPCOMPFORM       3.
+           @882  DTCWEIGHTAGE       $1.
+           @883  DTCTOTAL           $5.
+           @888  DTCSCORE1          $5.
+           @893  DTCSCORE2          $5.
+           @898  DTCSCORE3          $5.
+           @903  DTCSCORE4          $5.
+           @908  DTCSCORE5          $5.
+           @913  DTCSCORE6          $5.
+           @918  ACCTPURPOSE        $5.
+           @923  ACCTREMARKS       $60.
+           @983  SOURCEFUND         $5.
+           @988  SOURCEDETAILS     $60.
+           @1048 PEPINFO          $150.
+           @1198 PEPWEALTH         $60.
+           @1258 PEPFUNDS          $60.
+           @1320 BRCHRECOMDETAILS $900.
+           @2220 BRCHEDITOPER       $8.
+           @2228 BRCHAPPROVEOPER    $8.
+           @2236 BRCHCOMMENTS     $150.
+           @2386 BRCHREWORK       $150.
+           @2536 HOVERIFYOPER       $8.
+           @2544 HOVERIFYDATE      $10.
+           @2554 HOVERIFYCOMMENTS $150.
+           @2704 HOVERIFYREMARKS  $150.
+           @2854 HOVERIFYREWORK   $150.
+           @3004 HOAPPROVEOPER      $8.
+           @3012 HOAPPROVEDATE     $10.
+           @3022 HOAPPROVEREMARKS $150.
+           @3172 HOCOMPLYREWORK   $150.
+           @3322 UPDATEDATE        $10.
+           @3332 UPDATETIME         $8.;
+
+           CREATEDT = INPUT(CREATIONDATE,YYMMDD10.);
+           IF APPROVALSTATUS IN ('05', '06');
+
+ RUN;
+ PROC SORT  DATA=HRC; BY ALIAS; RUN;
+ PROC PRINT DATA=HRC(OBS=5);TITLE 'MASTER HRC RECORDS';RUN;
+
+DATA TODEL;
+  SET HRC;
+   IF CREATEDT < &STRTDT;
+   RUN;
+PROC PRINT DATA=TODEL(OBS=10);TITLE 'DELETE60';RUN;
+
+DATA OUT;
+   SET TODEL;
+   FILE OUTFILE;
+     PUT @001  ALIAS             $40.
+         @041  BRCHCODE           $7.
+         @048  ACCTTYPE           $5.
+         @053  APPROVALSTATUS     $2.
+         @055  ACCTNO            $20.
+         @075  CISNO             $20.
+         @095  CREATIONDATE      $10.
+         @105  PRIMARYJOINT      $40.
+         @145  CISJOINTID1       $40.
+         @185  CISJOINTID2       $40.
+         @225  CISJOINTID3       $40.
+         @265  CISJOINTID4       $40.
+         @305  CISJOINTID5       $40.
+         ;
+RUN;
+PROC SORT DATA=OUT; BY ALIAS; RUN;
