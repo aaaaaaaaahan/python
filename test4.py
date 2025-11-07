@@ -1,5 +1,5 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, csv_output_path
+from CIS_PY_READER import host_parquet_path, csv_output_path, parquet_output_path
 import datetime
 
 #----------------------------------------------------------------------#
@@ -10,15 +10,18 @@ import datetime
 #----------------------------------------------------------------------#
 
 # === Configuration ===
-# Build output path dynamically with date
-today_str = datetime.date.today().strftime("%d-%m-%Y")
-base_txt_path = csv_output_path("CIS_IDIC_MONTHLY_RPT").replace(".csv", "")
-output_txt = f"{base_txt_path}_{today_str}.txt"
+today = datetime.date.today()
+today_str = today.strftime("%d-%m-%Y")
 
-# === Step 1: Read the Parquet file using DuckDB (no CAST needed) ===
+base_name = "CIS_IDIC_MONTHLY_RPT"
+base_txt_path = csv_output_path(base_name).replace(".csv", "")
+output_txt = f"{base_txt_path}_{today_str}.txt"
+output_parquet = parquet_output_path(base_name)
+
+# === Step 1: Connect DuckDB and read input ===
 con = duckdb.connect()
 
-df = con.execute(f"""
+query = f"""
     SELECT 
         UPDOPER,
         CUSTNO,
@@ -27,12 +30,24 @@ df = con.execute(f"""
         FIELDS,
         OLDVALUE,
         NEWVALUE,
-        UPDDATX
+        UPDDATX,
+        {today.year} AS year,
+        {today.month} AS month,
+        {today.day} AS day
     FROM '{host_parquet_path("CIS_IDIC_DAILY_RALL.parquet")}'
     ORDER BY CUSTNO
-""").fetch_df()
+"""
 
-# === Step 2: Prepare header lines ===
+df = con.execute(query).fetch_df()
+
+# === Step 2: Export to Parquet (Hive-style partition) ===
+con.execute(f"""
+    COPY ({query})
+    TO '{output_parquet}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+""")
+
+# === Step 3: Prepare headers for TXT ===
 header_1 = (
     f"{'USER ID':<20}"
     f"{'CIS NO':<20}"
@@ -55,8 +70,9 @@ header_2 = (
     f"{'-'*11:<10}"
 )
 
-# === Step 3: Write to fixed-length text file ===
+# === Step 4: Write fixed-length TXT output ===
 with open(output_txt, "w", encoding="utf-8") as f:
+    f.write("PROGRAM : CIHCMRPT\n")
     f.write(header_1 + "\n")
     f.write(header_2 + "\n")
 
@@ -73,4 +89,5 @@ with open(output_txt, "w", encoding="utf-8") as f:
         )
         f.write(line + "\n")
 
-print(f"Report successfully written to: {output_txt}")
+print(f"TXT file written: {output_txt}")
+print(f"Parquet file written: {output_parquet}")
