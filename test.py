@@ -1,360 +1,105 @@
 convert program to python with duckdb and pyarrow
-duckdb for process input file and output parquet&csv
+duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIHRCFZX JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0131393
+//CIHRCFZP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0055935
 //*--------------------------------------------------------------------
 //INITDASD EXEC PGM=IEFBR14
-//DD01     DD DSN=CIHRCFZX.HRC03,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD02     DD DSN=CIHRCFZX.HRC04,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD03     DD DSN=CIHRCFZX.HRC05,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD04     DD DSN=CIHRCFZX.HRC06,
+//DD01     DD DSN=CIHRCFZP.EXCEL,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*--------------------------------------------------------------------
 //STATS#01 EXEC SAS609
 //SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
 //SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//CIHRCAPT DD DISP=SHR,DSN=UNLOAD.CIHRCAPT.FB
-//HRC03    DD DSN=CIHRCFZX.HRC03,
+//CIDOWFZT DD DISP=SHR,DSN=CIDOWFZT.FB
+//OUTFILE  DD DSN=CIHRCFZP.EXCEL,
 //            DISP=(NEW,CATLG,DELETE),
 //            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//HRC04    DD DSN=CIHRCFZX.HRC04,
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//HRC05    DD DSN=CIHRCFZX.HRC05,
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//HRC06    DD DSN=CIHRCFZX.HRC06,
-//            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//            DCB=(LRECL=700,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-     DATA STAT03 STAT04 STAT05 STAT06;
-       INFILE CIHRCAPT;
-        INPUT  @001  ALIAS             $40.
-               @041  BRCHCODE           $7.
-               @053  APPROVALSTATUS     $2.
-               @075  CUSTNO            $11.
-               @095  CREATIONDATE      $10.
-               @346  CUSTNAME         $120.
-               @883  DTCTOTAL           $5.
-               @3621 CUSTDWJONES        $1.;
-        IF APPROVALSTATUS  = '03' THEN OUTPUT STAT03 ;
-        IF APPROVALSTATUS  = '04' THEN OUTPUT STAT04 ;
-        IF APPROVALSTATUS  = '05' THEN OUTPUT STAT05 ;
-        IF APPROVALSTATUS  = '06' THEN OUTPUT STAT06 ;
+     DATA CIDOWFZT;
+     INFILE CIDOWFZT;
+        INPUT  @001  CUSTNAME          $150.
+               @151  CUSTID            $40.
+               @191  CUSTIDTYPE        $05.
+               @196  CUSTCITZN         $2.
+               @206  BRANCHABBRV       $10.
+               @216  SCREENDATE        $26.
+               @216  SCREENDATE10      $10.
+               @242  SEQUENCE          PD3.  /* PRIORITY 1 - 20 */
+               @245  DJ_PERSONID       $10.
+               @255  WUSCORE           PD3.
+               @258  FUZZYSCORE        PD3.
+               @261  SOURCE            $10.
+               @271  MATCH_STATUS      $50.
+               @321  CUSTDOB           $10.
+               @331  DJ_NAME           $150.
+               @481  DJ_CITZN          $2.
+               @483  DJ_DOB            $10.
+               @493  DJ_DESC1          $4.
+               @497  DJ_DESC2          $100.
+               @597  DJ_ID             $40.
+               @637  BMR_STATUS        $50.
+               @687  TELLER_ID         $10.
+               ;
+               IF SOURCE = 'ACCTOPEN' ;
+               IF SCREENDATE10 > '2025-01-01';
      RUN;
-     PROC SORT  DATA=STAT03  ; BY BRCHCODE CREATIONDATE ALIAS ;RUN;
-     PROC SORT  DATA=STAT04  ; BY BRCHCODE CREATIONDATE ALIAS ;RUN;
-     PROC SORT  DATA=STAT05  ; BY BRCHCODE CREATIONDATE ALIAS ;RUN;
-     PROC SORT  DATA=STAT06  ; BY BRCHCODE CREATIONDATE ALIAS ;RUN;
+     PROC SORT  DATA=CIDOWFZT; BY BRANCHABBRV SCREENDATE ;RUN;
 
   DATA OUT1 ;
-   FILE HRC03;
-   SET STAT03;
-      DELIM = '|';
-      IF _N_ = 1 THEN DO;
-        PUT      'HRC LISTING FOR 03 PENDING APPROVAL  ';
-        PUT      'BRCHCODE '              +(-1)DELIM+(-1)
-                 'APPROVALSTATUS '        +(-1)DELIM+(-1)
-                 'CREATIONDATE '          +(-1)DELIM+(-1)
-                 'CUSTNO '                +(-1)DELIM+(-1)
-                 'CUSTNAME '              +(-1)DELIM+(-1)
-                 'ALIAS '                 +(-1)DELIM+(-1)
-                 'DTCTOTAL '              +(-1)DELIM+(-1)
-                 'CUSTDWJONES '           +(-1)DELIM+(-1)
-            ;
-       END;
-         PUT      BRCHCODE                 +(-1)DELIM+(-1)
-                  APPROVALSTATUS           +(-1)DELIM+(-1)
-                  CREATIONDATE             +(-1)DELIM+(-1)
-                  CUSTNO                   +(-1)DELIM+(-1)
-                  CUSTNAME                 +(-1)DELIM+(-1)
-                  ALIAS                    +(-1)DELIM+(-1)
-                  DTCTOTAL                 +(-1)DELIM+(-1)
-                  CUSTDWJONES              +(-1)DELIM+(-1)
-             ;
-  RUN;
-
-  DATA OUT2 ;
-   FILE HRC04;
-   SET STAT04;
-      DELIM = '|';
-      IF _N_ = 1 THEN DO;
-        PUT      'HRC LISTING FOR 04 PENDING REVIEW(HO)';
-        PUT      'BRCHCODE '              +(-1)DELIM+(-1)
-                 'APPROVALSTATUS '        +(-1)DELIM+(-1)
-                 'CREATIONDATE '          +(-1)DELIM+(-1)
-                 'CUSTNO '                +(-1)DELIM+(-1)
-                 'CUSTNAME '              +(-1)DELIM+(-1)
-                 'ALIAS '                 +(-1)DELIM+(-1)
-                 'DTCTOTAL '              +(-1)DELIM+(-1)
-                 'CUSTDWJONES '           +(-1)DELIM+(-1)
-            ;
-       END;
-         PUT      BRCHCODE                 +(-1)DELIM+(-1)
-                  APPROVALSTATUS           +(-1)DELIM+(-1)
-                  CREATIONDATE             +(-1)DELIM+(-1)
-                  CUSTNO                   +(-1)DELIM+(-1)
-                  CUSTNAME                 +(-1)DELIM+(-1)
-                  ALIAS                    +(-1)DELIM+(-1)
-                  DTCTOTAL                 +(-1)DELIM+(-1)
-                  CUSTDWJONES              +(-1)DELIM+(-1)
-             ;
-  RUN;
-
-  DATA OUT3 ;
-   FILE HRC05  ;
-   SET STAT05;
-      DELIM = '|';
-      IF _N_ = 1 THEN DO;
-        PUT      'HRC LISTING FOR 05 PENDING BR RECOMMENDATION';
-        PUT      'BRCHCODE '              +(-1)DELIM+(-1)
-                 'APPROVALSTATUS '        +(-1)DELIM+(-1)
-                 'CREATIONDATE '          +(-1)DELIM+(-1)
-                 'CUSTNO '                +(-1)DELIM+(-1)
-                 'CUSTNAME '              +(-1)DELIM+(-1)
-                 'ALIAS '                 +(-1)DELIM+(-1)
-                 'DTCTOTAL '              +(-1)DELIM+(-1)
-                 'CUSTDWJONES '           +(-1)DELIM+(-1)
-            ;
-       END;
-         PUT      BRCHCODE                 +(-1)DELIM+(-1)
-                  APPROVALSTATUS           +(-1)DELIM+(-1)
-                  CREATIONDATE             +(-1)DELIM+(-1)
-                  CUSTNO                   +(-1)DELIM+(-1)
-                  CUSTNAME                 +(-1)DELIM+(-1)
-                  ALIAS                    +(-1)DELIM+(-1)
-                  DTCTOTAL                 +(-1)DELIM+(-1)
-                  CUSTDWJONES              +(-1)DELIM+(-1)
-             ;
-  RUN;
-
-  DATA OUT4 ;
-   FILE HRC06  ;
-   SET STAT06;
-      DELIM = '|';
-      IF _N_ = 1 THEN DO;
-        PUT      'HRC LISTING FOR 06 PENDING EDD              ';
-        PUT      'BRCHCODE '              +(-1)DELIM+(-1)
-                 'APPROVALSTATUS '        +(-1)DELIM+(-1)
-                 'CREATIONDATE '          +(-1)DELIM+(-1)
-                 'CUSTNO '                +(-1)DELIM+(-1)
-                 'CUSTNAME '              +(-1)DELIM+(-1)
-                 'ALIAS '                 +(-1)DELIM+(-1)
-                 'DTCTOTAL '              +(-1)DELIM+(-1)
-                 'CUSTDWJONES '           +(-1)DELIM+(-1)
-            ;
-       END;
-         PUT      BRCHCODE                 +(-1)DELIM+(-1)
-                  APPROVALSTATUS           +(-1)DELIM+(-1)
-                  CREATIONDATE             +(-1)DELIM+(-1)
-                  CUSTNO                   +(-1)DELIM+(-1)
-                  CUSTNAME                 +(-1)DELIM+(-1)
-                  ALIAS                    +(-1)DELIM+(-1)
-                  DTCTOTAL                 +(-1)DELIM+(-1)
-                  CUSTDWJONES              +(-1)DELIM+(-1)
-             ;
-  RUN;
-
-//*--------------------------------------------------------------------
-//*-A2022-17612 GENERATE REPORT FOR MANAGEMENT REPORTING (PILOT BRANCH)
-//*--------------------------------------------------------------------
-//MGTREPT  EXEC SAS609
-//* UNLOAD JOB FROM CIULHRCA
-//HRCUNLD  DD DISP=SHR,DSN=UNLOAD.CIHRCAPT.FB
-//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
-//OUTFILE  DD DSN=UNLOAD.CIHRCAPT.DAY(+1),
-//            DISP=(NEW,CATLG,DELETE),SPACE=(CYL,(10,20),RLSE),
-//            UNIT=SYSDA,DCB=(LRECL=4000,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SYSIN    DD *
-OPTION NOCENTER;
- /*----------------------------------------------------------------*/
- /*    GET SAS DATE AND TODAY REPORTING DATE                       */
- /*----------------------------------------------------------------*/
- DATA SRSDATE;
-    INFILE CTRLDATE;
-    INPUT @001  SRSYY    4.
-          @005  SRSMM    2.
-          @007  SRSDD    2.;
-          /* DISPLAY TODAY REPORTING DATE*/
-          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-          TODAY=PUT(TODAYSAS,YYMMDD10.);
-          CALL SYMPUT('TODAYDATE',TODAY);
-          CALL SYMPUT('YYYYMM',PUT(TODAYSAS,YYMMD7.));
- RUN;
- PROC PRINT DATA=SRSDATE(OBS=5);TITLE 'DATE';RUN;
- /*----------------------------------------------------------------*/
- /*    INPUT FILE DATA DECLARATION                                 */
- /*----------------------------------------------------------------*/
- DATA HRCRECS;
-    INFILE HRCUNLD;
-    INPUT  @001  ALIAS                     $40.
-           @041  BRCHCODE                   $7.
-           @048  ACCTTYPE                   $5.
-           @053  APPROVALSTATUS             $2.
-           @055  ACCTNO                    $20.
-           @075  CISNO                     $20.
-           @095  CREATIONDATE              $10.
-           @105  PRIMARYJOINT              $40.
-           @145  CISJOINTID1               $40.
-           @185  CISJOINTID2               $40.
-           @225  CISJOINTID3               $40.
-           @265  CISJOINTID4               $40.
-           @305  CISJOINTID5               $40.
-           @345  CUSTTYPE                   $1.
-           @346  CUSTNAME                   $120.
-           @466  CUSTGENDER                  $10.
-           @476  CUSTDOBDOR                  $10.
-           @486  CUSTEMPLOYER               $120.
-           @606  CUSTADDR1                   $40.
-           @646  CUSTADDR2                   $40.
-           @686  CUSTADDR3                   $40.
-           @726  CUSTADDR4                   $40.
-           @766  CUSTADDR5                   $40.
-           @806  CUSTPHONE                   $15.
-           @821  CUSTPEP                      $1.
-           @822  DTCORGUNIT                  $10.
-           @832  DTCINDUSTRY                 $10.
-           @842  DTCNATION                   $10.
-           @852  DTCOCCUP                    $10.
-           @862  DTCACCTTYPE                 $10.
-           @872  DTCCOMPFORM                 $10.
-           @882  DTCWEIGHTAGE                 $1.
-           @883  DTCTOTAL                     $5.
-           @888  DTCSCORE1                    $5.
-           @893  DTCSCORE2                    $5.
-           @898  DTCSCORE3                    $5.
-           @903  DTCSCORE4                    $5.
-           @908  DTCSCORE5                    $5.
-           @913  DTCSCORE6                    $5.
-           @918  ACCTPURPOSE                  $5.
-           @923  ACCTREMARKS                 $60.
-           @983  SOURCEFUND                   $5.
-           @988  SOURCEDETAILS               $60.
-           @1048 PEPINFO                    $150.
-           @1198 PEPWEALTH                   $60.
-           @1258 PEPFUNDS                    $60.
-           @1320 BRCHRECOMDETAILS           $900.
-           @2220 BRCHEDITOPER                 $8.
-           @2228 BRCHAPPROVEOPER              $8.
-           @2236 BRCHCOMMENTS               $150.
-           @2386 BRCHREWORK                 $150.
-           @2536 HOVERIFYOPER                 $8.
-           @2544 HOVERIFYDATE                $10.
-           @2554 HOVERIFYCOMMENTS           $150.
-           @2704 HOVERIFYREMARKS            $150.
-           @2854 HOVERIFYREWORK             $150.
-           @3004 HOAPPROVEOPER                $8.
-           @3012 HOAPPROVEDATE               $10.
-           @3022 HOAPPROVEREMARKS           $150.
-           @3172 HOCOMPLYREWORK             $150.
-           @3322 UPDATEDATE                  $10.
-           @3332 UPDATETIME                   $8.
-           @3340 FATCA_FLAG                   $1.
-           @3341 SUB_ACCT_TYPE                $5.
-           @3346 EMPLOYMENT_TYPE             $10.
-           @3356 EMPLOYMENT_SECTOR           $10.
-           @3366 BRCH_CHECKLIST             $200.
-           @3566 HO_VISA_TYPE                $50.
-           @3616 CUST_CODE                    $5.
-           @3621 CUST_DWJONES                 $1.
-           @3622 CUST_RHOLD                   $1.
-           @3623 ACCT_TYPE_MULTI            $5.
-           @3628 CUST_MULTI_IND             $1.
-           @3629 PRODUCT_CODE_1             $3.
-           @3632 PRODUCT_CODE_2             $3.
-           @3635 ACCT_NO_2                  $20.
-           @3655 CUST_LPLA                  $1.
-           @3656 CUST_NRCLD                 $1.
-           @3657 PEP_MANUAL_SELECT          $3.
-           @3660 CTRY_HIGH_RISK             $5.
-           @3665 CODE_INDC                  $1.
-           @3666 LOW_TO_HIGH_SCORE          $1.
-           @3667 PEPRCA_INDC                $1.
-           @3668 FZ_MATCH_SCORE             $5.
-           @3673 FZ_INDC                    $1.
-           @3674 FZ_CUSTCITZN               $2. ;
-
-
-           TCREATE = SUBSTR(CREATIONDATE,1,7);
-           TCREATE = INPUT(TCREATE,$7.);
-        /* FOR THE MONTH YYYY-MM ($7)    */
-           IF "&YYYYMM" EQ TCREATE ;
-
- RUN;
- PROC SORT  DATA=HRCRECS; BY BRCHCODE APPROVALSTATUS CREATIONDATE ;RUN;
- PROC PRINT DATA=HRCRECS(OBS=5);TITLE 'MASTER HRC RECORDS';RUN;
-
- /*----------------------------------------------------------------*/
- /* OUTPUT DAILY                                                   */
- /*----------------------------------------------------------------*/
- DATA OUTRECS;
-   SET HRCRECS;
    FILE OUTFILE;
-   DELIM = '|';
-   IF _N_ = 1 THEN DO;
-   PUT       'PROGRAM : CIHRCFZX';
-   PUT       'ALIAS '            +(-1)DELIM+(-1)
-             'BRCHCODE '         +(-1)DELIM+(-1)
-             'ACCTTYPE '         +(-1)DELIM+(-1)
-             'APPROVALSTATUS '   +(-1)DELIM+(-1)
-             'ACCTNO '           +(-1)DELIM+(-1)
-             'CISNO '            +(-1)DELIM+(-1)
-             'CREATIONDATE '     +(-1)DELIM+(-1)
-             'CUSTNAME '         +(-1)DELIM+(-1)
-             'CUSTDOBDOR '       +(-1)DELIM+(-1)
-             'CUSTPEP '          +(-1)DELIM+(-1)
-             'DTCTOTAL '         +(-1)DELIM+(-1)
-             'CUST_DWJONES '     +(-1)DELIM+(-1)
-             'CUST_RHOLD '       +(-1)DELIM+(-1)
-             'DTCINDUSTRY     '  +(-1)DELIM+(-1)
-             'DTCNATION       '  +(-1)DELIM+(-1)
-             'DTCOCCUP        '  +(-1)DELIM+(-1)
-             'DTCACCTTYPE     '  +(-1)DELIM+(-1)
-             'DTCCOMPFORM     '  +(-1)DELIM+(-1)
-             'FZ_MATCH_SCORE  '  +(-1)DELIM+(-1)
-             'FZ_INDC         '  +(-1)DELIM+(-1)
-             'FZ_CUSTCITZN    '  +(-1)DELIM+(-1)
-             'EMPLOYMENT_TYPE '  +(-1)DELIM+(-1)
-             'SUB_ACCT_TYPE   '  +(-1)DELIM+(-1)
-              ;
-   END;
-   PUT        ALIAS              +(-1)DELIM+(-1)
-              BRCHCODE           +(-1)DELIM+(-1)
-              ACCTTYPE           +(-1)DELIM+(-1)
-              APPROVALSTATUS     +(-1)DELIM+(-1)
-              ACCTNO             +(-1)DELIM+(-1)
-              CISNO              +(-1)DELIM+(-1)
-              CREATIONDATE       +(-1)DELIM+(-1)
-              CUSTNAME           +(-1)DELIM+(-1)
-              CUSTDOBDOR         +(-1)DELIM+(-1)
-              CUSTPEP            +(-1)DELIM+(-1)
-              DTCTOTAL           +(-1)DELIM+(-1)
-              CUST_DWJONES       +(-1)DELIM+(-1)
-              CUST_RHOLD         +(-1)DELIM+(-1)
-              DTCINDUSTRY        +(-1)DELIM+(-1)
-              DTCNATION          +(-1)DELIM+(-1)
-              DTCOCCUP           +(-1)DELIM+(-1)
-              DTCACCTTYPE        +(-1)DELIM+(-1)
-              DTCCOMPFORM        +(-1)DELIM+(-1)
-              FZ_MATCH_SCORE     +(-1)DELIM+(-1)
-              FZ_INDC            +(-1)DELIM+(-1)
-              FZ_CUSTCITZN       +(-1)DELIM+(-1)
-              EMPLOYMENT_TYPE    +(-1)DELIM+(-1)
-              SUB_ACCT_TYPE      +(-1)DELIM+(-1)
+   SET CIDOWFZT;
+      DELIM = '|';
+      IF _N_ = 1 THEN DO;
+        PUT      'DETAIL LISTING FOR CIDOWFZT          ';
+        PUT      'CUSTNAME '              +(-1)DELIM+(-1)
+                 'CUSTID '                +(-1)DELIM+(-1)
+                 'CUSTIDTYPE '            +(-1)DELIM+(-1)
+                 'CUSTCITZN '             +(-1)DELIM+(-1)
+                 'BRANCHABBRV '           +(-1)DELIM+(-1)
+                 'SCREENDATE '            +(-1)DELIM+(-1)
+                 'SCREENDATE10 '          +(-1)DELIM+(-1)
+                 'SEQUENCE '              +(-1)DELIM+(-1)
+                 'DJ_PERSONID '           +(-1)DELIM+(-1)
+                 'WU_SCORE '              +(-1)DELIM+(-1)
+                 'FUZZYSCORE '            +(-1)DELIM+(-1)
+                 'SOURCE '                +(-1)DELIM+(-1)
+                 'MATCH_STATUS '          +(-1)DELIM+(-1)
+                 'CUSTDOB '               +(-1)DELIM+(-1)
+                 'DJ_NAME '               +(-1)DELIM+(-1)
+                 'DJ_CITZN '              +(-1)DELIM+(-1)
+                 'DJ_DOB '                +(-1)DELIM+(-1)
+                 'DJ_DESC1 '              +(-1)DELIM+(-1)
+                 'DJ_DESC2 '              +(-1)DELIM+(-1)
+                 'DJ_ID '                 +(-1)DELIM+(-1)
+                 'BMR_STATUS '            +(-1)DELIM+(-1)
+                 'TELLER_ID  '            +(-1)DELIM+(-1)
+            ;
+       END;
+         PUT   CUSTNAME                    +(-1)DELIM+(-1)
+               CUSTID                      +(-1)DELIM+(-1)
+               CUSTIDTYPE                  +(-1)DELIM+(-1)
+               CUSTCITZN                   +(-1)DELIM+(-1)
+               BRANCHABBRV                 +(-1)DELIM+(-1)
+               SCREENDATE                  +(-1)DELIM+(-1)
+               SCREENDATE10                +(-1)DELIM+(-1)
+               SEQUENCE                    +(-1)DELIM+(-1)
+               DJ_PERSONID                 +(-1)DELIM+(-1)
+               WUSCORE                     +(-1)DELIM+(-1)
+               FUZZYSCORE                  +(-1)DELIM+(-1)
+               SOURCE                      +(-1)DELIM+(-1)
+               MATCH_STATUS                +(-1)DELIM+(-1)
+               CUSTDOB                     +(-1)DELIM+(-1)
+               DJ_NAME                     +(-1)DELIM+(-1)
+               DJ_CITZN                    +(-1)DELIM+(-1)
+               DJ_DOB                      +(-1)DELIM+(-1)
+               DJ_DESC1                    +(-1)DELIM+(-1)
+               DJ_DESC2                    +(-1)DELIM+(-1)
+               DJ_ID                       +(-1)DELIM+(-1)
+               BMR_STATUS                  +(-1)DELIM+(-1)
+               TELLER_ID                   +(-1)DELIM+(-1)
                ;
-   RUN;
+  RUN;
