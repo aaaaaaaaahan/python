@@ -1,45 +1,76 @@
-# ---------------------------------------------------------------------
-# Step 7: OUT Dataset (UNLOAD_CIHRCAPT_DAY)
-# ---------------------------------------------------------------------
-out_query = f"""
-    SELECT *,
-           substring(CREATIONDATE, 1, 7) AS TCREATE,
-           {year} AS year,
-           {month} AS month,
-           {day} AS day
-    FROM INDATA
-    WHERE substring(CREATIONDATE, 1, 7) = '{date}'
-    ORDER BY BRCHCODE, APPROVALSTATUS, CREATIONDATE
-"""
+import duckdb
+from CIS_PY_READER import host_parquet_path, csv_output_path
+import datetime
 
-title = "PROGRAM : CIHRCFZX"
+#----------------------------------------------------------------------#
+#  Original Program: CIHCMRPT                                          #
+#----------------------------------------------------------------------#
+# ESMR2019-1394 - REPORT DAILY                                         #
+# CUSTOMER DELTA FILE - TO GET CHANGES OF THE DAY                      #
+#----------------------------------------------------------------------#
 
-# ---------------------------------------------------------------------
-# Step 7A: Export Parquet
-# ---------------------------------------------------------------------
-out_parquet_path = parquet_output_path("UNLOAD_CIHRCAPT_DAY")
-con.execute(f"""
-    COPY ({out_query})
-    TO '{out_parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
-""")
+# === Configuration ===
+# Build output path dynamically with date
+today_str = datetime.date.today().strftime("%d-%m-%Y")
+base_txt_path = csv_output_path("CIS_IDIC_MONTHLY_RPT").replace(".csv", "")
+output_txt = f"{base_txt_path}_{today_str}.txt"
 
-# ---------------------------------------------------------------------
-# Step 7B: Export TXT (SAS-style, 23 columns only)
-# ---------------------------------------------------------------------
-df_out = con.execute(out_query).fetchdf()
+# === Step 1: Read the Parquet file using DuckDB (no CAST needed) ===
+con = duckdb.connect()
 
-# Keep only 23 target columns
-selected_cols = [
-    "ALIAS","BRCHCODE","ACCTTYPE","APPROVALSTATUS","ACCTNO","CISNO","CREATIONDATE",
-    "CUSTNAME","CUSTDOBDOR","CUSTPEP","DTCTOTAL","CUST_DWJONES","CUST_RHOLD",
-    "DTCINDUSTRY","DTCNATION","DTCOCCUP","DTCACCTTYPE","DTCCOMPFORM","FZ_MATCH_SCORE",
-    "FZ_INDC","FZ_CUSTCITZN","EMPLOYMENT_TYPE","SUB_ACCT_TYPE"
-]
-df_out = df_out[selected_cols]
+df = con.execute(f"""
+    SELECT 
+        UPDOPER,
+        CUSTNO,
+        ACCTNOC,
+        CUSTNAME,
+        FIELDS,
+        OLDVALUE,
+        NEWVALUE,
+        UPDDATX
+    FROM '{host_parquet_path("CIS_IDIC_DAILY_RALL.parquet")}'
+    ORDER BY CUSTNO
+""").fetch_df()
 
-txt_path = csv_output_path("UNLOAD_CIHRCAPT_DAY").replace(".csv", ".txt")
-with open(txt_path, "w", encoding="utf-8") as f:
-    f.write(f"{title}\n")
-    f.write("|".join(selected_cols) + "\n")
-    df_out.to_csv(f, index=False, header=False, sep="|")
+# === Step 2: Prepare header lines ===
+header_1 = (
+    f"{'USER ID':<20}"
+    f"{'CIS NO':<20}"
+    f"{'ACCOUNT NO':<20}"
+    f"{'CUSTOMER NAME':<40}"
+    f"{'FIELD':<20}"
+    f"{'OLD VALUE':<150}"
+    f"{'NEW VALUE':<150}"
+    f"{'UPDATE DATE':<10}"
+)
+
+header_2 = (
+    f"{'-'*7:<20}"
+    f"{'-'*6:<20}"
+    f"{'-'*10:<20}"
+    f"{'-'*13:<40}"
+    f"{'-'*5:<20}"
+    f"{'-'*9:<150}"
+    f"{'-'*9:<150}"
+    f"{'-'*11:<10}"
+)
+
+# === Step 3: Write to fixed-length text file ===
+with open(output_txt, "w", encoding="utf-8") as f:
+    f.write(header_1 + "\n")
+    f.write(header_2 + "\n")
+
+    for _, row in df.iterrows():
+        line = (
+            f"{(row['UPDOPER'] or ''):<20}"
+            f"{(row['CUSTNO'] or ''):<20}"
+            f"{(row['ACCTNOC'] or ''):<20}"
+            f"{(row['CUSTNAME'] or ''):<40}"
+            f"{(row['FIELDS'] or ''):<20}"
+            f"{(row['OLDVALUE'] or ''):<150}"
+            f"{(row['NEWVALUE'] or ''):<150}"
+            f"{(row['UPDDATX'] or ''):<10}"
+        )
+        f.write(line + "\n")
+
+print(f"Report successfully written to: {output_txt}")
