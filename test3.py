@@ -1,70 +1,76 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+import datetime
 
-#----------------------------------------------------------------------#
-#  Original Program: CIHCMRPT                                          #
-#----------------------------------------------------------------------#
-# ESMR2019-1394 - REPORT DAILY                                         #
-# CUSTOMER DELTA FILE - TO GET CHANGES OF THE DAY                      #
-#----------------------------------------------------------------------#
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+report_date = batch_date.strftime("%d-%m-%Y")
 
-# === Configuration ===
-output_txt = "/host/cis/output/CIS_IDIC_MONTHLY_RPT.txt"
-
-# === Step 1: Read the Parquet file using DuckDB (no CAST needed) ===
+# ---------------------------------------------------------------------
+# Step 1: Setup file paths
+# ---------------------------------------------------------------------
 con = duckdb.connect()
 
-df = con.execute(f"""
-    SELECT 
-        UPDOPER,
-        CUSTNO,
-        ACCTNOC,
-        CUSTNAME,
-        FIELDS,
-        OLDVALUE,
-        NEWVALUE,
-        UPDDATX
-    FROM '{host_parquet_path("CIS_IDIC_DAILY_RALL.parquet")}'
-    ORDER BY CUSTNO
-""").fetch_df()
+# ---------------------------------------------------------------------
+# Step 2: Connect to DuckDB and read input parquet
+# ---------------------------------------------------------------------
+con.execute(f"""
+    CREATE TABLE CIDOWFZT AS 
+    SELECT * FROM '{host_parquet_path("CIDOWFZT_FB.parquet")}'
+""")
 
-# === Step 2: Prepare header lines ===
-header_1 = (
-    f"{'USER ID':<20}"
-    f"{'CIS NO':<20}"
-    f"{'ACCOUNT NO':<20}"
-    f"{'CUSTOMER NAME':<40}"
-    f"{'FIELD':<20}"
-    f"{'OLD VALUE':<150}"
-    f"{'NEW VALUE':<150}"
-    f"{'UPDATE DATE':<10}"
-)
+# ---------------------------------------------------------------------
+# Step 3: Apply filters (similar to SAS conditions)
+# ---------------------------------------------------------------------
+filtered = """
+    SELECT *,
+           {year} AS year,
+           {month} AS month,
+           {day} AS day
+    FROM CIDOWFZT
+    WHERE SOURCE = 'ACCTOPEN'
+      AND SCREENDATE10 > '2025-01-01'
+    ORDER BY BRANCHABBRV, SCREENDATE
+"""
 
-header_2 = (
-    f"{'-'*7:<20}"
-    f"{'-'*6:<20}"
-    f"{'-'*10:<20}"
-    f"{'-'*13:<40}"
-    f"{'-'*5:<20}"
-    f"{'-'*9:<150}"
-    f"{'-'*9:<150}"
-    f"{'-'*11:<10}"
-)
+# ---------------------------------------------------------------------
+# Step 4: Write to Parquet
+# ---------------------------------------------------------------------
+out_parquet_path = parquet_output_path("CIHRCFZP_EXCEL")
+con.execute(f"""
+    COPY ({filtered})
+    TO '{out_parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+""")
 
-# === Step 3: Write to fixed-length text file ===
-with open(output_txt, "w", encoding="utf-8") as f:
-    f.write(header_1 + "\n")
-    f.write(header_2 + "\n")
+# ---------------------------------------------------------------------
+# Step 5: Write to TXT with title and header
+# ---------------------------------------------------------------------
+# Define header title
+title = "DETAIL LISTING FOR CIDOWFZT"
+delimiter = "|"
 
-    for _, row in df.iterrows():
-        line = (
-            f"{(row['UPDOPER'] or ''):<20}"
-            f"{(row['CUSTNO'] or ''):<20}"
-            f"{(row['ACCTNOC'] or ''):<20}"
-            f"{(row['CUSTNAME'] or ''):<40}"
-            f"{(row['FIELDS'] or ''):<20}"
-            f"{(row['OLDVALUE'] or ''):<150}"
-            f"{(row['NEWVALUE'] or ''):<150}"
-            f"{(row['UPDDATX'] or ''):<10}"
-        )
-        f.write(line + "\n")
+# Get column names
+columns = filtered.column_names
+txt_path = csv_output_path(f"CIHRCFZP_EXCEL_{report_date}").replace(".csv", ".txt")
+
+# Prepare rows
+rows = []
+for i in range(filtered.num_rows):
+    record = [str(filtered.column(c)[i].as_py() if filtered.column(c)[i].as_py() is not None else "") for c in range(len(columns))]
+    rows.append(delimiter.join(record))
+
+# Write TXT output
+with open(txt_path, "w", encoding="utf-8") as f:
+    f.write(f"{title}\n")
+    f.write(delimiter.join(columns) + "\n")
+    for row in rows:
+        f.write(row + "\n")
+
+print(f"✅ TXT output created: {txt_path}")
+
+# ---------------------------------------------------------------------
+# Step 6: Optional — show sample output
+# ---------------------------------------------------------------------
+print("\nSample rows:")
+print(con.execute("SELECT * FROM CIDOWFZT LIMIT 5").df())
