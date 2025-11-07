@@ -1,93 +1,67 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, csv_output_path, parquet_output_path
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 import datetime
+import pandas as pd
 
-#----------------------------------------------------------------------#
-#  Original Program: CIHCMRPT                                          #
-#----------------------------------------------------------------------#
-# ESMR2019-1394 - REPORT DAILY                                         #
-# CUSTOMER DELTA FILE - TO GET CHANGES OF THE DAY                      #
-#----------------------------------------------------------------------#
+# ---------------------------------------------------------------------
+# Step 1: Setup batch date and output
+# ---------------------------------------------------------------------
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+report_date = batch_date.strftime("%d-%m-%Y")
 
-# === Configuration ===
-today = datetime.date.today()
-today_str = today.strftime("%d-%m-%Y")
-
-base_name = "CIS_IDIC_MONTHLY_RPT"
-base_txt_path = csv_output_path(base_name).replace(".csv", "")
-output_txt = f"{base_txt_path}_{today_str}.txt"
-output_parquet = parquet_output_path(base_name)
-
-# === Step 1: Connect DuckDB and read input ===
+# ---------------------------------------------------------------------
+# Step 2: Connect to DuckDB and read input parquet
+# ---------------------------------------------------------------------
 con = duckdb.connect()
-
-query = f"""
-    SELECT 
-        UPDOPER,
-        CUSTNO,
-        ACCTNOC,
-        CUSTNAME,
-        FIELDS,
-        OLDVALUE,
-        NEWVALUE,
-        UPDDATX,
-        {today.year} AS year,
-        {today.month} AS month,
-        {today.day} AS day
-    FROM '{host_parquet_path("CIS_IDIC_DAILY_RALL.parquet")}'
-    ORDER BY CUSTNO
-"""
-
-df = con.execute(query).fetch_df()
-
-# === Step 2: Export to Parquet (Hive-style partition) ===
 con.execute(f"""
-    COPY ({query})
-    TO '{output_parquet}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    CREATE TABLE CIDOWFZT AS 
+    SELECT * FROM '{host_parquet_path("CIDOWFZT_FB.parquet")}'
 """)
 
-# === Step 3: Prepare headers for TXT ===
-header_1 = (
-    f"{'USER ID':<20}"
-    f"{'CIS NO':<20}"
-    f"{'ACCOUNT NO':<20}"
-    f"{'CUSTOMER NAME':<40}"
-    f"{'FIELD':<20}"
-    f"{'OLD VALUE':<150}"
-    f"{'NEW VALUE':<150}"
-    f"{'UPDATE DATE':<10}"
-)
+# ---------------------------------------------------------------------
+# Step 3: Apply filters and create output dataframe
+# ---------------------------------------------------------------------
+query = f"""
+    SELECT *,
+           {year} AS year,
+           {month} AS month,
+           {day} AS day
+    FROM CIDOWFZT
+    WHERE SOURCE = 'ACCTOPEN'
+      AND SCREENDATE10 > '2025-01-01'
+    ORDER BY BRANCHABBRV, SCREENDATE
+"""
+df = con.execute(query).df()
 
-header_2 = (
-    f"{'-'*7:<20}"
-    f"{'-'*6:<20}"
-    f"{'-'*10:<20}"
-    f"{'-'*13:<40}"
-    f"{'-'*5:<20}"
-    f"{'-'*9:<150}"
-    f"{'-'*9:<150}"
-    f"{'-'*11:<10}"
-)
+# ---------------------------------------------------------------------
+# Step 4: Write to Parquet (Hive partition style)
+# ---------------------------------------------------------------------
+out_parquet_path = parquet_output_path("CIHRCFZP_EXCEL")
+con.execute(f"""
+    COPY ({query})
+    TO '{out_parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+""")
+print(f"✅ Parquet output written to: {out_parquet_path}")
 
-# === Step 4: Write fixed-length TXT output ===
-with open(output_txt, "w", encoding="utf-8") as f:
-    f.write("PROGRAM : CIHCMRPT\n")
-    f.write(header_1 + "\n")
-    f.write(header_2 + "\n")
+# ---------------------------------------------------------------------
+# Step 5: Write to TXT with title and header (no Program line)
+# ---------------------------------------------------------------------
+title = "DETAIL LISTING FOR CIDOWFZT"
+delimiter = "|"
+txt_path = csv_output_path(f"CIHRCFZP_EXCEL_{report_date}").replace(".csv", ".txt")
 
+with open(txt_path, "w", encoding="utf-8") as f:
+    f.write(f"{title}\n")
+    f.write(delimiter.join(df.columns) + "\n")
     for _, row in df.iterrows():
-        line = (
-            f"{(row['UPDOPER'] or ''):<20}"
-            f"{(row['CUSTNO'] or ''):<20}"
-            f"{(row['ACCTNOC'] or ''):<20}"
-            f"{(row['CUSTNAME'] or ''):<40}"
-            f"{(row['FIELDS'] or ''):<20}"
-            f"{(row['OLDVALUE'] or ''):<150}"
-            f"{(row['NEWVALUE'] or ''):<150}"
-            f"{(row['UPDDATX'] or ''):<10}"
-        )
-        f.write(line + "\n")
+        f.write(delimiter.join(str(x) if pd.notnull(x) else "" for x in row) + "\n")
 
-print(f"TXT file written: {output_txt}")
-print(f"Parquet file written: {output_parquet}")
+print(f"✅ TXT output created: {txt_path}")
+
+# ---------------------------------------------------------------------
+# Step 6: Optional — show sample output
+# ---------------------------------------------------------------------
+print("\nSample rows:")
+print(df.head())
