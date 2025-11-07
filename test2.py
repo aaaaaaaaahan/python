@@ -1,144 +1,75 @@
-# ---------------------------------------------------------------
-# CIHRCFZX Conversion (SAS → Python using DuckDB + PyArrow)
-# ---------------------------------------------------------------
-# This program reads input Parquet files, filters data into
-# multiple output reports (HRC03, HRC04, HRC05, HRC06),
-# and writes each to both Parquet and TXT.
-# TXT includes SAS-style title + column headers + data.
-# ---------------------------------------------------------------
+# ---------------------------------------------------------------------
+# CIHRCFZP Job Conversion to Python
+# DuckDB for processing | PyArrow for I/O
+# ---------------------------------------------------------------------
 
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
+import datetime
 import os
-from datetime import datetime
-import pandas as pd
 
 # ---------------------------------------------------------------------
-# Helper functions for output paths
+# Step 1: Setup file paths
 # ---------------------------------------------------------------------
-def parquet_output_path(name):
-    return f"output/{name}.parquet"
-
-def txt_output_path(name):
-    return f"output/{name}.txt"
-
-# Ensure output folder exists
-os.makedirs("output", exist_ok=True)
+input_path = "CIDOWFZT.parquet"       # assumed converted from FB dataset
+output_parquet = "CIHRCFZP_EXCEL.parquet"
+output_txt = "CIHRCFZP_EXCEL.txt"
 
 # ---------------------------------------------------------------------
-# Runtime date info
-# ---------------------------------------------------------------------
-today = datetime.now()
-year = today.year
-month = today.month
-day = today.day
-
-# ---------------------------------------------------------------------
-# Connect to DuckDB
+# Step 2: Connect to DuckDB and read input parquet
 # ---------------------------------------------------------------------
 con = duckdb.connect()
 
-# ---------------------------------------------------------------------
-# Input Parquet file paths
-# ---------------------------------------------------------------------
-INPUT_PATH = "input/UNLOAD_CIHRCAPT.parquet"
-CTRL_PATH  = "input/CTRLDATE.parquet"
-
-con.execute(f"CREATE OR REPLACE TABLE INDATA AS SELECT * FROM read_parquet('{INPUT_PATH}')")
-con.execute(f"CREATE OR REPLACE TABLE CTRL AS SELECT * FROM read_parquet('{CTRL_PATH}')")
-
-# ---------------------------------------------------------------------
-# Queries (same logic as SAS)
-# ---------------------------------------------------------------------
-queries = {
-    "HRC03": f"""
-        SELECT *, {year} AS year, {month} AS month, {day} AS day
-        FROM INDATA
-        WHERE APPROVALSTATUS = '03'
-        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
-    """,
-    "HRC04": f"""
-        SELECT *, {year} AS year, {month} AS month, {day} AS day
-        FROM INDATA
-        WHERE APPROVALSTATUS = '04'
-        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
-    """,
-    "HRC05": f"""
-        SELECT *, {year} AS year, {month} AS month, {day} AS day
-        FROM INDATA
-        WHERE APPROVALSTATUS = '05'
-        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
-    """,
-    "HRC06": f"""
-        SELECT *, {year} AS year, {month} AS month, {day} AS day
-        FROM INDATA
-        WHERE APPROVALSTATUS = '06'
-        ORDER BY BRANCHCODE, ENTRYDATE, HRCALIAS
-    """,
-}
-
-# ---------------------------------------------------------------------
-# SAS-style titles for each report
-# ---------------------------------------------------------------------
-titles = {
-    "HRC03": "HRC LISTING FOR 03 PENDING APPROVAL",
-    "HRC04": "HRC LISTING FOR 04 PENDING REVIEW(HO)",
-    "HRC05": "HRC LISTING FOR 05 PENDING CANCELLATION",
-    "HRC06": "HRC LISTING FOR 06 PENDING CANCELLATION (HO)",
-    "HRC_DELETE_MORE60D": "HRC DELETE MORE THAN 60 DAYS REPORT",
-}
-
-# ---------------------------------------------------------------------
-# Export logic (Parquet + TXT with title and header)
-# ---------------------------------------------------------------------
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    txt_path = txt_output_path(name)
-
-    # 1️⃣ Export Parquet (structured output)
-    con.execute(f"""
-        COPY ({query})
-        TO '{parquet_path}'
-        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
-    """)
-
-    # 2️⃣ Export TXT (human-readable report with title)
-    df = con.execute(query).fetchdf()
-
-    # Write title + header + data to TXT
-    with open(txt_path, "w", encoding="utf-8") as f:
-        f.write(f"{titles[name]}\n")
-        f.write(",".join(df.columns) + "\n")
-        df.to_csv(f, index=False, header=False)
-
-    print(f"✅ {name} exported to TXT and Parquet successfully.")
-
-# ---------------------------------------------------------------------
-# Combined OUT dataset (like SAS OUT)
-# ---------------------------------------------------------------------
-out_query = f"""
-    SELECT *
-          ,{year} AS year
-          ,{month} AS month
-          ,{day} AS day
-    FROM INDATA
-"""
-
-parquet_path = parquet_output_path("HRC_DELETE_MORE60D")
-txt_path = txt_output_path("HRC_DELETE_MORE60D")
-
-# Export Parquet
 con.execute(f"""
-    COPY ({out_query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    CREATE TABLE CIDOWFZT AS 
+    SELECT * FROM read_parquet('{input_path}')
 """)
 
-# Export TXT
-df_out = con.execute(out_query).fetchdf()
-with open(txt_path, "w", encoding="utf-8") as f:
-    f.write(f"{titles['HRC_DELETE_MORE60D']}\n")
-    f.write(",".join(df_out.columns) + "\n")
-    df_out.to_csv(f, index=False, header=False)
+# ---------------------------------------------------------------------
+# Step 3: Apply filters (similar to SAS conditions)
+# ---------------------------------------------------------------------
+filtered = con.execute("""
+    SELECT *
+    FROM CIDOWFZT
+    WHERE SOURCE = 'ACCTOPEN'
+      AND SCREENDATE10 > '2025-01-01'
+    ORDER BY BRANCHABBRV, SCREENDATE
+""").arrow()
 
-print("✅ HRC_DELETE_MORE60D exported successfully.")
-print("🎉 All reports generated successfully.")
+# ---------------------------------------------------------------------
+# Step 4: Write to Parquet
+# ---------------------------------------------------------------------
+pq.write_table(filtered, output_parquet)
+print(f"✅ Parquet output created: {output_parquet}")
+
+# ---------------------------------------------------------------------
+# Step 5: Write to TXT with title and header
+# ---------------------------------------------------------------------
+# Define header title
+title = "DETAIL LISTING FOR CIDOWFZT"
+delimiter = "|"
+
+# Get column names
+columns = filtered.column_names
+
+# Prepare rows
+rows = []
+for i in range(filtered.num_rows):
+    record = [str(filtered.column(c)[i].as_py() if filtered.column(c)[i].as_py() is not None else "") for c in range(len(columns))]
+    rows.append(delimiter.join(record))
+
+# Write TXT output
+with open(output_txt, "w", encoding="utf-8") as f:
+    f.write(f"{title}\n")
+    f.write(delimiter.join(columns) + "\n")
+    for row in rows:
+        f.write(row + "\n")
+
+print(f"✅ TXT output created: {output_txt}")
+
+# ---------------------------------------------------------------------
+# Step 6: Optional — show sample output
+# ---------------------------------------------------------------------
+print("\nSample rows:")
+print(con.execute("SELECT * FROM CIDOWFZT LIMIT 5").df())
