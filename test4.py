@@ -1,10 +1,9 @@
 import duckdb
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 import datetime
-import pandas as pd
 
 # ---------------------------------------------------------------------
-# Step 1: Setup batch date and output
+# Step 1: Setup batch date and output paths
 # ---------------------------------------------------------------------
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
@@ -20,7 +19,7 @@ con.execute(f"""
 """)
 
 # ---------------------------------------------------------------------
-# Step 3: Apply filters and create output dataframe
+# Step 3: Apply filters (SAS-equivalent logic)
 # ---------------------------------------------------------------------
 query = f"""
     SELECT *,
@@ -32,10 +31,9 @@ query = f"""
       AND SCREENDATE10 > '2025-01-01'
     ORDER BY BRANCHABBRV, SCREENDATE
 """
-df = con.execute(query).df()
 
 # ---------------------------------------------------------------------
-# Step 4: Write to Parquet (Hive partition style)
+# Step 4: Write to Parquet (Hive partition)
 # ---------------------------------------------------------------------
 out_parquet_path = parquet_output_path("CIHRCFZP_EXCEL")
 con.execute(f"""
@@ -46,17 +44,22 @@ con.execute(f"""
 print(f"✅ Parquet output written to: {out_parquet_path}")
 
 # ---------------------------------------------------------------------
-# Step 5: Write to TXT with title and header (no Program line)
+# Step 5: Write to TXT with title and header
 # ---------------------------------------------------------------------
 title = "DETAIL LISTING FOR CIDOWFZT"
 delimiter = "|"
 txt_path = csv_output_path(f"CIHRCFZP_EXCEL_{report_date}").replace(".csv", ".txt")
 
+# Execute query and fetch all rows + columns
+res = con.execute(query)
+columns = [desc[0] for desc in res.description]
+rows = res.fetchall()
+
 with open(txt_path, "w", encoding="utf-8") as f:
     f.write(f"{title}\n")
-    f.write(delimiter.join(df.columns) + "\n")
-    for _, row in df.iterrows():
-        f.write(delimiter.join(str(x) if pd.notnull(x) else "" for x in row) + "\n")
+    f.write(delimiter.join(columns) + "\n")
+    for row in rows:
+        f.write(delimiter.join(str(x) if x is not None else "" for x in row) + "\n")
 
 print(f"✅ TXT output created: {txt_path}")
 
@@ -64,4 +67,4 @@ print(f"✅ TXT output created: {txt_path}")
 # Step 6: Optional — show sample output
 # ---------------------------------------------------------------------
 print("\nSample rows:")
-print(df.head())
+print(con.execute("SELECT * FROM CIDOWFZT LIMIT 5").df())
