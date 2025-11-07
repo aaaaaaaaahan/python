@@ -87,15 +87,19 @@ for name, query in queries.items():
 # Step 7: OUT Dataset (UNLOAD_CIHRCAPT_DAY)
 # ---------------------------------------------------------------------
 con.execute(f"""
-    CREATE OR REPLACE TABLE INDATA1 AS 
-    SELECT * ,
-           substring(CREATIONDATE, 1, 7) AS TCREATE
-    FROM '{host_parquet_path("UNLOAD_CIHRCAPT_FB.parquet")}'
+    CREATE OR REPLACE TABLE INDATA1 AS
+    SELECT *
+    FROM (
+        SELECT *,
+               substring(CREATIONDATE, 1, 7) AS TCREATE
+        FROM INDATA
+    )
     WHERE TCREATE = '{date}'
+    ORDER BY BRCHCODE, APPROVALSTATUS, CREATIONDATE
 """)
 
 # --- (A) Parquet Export: Full structured data ---
-out_parquet_query = f"""
+out_query = f"""
     SELECT *
           ,{year} AS year
           ,{month} AS month
@@ -106,7 +110,7 @@ out_parquet_query = f"""
 out_parquet_path = parquet_output_path("UNLOAD_CIHRCAPT_DAY")
 
 con.execute(f"""
-    COPY ({out_parquet_query})
+    COPY ({out_query})
     TO '{out_parquet_path}'
     (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
 """)
@@ -137,7 +141,7 @@ out_txt_query = f"""
         FZ_CUSTCITZN,
         EMPLOYMENT_TYPE,
         SUB_ACCT_TYPE
-    FROM INDATA
+    FROM INDATA1
     ORDER BY BRCHCODE, APPROVALSTATUS, CREATIONDATE
 """
 
