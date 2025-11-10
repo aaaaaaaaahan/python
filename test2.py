@@ -1,75 +1,100 @@
-# ---------------------------------------------------------------------
-# CIHRCFZP Job Conversion to Python
-# DuckDB for processing | PyArrow for I/O
-# ---------------------------------------------------------------------
-
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
-import datetime
-import os
+from datetime import date, timedelta
 
 # ---------------------------------------------------------------------
-# Step 1: Setup file paths
+# Program: CIDJACCD
+# Purpose: Generate DP Account Data (similar logic to SAS job)
 # ---------------------------------------------------------------------
-input_path = "CIDOWFZT.parquet"       # assumed converted from FB dataset
-output_parquet = "CIHRCFZP_EXCEL.parquet"
-output_txt = "CIHRCFZP_EXCEL.txt"
+
+# === Configuration ===
+input_ctrl_parquet = "/host/cis/input/SRSCTRL1.parquet"
+input_detica_parquet = "/host/cis/input/DETICA_CUST_ACCTBRCH.parquet"
+
+output_txt = "/host/cis/output/CIS_DJW_DPACCT.txt"
+output_parquet = "/host/cis/output/CIS_DJW_DPACCT.parquet"
 
 # ---------------------------------------------------------------------
-# Step 2: Connect to DuckDB and read input parquet
+# Step 1: Set Dates (equivalent to SAS date logic)
 # ---------------------------------------------------------------------
+
+ctrl_table = duckdb.read_parquet(input_ctrl_parquet).fetchdf()
+
+SRSYY = int(ctrl_table.loc[0, 'SRSYY'])
+SRSMM = int(ctrl_table.loc[0, 'SRSMM'])
+SRSDD = int(ctrl_table.loc[0, 'SRSDD'])
+
+srs_date = date(SRSYY, SRSMM, SRSDD)
+todaysas = srs_date - timedelta(days=180)  # 6 months earlier
+
+DATE3 = todaysas.strftime("%Y%m%d")
+YEAR = f"{SRSYY:04d}"
+MONTH = f"{SRSMM:02d}"
+DAY = f"{SRSDD:02d}"
+
+print(f"Processing date: {srs_date}, Cutoff (DATE3): {DATE3}")
+
+# ---------------------------------------------------------------------
+# Step 2: Read ACTBRCH data and apply filters
+# ---------------------------------------------------------------------
+
 con = duckdb.connect()
 
 con.execute(f"""
-    CREATE TABLE CIDOWFZT AS 
-    SELECT * FROM read_parquet('{input_path}')
+    CREATE OR REPLACE TABLE ACTBRCH AS
+    SELECT
+        CAST(SUBSTR(CUSTNO, 1, 11) AS VARCHAR) AS CUSTNO,
+        CAST(PRIMSEC AS VARCHAR) AS PRIMSEC,
+        CAST(ACCTCODE AS VARCHAR) AS ACCTCODE,
+        CAST(ACCTNO AS VARCHAR) AS ACCTNO,
+        CAST(OPENYY AS VARCHAR) AS OPENYY,
+        CAST(OPENMM AS VARCHAR) AS OPENMM,
+        CAST(OPENDD AS VARCHAR) AS OPENDD,
+        CONCAT(OPENYY, OPENMM, OPENDD) AS OPENDT,
+        CONCAT(OPENYY, '-', OPENMM, '-', OPENDD) AS OPENDX
+    FROM read_parquet('{input_detica_parquet}')
+""")
+
+con.execute(f"""
+    DELETE FROM ACTBRCH
+    WHERE OPENDT > '{DATE3}' OR ACCTCODE <> 'DP'
+""")
+
+con.execute("""
+    CREATE OR REPLACE TABLE ACTBRCH AS
+    SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) AS rn
+        FROM ACTBRCH
+    ) WHERE rn = 1
 """)
 
 # ---------------------------------------------------------------------
-# Step 3: Apply filters (similar to SAS conditions)
+# Step 3: Generate output dataset (DPACCT)
 # ---------------------------------------------------------------------
-filtered = con.execute("""
-    SELECT *
-    FROM CIDOWFZT
-    WHERE SOURCE = 'ACCTOPEN'
-      AND SCREENDATE10 > '2025-01-01'
-    ORDER BY BRANCHABBRV, SCREENDATE
-""").arrow()
+
+dpacct = con.execute("""
+    SELECT
+        CUSTNO,
+        ACCTCODE,
+        LPAD(ACCTNO, 11, '0') AS ACCTNOX,
+        OPENDX
+    FROM ACTBRCH
+""").df()
 
 # ---------------------------------------------------------------------
-# Step 4: Write to Parquet
+# Step 4: Write Output (Parquet + Text)
 # ---------------------------------------------------------------------
-pq.write_table(filtered, output_parquet)
-print(f"✅ Parquet output created: {output_parquet}")
 
-# ---------------------------------------------------------------------
-# Step 5: Write to TXT with title and header
-# ---------------------------------------------------------------------
-# Define header title
-title = "DETAIL LISTING FOR CIDOWFZT"
-delimiter = "|"
+table = pa.Table.from_pandas(dpacct)
+pq.write_table(table, output_parquet)
 
-# Get column names
-columns = filtered.column_names
+with open(output_txt, "w") as f:
+    f.write("Program: CIDJACCD\n")
+    f.write("CUSTNO      ACCTCODE ACCTNOX              OPENDX\n")
+    for _, row in dpacct.iterrows():
+        line = f"{row.CUSTNO:<11}{row.ACCTCODE:<5}{row.ACCTNOX:<20}{row.OPENDX:<10}\n"
+        f.write(line)
 
-# Prepare rows
-rows = []
-for i in range(filtered.num_rows):
-    record = [str(filtered.column(c)[i].as_py() if filtered.column(c)[i].as_py() is not None else "") for c in range(len(columns))]
-    rows.append(delimiter.join(record))
-
-# Write TXT output
-with open(output_txt, "w", encoding="utf-8") as f:
-    f.write(f"{title}\n")
-    f.write(delimiter.join(columns) + "\n")
-    for row in rows:
-        f.write(row + "\n")
-
-print(f"✅ TXT output created: {output_txt}")
-
-# ---------------------------------------------------------------------
-# Step 6: Optional — show sample output
-# ---------------------------------------------------------------------
-print("\nSample rows:")
-print(con.execute("SELECT * FROM CIDOWFZT LIMIT 5").df())
+print("✅ Processing complete")
+print(f"Output written to:\n  TXT: {output_txt}\n  PARQUET: {output_parquet}")
