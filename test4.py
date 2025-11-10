@@ -1,61 +1,24 @@
-#detica_cust_acctbrch is generate from CIDETBRL
-#excek mark as complete implement but no found in python server
-
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
-import datetime
+from CIS_PY_READER import host_parquet_path, csv_output_path
 
-# ---------------------------------------------------------------------
-# Step 3: Connect to DuckDB
-# ---------------------------------------------------------------------
 con = duckdb.connect()
 
-# Register input Parquet as a DuckDB table
-con.execute(f"""
-    CREATE TABLE all_job AS
-    SELECT 
-        *
-    FROM '{host_parquet_path("all_job.parquet")}'
-""")
+# Load Parquet files
+con.execute(f"CREATE TABLE all_job AS SELECT * FROM read_parquet('{host_parquet_path('all_job.parquet')}')")
+con.execute(f"CREATE TABLE cis_job AS SELECT * FROM read_parquet('{host_parquet_path('cis_job.parquet')}')")
 
-con.execute(f"""
-    CREATE TABLE cis_job AS
-    SELECT 
-        *
-    FROM '{host_parquet_path("cis_job.parquet")}'
-""")
-
-# ---------------------------------------------------------------------
-# Step 4: Filter and deduplicate (SAS equivalent logic)
-# ---------------------------------------------------------------------
-query = f"""
-    SELECT DISTINCT
-        *
+# Join and deduplicate JOBNAME
+df = con.execute("""
+    SELECT DISTINCT A.JOBNAME
     FROM cis_job A
-    JOIN all_job B
-    WHERE A.JOBNAME = B.JOBNAME
-"""
-df = con.execute(query).fetchdf()
+    INNER JOIN all_job B
+    ON A.JOBNAME = B.JOBNAME
+""").fetchdf()
 
-# ---------------------------------------------------------------------
-# Step 6: Write to TXT (format same as SAS PUT)
-# Columns layout:
-# @001 CUSTNO(11)
-# @021 ACCTCODE(5)
-# @026 ACCTNOX(20)
-# @046 OPENDX(10)
-# ---------------------------------------------------------------------
-txt_path = csv_output_path(f"SAS_JOB").replace(".csv", ".txt")
-
-res = con.execute(query)
-columns = [desc[0] for desc in res.description]
-rows = res.fetchall()
-
+# Write TXT
+txt_path = csv_output_path("SAS_JOB").replace(".csv", ".txt")
 with open(txt_path, "w", encoding="utf-8") as f:
-    for _, row in df.iterrows():
-        line = (
-            f"{str(row['JOBNAME']).ljust(11)}"
-        )
-        f.write(line + "\n")
+    for jobname in df['JOBNAME']:
+        f.write(f"{jobname.ljust(11)}\n")
 
 print("✅ Processing completed successfully!")
