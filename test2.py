@@ -1,100 +1,104 @@
-import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
-from datetime import date, timedelta
-
 # ---------------------------------------------------------------------
 # Program: CIDJACCD
-# Purpose: Generate DP Account Data (similar logic to SAS job)
+# Description: Generate DP Account data from customer account branch info
+# Converted from SAS to Python using DuckDB + PyArrow
 # ---------------------------------------------------------------------
 
-# === Configuration ===
-input_ctrl_parquet = "/host/cis/input/SRSCTRL1.parquet"
-input_detica_parquet = "/host/cis/input/DETICA_CUST_ACCTBRCH.parquet"
+import duckdb
+import datetime
+import pyarrow as pa
+import pyarrow.parquet as pq
+import os
 
-output_txt = "/host/cis/output/CIS_DJW_DPACCT.txt"
+# ---------------------------------------------------------------------
+# Step 1: Date setup (replace SAS CTRLDATE logic)
+# ---------------------------------------------------------------------
+today = datetime.date.today()
+six_months_ago = today - datetime.timedelta(days=180)
+DATE3 = int(six_months_ago.strftime("%Y%m%d"))  # Used for comparison
+YEAR = today.strftime("%Y")
+MONTH = today.strftime("%m")
+DAY = today.strftime("%d")
+
+# ---------------------------------------------------------------------
+# Step 2: File setup (input parquet, output folder)
+# ---------------------------------------------------------------------
+# Input Parquet path (converted from DETICA_CUST_ACCTBRCH)
+input_parquet = "/host/cis/input/DETICA_CUST_ACCTBRCH.parquet"
+
+# Output paths
 output_parquet = "/host/cis/output/CIS_DJW_DPACCT.parquet"
+output_txt = "/host/cis/output/CIS_DJW_DPACCT.txt"
+
+# Create output directory if not exists
+os.makedirs(os.path.dirname(output_parquet), exist_ok=True)
 
 # ---------------------------------------------------------------------
-# Step 1: Set Dates (equivalent to SAS date logic)
+# Step 3: Connect to DuckDB
 # ---------------------------------------------------------------------
-
-ctrl_table = duckdb.read_parquet(input_ctrl_parquet).fetchdf()
-
-SRSYY = int(ctrl_table.loc[0, 'SRSYY'])
-SRSMM = int(ctrl_table.loc[0, 'SRSMM'])
-SRSDD = int(ctrl_table.loc[0, 'SRSDD'])
-
-srs_date = date(SRSYY, SRSMM, SRSDD)
-todaysas = srs_date - timedelta(days=180)  # 6 months earlier
-
-DATE3 = todaysas.strftime("%Y%m%d")
-YEAR = f"{SRSYY:04d}"
-MONTH = f"{SRSMM:02d}"
-DAY = f"{SRSDD:02d}"
-
-print(f"Processing date: {srs_date}, Cutoff (DATE3): {DATE3}")
-
-# ---------------------------------------------------------------------
-# Step 2: Read ACTBRCH data and apply filters
-# ---------------------------------------------------------------------
-
 con = duckdb.connect()
 
+# Register input Parquet as a DuckDB table
 con.execute(f"""
-    CREATE OR REPLACE TABLE ACTBRCH AS
-    SELECT
-        CAST(SUBSTR(CUSTNO, 1, 11) AS VARCHAR) AS CUSTNO,
-        CAST(PRIMSEC AS VARCHAR) AS PRIMSEC,
-        CAST(ACCTCODE AS VARCHAR) AS ACCTCODE,
-        CAST(ACCTNO AS VARCHAR) AS ACCTNO,
-        CAST(OPENYY AS VARCHAR) AS OPENYY,
-        CAST(OPENMM AS VARCHAR) AS OPENMM,
-        CAST(OPENDD AS VARCHAR) AS OPENDD,
+    CREATE TABLE ACTBRCH AS
+    SELECT 
+        CUSTNO,
+        PRIMSEC,
+        ACCTCODE,
+        ACCTNO,
+        OPENYY,
+        OPENMM,
+        OPENDD,
         CONCAT(OPENYY, OPENMM, OPENDD) AS OPENDT,
-        CONCAT(OPENYY, '-', OPENMM, '-', OPENDD) AS OPENDX
-    FROM read_parquet('{input_detica_parquet}')
-""")
-
-con.execute(f"""
-    DELETE FROM ACTBRCH
-    WHERE OPENDT > '{DATE3}' OR ACCTCODE <> 'DP'
-""")
-
-con.execute("""
-    CREATE OR REPLACE TABLE ACTBRCH AS
-    SELECT * FROM (
-        SELECT *, ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) AS rn
-        FROM ACTBRCH
-    ) WHERE rn = 1
+        CONCAT(OPENYY, '-', OPENMM, '-', OPENDD) AS OPENDX,
+        LPAD(CAST(ACCTNO AS VARCHAR), 11, '0') AS ACCTNOX
+    FROM read_parquet('{input_parquet}')
 """)
 
 # ---------------------------------------------------------------------
-# Step 3: Generate output dataset (DPACCT)
+# Step 4: Filter and deduplicate (SAS equivalent logic)
 # ---------------------------------------------------------------------
-
-dpacct = con.execute("""
-    SELECT
+query = f"""
+    SELECT DISTINCT
         CUSTNO,
         ACCTCODE,
-        LPAD(ACCTNO, 11, '0') AS ACCTNOX,
+        ACCTNOX,
         OPENDX
     FROM ACTBRCH
-""").df()
+    WHERE CAST(REPLACE(OPENDT, '-', '') AS BIGINT) <= {DATE3}
+      AND ACCTCODE = 'DP'
+    ORDER BY CUSTNO
+"""
+df = con.execute(query).fetchdf()
 
 # ---------------------------------------------------------------------
-# Step 4: Write Output (Parquet + Text)
+# Step 5: Write to Parquet
 # ---------------------------------------------------------------------
-
-table = pa.Table.from_pandas(dpacct)
+table = pa.Table.from_pandas(df)
 pq.write_table(table, output_parquet)
 
-with open(output_txt, "w") as f:
+# ---------------------------------------------------------------------
+# Step 6: Write to TXT (format same as SAS PUT)
+# Columns layout:
+# @001 CUSTNO(11)
+# @021 ACCTCODE(5)
+# @026 ACCTNOX(20)
+# @046 OPENDX(10)
+# ---------------------------------------------------------------------
+with open(output_txt, "w", encoding="utf-8") as f:
     f.write("Program: CIDJACCD\n")
-    f.write("CUSTNO      ACCTCODE ACCTNOX              OPENDX\n")
-    for _, row in dpacct.iterrows():
-        line = f"{row.CUSTNO:<11}{row.ACCTCODE:<5}{row.ACCTNOX:<20}{row.OPENDX:<10}\n"
-        f.write(line)
+    f.write(f"DATE GENERATED: {today}\n")
+    f.write("CUSTNO       ACCTCODE  ACCTNOX             OPENDX\n")
+    f.write("-" * 50 + "\n")
+    for _, row in df.iterrows():
+        line = (
+            f"{str(row['CUSTNO']).ljust(11)}"
+            f"{str(row['ACCTCODE']).ljust(5)}"
+            f"{str(row['ACCTNOX']).ljust(20)}"
+            f"{str(row['OPENDX']).ljust(10)}"
+        )
+        f.write(line + "\n")
 
-print("✅ Processing complete")
-print(f"Output written to:\n  TXT: {output_txt}\n  PARQUET: {output_parquet}")
+print("✅ Processing completed successfully!")
+print(f"Parquet output: {output_parquet}")
+print(f"Text output   : {output_txt}")
