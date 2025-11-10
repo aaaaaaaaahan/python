@@ -4,21 +4,26 @@ from CIS_PY_READER import host_parquet_path, csv_output_path
 con = duckdb.connect()
 
 # Load Parquet files
-con.execute(f"CREATE TABLE all_job AS SELECT * FROM read_parquet('{host_parquet_path('all_job.parquet')}')")
+con.execute(f"CREATE TABLE sas_job AS SELECT CAST(JOBNAME AS VARCHAR) AS JOBNAME FROM read_parquet('{host_parquet_path('SAS_JOB.parquet')}')")
 con.execute(f"CREATE TABLE cis_job AS SELECT * FROM read_parquet('{host_parquet_path('cis_job.parquet')}')")
 
 # Join and deduplicate JOBNAME
-df = con.execute("""
+query = """
     SELECT DISTINCT A.JOBNAME
     FROM cis_job A
-    INNER JOIN all_job B
-    ON A.JOBNAME = B.JOBNAME
-""").fetchdf()
+    LEFT JOIN sas_job B
+    ON B.JOBNAME != A.JOBNAME
+"""
+
+df = con.execute(query).fetchdf()
 
 # Write TXT
-txt_path = csv_output_path("SAS_JOB").replace(".csv", ".txt")
+txt_path = csv_output_path("UNUSE_SAS_JOB").replace(".csv", ".txt")
 with open(txt_path, "w", encoding="utf-8") as f:
-    for jobname in df['JOBNAME']:
-        f.write(f"{jobname.ljust(11)}\n")
+    for _, row in df.iterrows():
+        line = (
+            f"{str(row['JOBNAME']).ljust(8)}"
+        )
+        f.write(line + "\n")
 
 print("✅ Processing completed successfully!")
