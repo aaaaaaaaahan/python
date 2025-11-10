@@ -1,25 +1,21 @@
 import duckdb
-import pyarrow.parquet as pq
-import pyarrow as pa
 import datetime
 
 # -----------------------------
-# File paths (adjust as needed)
+# File paths
 # -----------------------------
-input_parquet = "UNLOAD_CIHRCRVT.parquet"  # Input data
-init_output_parquet = "CIHRCRVP_INIT.parquet"
-update_output_parquet = "CIHRCRVP_UPDATE.parquet"
+input_parquet = "UNLOAD_CIHRCRVT.parquet"
 init_txt = "CIHRCRVP_INIT.txt"
 update_txt = "CIHRCRVP_UPDATE.txt"
 
 # -----------------------------
 # Set batch/reporting date
 # -----------------------------
-batch_date = datetime.date.today()  # Replace with control date if needed
-date_str = batch_date.strftime("%Y%m%d")  # Equivalent to SAS YYMMDD8.
+batch_date = datetime.date.today()  # replace with control date if needed
+date_str = batch_date.strftime("%Y%m%d")  # SAS YYMMDD8 equivalent
 
 # -----------------------------
-# Connect to DuckDB in memory
+# Connect DuckDB in memory
 # -----------------------------
 con = duckdb.connect(database=':memory:')
 
@@ -33,20 +29,20 @@ FROM read_parquet('{input_parquet}')
 """)
 
 # -----------------------------
-# Filter records based on rules
+# Filter records according to SAS logic
 # -----------------------------
 con.execute(f"""
 CREATE TABLE filtered AS
 SELECT *
 FROM allrec
-WHERE HRV_ACCT_OPENDATE = '{date_str}'       -- Match reporting date
-  AND HRV_FUZZY_INDC = 'Y'                   -- Only fuzzy-indicated accounts
-  AND (HRV_OVERRIDING_INDC IS NULL OR HRV_OVERRIDING_INDC = 'N') -- No override
-  AND HRV_BRCH_CODE <> '996'                 -- Exclude branch code 996
+WHERE HRV_ACCT_OPENDATE = '{date_str}'
+  AND HRV_FUZZY_INDC = 'Y'
+  AND (HRV_OVERRIDING_INDC IS NULL OR HRV_OVERRIDING_INDC = 'N')
+  AND HRV_BRCH_CODE <> '996'
 """)
 
 # -----------------------------
-# Split records by fuzzy score
+# Split high/low score
 # -----------------------------
 con.execute("""
 CREATE TABLE highscore AS
@@ -56,75 +52,55 @@ WHERE HRV_FUZZY_SCORE > 89
 ORDER BY HRV_FUZZY_SCORE DESC
 """)
 
-con.execute("""
-CREATE TABLE lowscore AS
-SELECT *
-FROM filtered
-WHERE HRV_FUZZY_SCORE <= 89
-ORDER BY HRV_FUZZY_SCORE DESC
-""")
-
-# -----------------------------
-# Count records
-# -----------------------------
+# Count total records and highscore
 total_all_record = con.execute("SELECT COUNT(*) FROM filtered").fetchone()[0]
 total_high = con.execute("SELECT COUNT(*) FROM highscore").fetchone()[0]
 
-# -----------------------------
-# Sampling calculation
-# -----------------------------
-total_sampling = round(total_all_record * 0.3)  # 30% sampling
+# Sampling and %high
+total_sampling = round(total_all_record * 0.3)
 pct_high = round(total_high / total_all_record * 100) if total_all_record > 0 else 0
 
 # -----------------------------
-# Determine final dataset
+# Final selection
 # -----------------------------
 if pct_high >= 30:
-    final_df = con.execute("SELECT * FROM highscore").fetchdf()
+    final_records = con.execute("SELECT * FROM highscore").fetchall()
 else:
-    final_df = con.execute(f"SELECT * FROM filtered LIMIT {total_sampling}").fetchdf()
+    final_records = con.execute(f"SELECT * FROM filtered LIMIT {total_sampling}").fetchall()
 
 # -----------------------------
-# Export INIT file (first record only)
+# TXT output formatting helper
 # -----------------------------
-init_df = final_df.head(1)
-table_init = pa.Table.from_pandas(init_df)
-pq.write_table(table_init, init_output_parquet)
-
-with open(init_txt, "w") as f:
-    row = init_df.iloc[0]
-    f.write(
-        f"{row.HRV_MONTH:<6}"
-        f"{row.HRV_BRCH_CODE:<7}"
-        f"{row.HRV_ACCT_TYPE:<5}"
-        f"{row.HRV_ACCT_NO:<20}"
-        f"{row.HRV_CUSTNO:<20}"
-        f"{row.HRV_ACCT_OPENDATE}\n"
+def format_record(row):
+    # row = (HRV_MONTH, HRV_BRCH_CODE, HRV_ACCT_TYPE, HRV_ACCT_NO, HRV_CUSTNO, HRV_ACCT_OPENDATE, ...)
+    return (
+        f"{row[0]:<6}"   # HRV_MONTH 6 char
+        f"{row[1]:<7}"   # HRV_BRCH_CODE 7 char
+        f"{row[2]:<5}"   # HRV_ACCT_TYPE 5 char
+        f"{row[3]:<20}"  # HRV_ACCT_NO 20 char
+        f"{row[4]:<20}"  # HRV_CUSTNO 20 char
+        f"{row[8]}"      # HRV_ACCT_OPENDATE, original index in SAS
     )
 
 # -----------------------------
-# Export UPDATE file (all final records)
+# Write INIT TXT (first record only)
 # -----------------------------
-update_df = final_df
-table_update = pa.Table.from_pandas(update_df)
-pq.write_table(table_update, update_output_parquet)
+if final_records:
+    with open(init_txt, "w") as f:
+        f.write(format_record(final_records[0]) + "\n")
 
+# -----------------------------
+# Write UPDATE TXT (all final records)
+# -----------------------------
 with open(update_txt, "w") as f:
-    for _, row in update_df.iterrows():
-        f.write(
-            f"{row.HRV_MONTH:<6}"
-            f"{row.HRV_BRCH_CODE:<7}"
-            f"{row.HRV_ACCT_TYPE:<5}"
-            f"{row.HRV_ACCT_NO:<20}"
-            f"{row.HRV_CUSTNO:<20}"
-            f"{row.HRV_ACCT_OPENDATE}\n"
-        )
+    for rec in final_records:
+        f.write(format_record(rec) + "\n")
 
 # -----------------------------
-# Summary output
+# Summary
 # -----------------------------
 print("Processing completed.")
 print(f"Total records: {total_all_record}")
 print(f"Highscore records: {total_high}")
-print(f"Percentage highscore: {pct_high}%")
+print(f"%High: {pct_high}")
 print(f"Sampling count (30%): {total_sampling}")
