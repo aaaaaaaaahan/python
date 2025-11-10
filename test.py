@@ -2,104 +2,64 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIHRCFZP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       J0055935
+//CIDJACCD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID     J0040485
 //*--------------------------------------------------------------------
 //INITDASD EXEC PGM=IEFBR14
-//DD01     DD DSN=CIHRCFZP.EXCEL,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL1     DD DSN=CIS_DJW_DPACCT,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*--------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//CIDOWFZT DD DISP=SHR,DSN=CIDOWFZT.FB
-//OUTFILE  DD DSN=CIHRCFZP.EXCEL,
+//MERGE#01 EXEC SAS609
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
+//CIDETBRL DD DISP=SHR,DSN=DETICA_CUST_ACCTBRCH
+//DJACCTDP DD DSN=CIS_DJW_DPACCT,
 //            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=700,BLKSIZE=0,RECFM=FB)
+//            DCB=(RECFM=FB,LRECL=100,BLKSIZE=0),
+//            SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-     DATA CIDOWFZT;
-     INFILE CIDOWFZT;
-        INPUT  @001  CUSTNAME          $150.
-               @151  CUSTID            $40.
-               @191  CUSTIDTYPE        $05.
-               @196  CUSTCITZN         $2.
-               @206  BRANCHABBRV       $10.
-               @216  SCREENDATE        $26.
-               @216  SCREENDATE10      $10.
-               @242  SEQUENCE          PD3.  /* PRIORITY 1 - 20 */
-               @245  DJ_PERSONID       $10.
-               @255  WUSCORE           PD3.
-               @258  FUZZYSCORE        PD3.
-               @261  SOURCE            $10.
-               @271  MATCH_STATUS      $50.
-               @321  CUSTDOB           $10.
-               @331  DJ_NAME           $150.
-               @481  DJ_CITZN          $2.
-               @483  DJ_DOB            $10.
-               @493  DJ_DESC1          $4.
-               @497  DJ_DESC2          $100.
-               @597  DJ_ID             $40.
-               @637  BMR_STATUS        $50.
-               @687  TELLER_ID         $10.
-               ;
-               IF SOURCE = 'ACCTOPEN' ;
-               IF SCREENDATE10 > '2025-01-01';
-     RUN;
-     PROC SORT  DATA=CIDOWFZT; BY BRANCHABBRV SCREENDATE ;RUN;
+OPTIONS NOCENTER;
+ /*----------------------------------------------------------------*/
+ /*    SET DATES                                                   */
+ /*----------------------------------------------------------------*/
+ DATA SRSDATE;
+       INFILE CTRLDATE;
+         INPUT @001  SRSYY    4.
+               @005  SRSMM    2.
+               @007  SRSDD    2.;
 
-  DATA OUT1 ;
-   FILE OUTFILE;
-   SET CIDOWFZT;
-      DELIM = '|';
-      IF _N_ = 1 THEN DO;
-        PUT      'DETAIL LISTING FOR CIDOWFZT          ';
-        PUT      'CUSTNAME '              +(-1)DELIM+(-1)
-                 'CUSTID '                +(-1)DELIM+(-1)
-                 'CUSTIDTYPE '            +(-1)DELIM+(-1)
-                 'CUSTCITZN '             +(-1)DELIM+(-1)
-                 'BRANCHABBRV '           +(-1)DELIM+(-1)
-                 'SCREENDATE '            +(-1)DELIM+(-1)
-                 'SCREENDATE10 '          +(-1)DELIM+(-1)
-                 'SEQUENCE '              +(-1)DELIM+(-1)
-                 'DJ_PERSONID '           +(-1)DELIM+(-1)
-                 'WU_SCORE '              +(-1)DELIM+(-1)
-                 'FUZZYSCORE '            +(-1)DELIM+(-1)
-                 'SOURCE '                +(-1)DELIM+(-1)
-                 'MATCH_STATUS '          +(-1)DELIM+(-1)
-                 'CUSTDOB '               +(-1)DELIM+(-1)
-                 'DJ_NAME '               +(-1)DELIM+(-1)
-                 'DJ_CITZN '              +(-1)DELIM+(-1)
-                 'DJ_DOB '                +(-1)DELIM+(-1)
-                 'DJ_DESC1 '              +(-1)DELIM+(-1)
-                 'DJ_DESC2 '              +(-1)DELIM+(-1)
-                 'DJ_ID '                 +(-1)DELIM+(-1)
-                 'BMR_STATUS '            +(-1)DELIM+(-1)
-                 'TELLER_ID  '            +(-1)DELIM+(-1)
-            ;
-       END;
-         PUT   CUSTNAME                    +(-1)DELIM+(-1)
-               CUSTID                      +(-1)DELIM+(-1)
-               CUSTIDTYPE                  +(-1)DELIM+(-1)
-               CUSTCITZN                   +(-1)DELIM+(-1)
-               BRANCHABBRV                 +(-1)DELIM+(-1)
-               SCREENDATE                  +(-1)DELIM+(-1)
-               SCREENDATE10                +(-1)DELIM+(-1)
-               SEQUENCE                    +(-1)DELIM+(-1)
-               DJ_PERSONID                 +(-1)DELIM+(-1)
-               WUSCORE                     +(-1)DELIM+(-1)
-               FUZZYSCORE                  +(-1)DELIM+(-1)
-               SOURCE                      +(-1)DELIM+(-1)
-               MATCH_STATUS                +(-1)DELIM+(-1)
-               CUSTDOB                     +(-1)DELIM+(-1)
-               DJ_NAME                     +(-1)DELIM+(-1)
-               DJ_CITZN                    +(-1)DELIM+(-1)
-               DJ_DOB                      +(-1)DELIM+(-1)
-               DJ_DESC1                    +(-1)DELIM+(-1)
-               DJ_DESC2                    +(-1)DELIM+(-1)
-               DJ_ID                       +(-1)DELIM+(-1)
-               BMR_STATUS                  +(-1)DELIM+(-1)
-               TELLER_ID                   +(-1)DELIM+(-1)
-               ;
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY)-180;      /* 6   MONTHS*/
+          CALL SYMPUT('DATE3',PUT(TODAYSAS,YYMMDDN8.));
+          CALL SYMPUT('YEAR' ,PUT(SRSYY,Z4.));
+          CALL SYMPUT('MONTH',PUT(SRSMM,Z2.));
+          CALL SYMPUT('DAY'  ,PUT(SRSDD,Z2.));
+    RUN;
+ PROC PRINT;FORMAT TODAYSAS YYMMDDN8.; RUN;
+
+DATA ACTBRCH;
+  INFILE CIDETBRL;
+  INPUT  @004   CUSTNO            $11.
+         @020   PRIMSEC            $1.
+         @030   ACCTCODE           $5.
+         @035   ACCTNO             20.
+         @060   OPENYY             $4.
+         @064   OPENMM             $2.
+         @066   OPENDD             $2. ;
+         OPENDT=COMPRESS(OPENYY||OPENMM||OPENDD);
+         OPENDX=COMPRESS(OPENYY||'-'||OPENMM||'-'||OPENDD);
+         ACCTNOX = PUT(ACCTNO,Z11.);
+         IF OPENDT > &DATE3 THEN DELETE;
+         IF ACCTCODE = 'DP';
+RUN;
+PROC SORT  DATA=ACTBRCH NODUPKEY; BY CUSTNO;RUN;
+PROC PRINT DATA=ACTBRCH(OBS=5);TITLE 'ACTBRCH';RUN;
+
+DATA DPACCT;
+  SET ACTBRCH;
+  FILE DJACCTDP;
+     PUT @001  CUSTNO     $11.
+         @021  ACCTCODE   $5.
+         @026  ACCTNOX    $20.
+         @046  OPENDX     $10.;
   RUN;
