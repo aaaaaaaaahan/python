@@ -161,4 +161,3 @@ TITLE;
          @ 59  HRV_ACCT_OPENDATE       YYMMDD10.
          ;
  RUN;
-
