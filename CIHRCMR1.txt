@@ -1,163 +1,150 @@
-//CIHRCRVP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0196022
+//CIINQTRY JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0086594
 //*--------------------------------------------------------------------
-//**ESMR 2023-1008 DB2 FOR HRC - PERIODIC REVIEW
-//**ESMR 2023-1473 DB2 FOR HRC - ADDITIONAL COLUMNS
-//**ESMR 2023-2612 CLARIFICATION FOR 30% RANDOM FILTER
-//**ESMR 2025-3264 FUZZY LOGIC PERIODIC REVIEW: REVISE THE SYSTEM LOGIC
-//**               FOR 30% SAMPLING BASED ON THE FUZZY LOGIC SCORING
-//**
+//*- EXTRACT INQUIRY LOG FOR TREASURY
+//*- ESMR 2020-3695
 //*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL3     DD DSN=RBP2.B033.CIHRCRVP.INIT,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL4     DD DSN=RBP2.B033.CIHRCRVP.UPDATE,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//SAMPLING EXEC SAS609
-//CIULHRCR DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIHRCRVT.FB
-//CTRLDATE DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//INITFILE DD DSN=RBP2.B033.CIHRCRVP.INIT,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//UPDFILE  DD DSN=RBP2.B033.CIHRCRVP.UPDATE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//SYSIN    DD *
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
+//*-STEP 2 - PRINT OUT THE DATASET INTO A REPORT
+//*-------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CTRLDATE  DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
+//LOGFILE   DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIINQLG2.FB
+//NAMEFILE  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.PRIMNAME.OUT
+//DPTRBALS  DD DISP=SHR,DSN=RBP2.B033.DPTRBLGS
+//OUTFILE   DD DSN=RBP2.B033.UNLOAD.CIINQLGT.RPTSRY(+1),
+//             DISP=(NEW,CATLG,DELETE),
+//             SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//             DCB=(LRECL=133,BLKSIZE=0,RECFM=FBA)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
  /*----------------------------------------------------------------*/
  /*    SET DATES                                                   */
  /*----------------------------------------------------------------*/
-     DATA SRSDATE;
-           INFILE CTRLDATE;
-             INPUT @001  TODAYSAS   YYMMDD8.;
+       DATA SRSDATE;
+             INFILE CTRLDATE;
+               INPUT @001  SRSYY    4.
+                     @005  SRSMM    2.
+                     @007  SRSDD    2.;
 
-           /* DISPLAY TODAY REPORTING DATE*/
-           CALL SYMPUT('DATE1',TODAYSAS);
-     RUN;
-     PROC PRINT DATA=SRSDATE  ;TITLE 'SRSDATE ';RUN;
+             /* DISPLAY TODAY REPORTING DATE*/
+             TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+             CALL SYMPUT('DATE1',PUT(TODAYSAS,YYMMDD10.));
+       RUN;
 
  /*----------------------------------------------------------------*/
- /*    INPUT FILE DATA DECLARATION                                 */
+ /*    DEPOSIT TRIAL BALANCE                                       */
  /*----------------------------------------------------------------*/
- DATA ALLREC;
-    INFILE CIULHRCR ;
-        INPUT  @  1  HRV_MONTH               $6.
-               @  7  HRV_BRCH_CODE           $7.
-               @ 14  HRV_ACCT_TYPE           $5.
-               @ 19  HRV_ACCT_NO             $20.
-               @ 39  HRV_CUSTNO              $20.
-               @ 59  HRV_CUSTID              $40.
-               @ 99  HRV_CUST_NAME           $120.
-               @219  HRV_NATIONALITY         $2.
-               @221  HRV_ACCT_OPENDATE       YYMMDD10.
-               @231  HRV_OVERRIDING_INDC     $1.
-               @232  HRV_OVERRIDING_OFFCR    $10.
-               @242  HRV_OVERRIDING_REASON   $100.
-               @342  HRV_DOWJONES_INDC       $1.
-               @343  HRV_FUZZY_INDC          $1.
-               @344  HRV_FUZZY_SCORE         PD3.2
-         /*    @347  HRV_NOTED_BY            $10.
-               @357  HRV_RETURNED_BY         $10.
-               @367  HRV_ASSIGNED_TO         $10.
-               @377  HRV_NOTED_DATE          $26.
-               @403  HRV_RETURNED_DATE       $26.
-               @429  HRV_ASSIGNED_DATE       $26.
-               @455  HRV_COMMENT_BY          $10.
-               @465  HRV_COMMENT_DATE        $26.
-               @491  HRV_SAMPLING_INDC       $1.
-               @492  HRV_RETURN_STATUS       $1.
-               @493  HRV_RECORD_STATUS       $1.
-               @494  HRV_FUZZY_SCREEN_DATE   $10. */
-               ;
+  DATA DPTRBALS;
+     INFILE DPTRBALS ;
 
-      /*SMR 2023-1473 URD 3.2 PAGE 1*/
-      IF HRV_ACCT_OPENDATE   =  &DATE1  ;         /*URD 3.2.5*/
-      IF HRV_FUZZY_INDC      = 'Y';               /*URD 3.2.1*/
-      IF HRV_OVERRIDING_INDC IN (' ','N');        /*URD 3.2.2*/
-      IF HRV_BRCH_CODE = '996    ' THEN DELETE;   /*URD 3.2.4*/
- RUN;
- PROC SORT  DATA=ALLREC ; BY DESCENDING HRV_FUZZY_SCORE;RUN;
- PROC PRINT DATA=ALLREC(OBS=50);TITLE 'ALL ACCT';RUN;
+     INPUT @03  BANKNO       PD2.
+           @24  REPTNO       PD3.
+           @27  FMTCODE      PD2. @;
 
- /*----------------------------------------------------------*/
- /* THIS DATASTEP WILL SPLIT THE RECORD BASED ON THE SCORE   */
- /*----------------------------------------------------------*/
- DATA HIGHSCORE LOWSCORE;
-      SET ALLREC;
-      IF HRV_FUZZY_SCORE > 89 THEN OUTPUT HIGHSCORE;
-      IF HRV_FUZZY_SCORE <= 89 THEN OUTPUT LOWSCORE;
- RUN;
- PROC SORT  DATA=HIGHSCORE; BY DESCENDING HRV_FUZZY_SCORE;RUN;
- PROC PRINT DATA=HIGHSCORE(OBS=20);TITLE 'HIGHSCORE';RUN;
- PROC SORT  DATA=LOWSCORE; BY DESCENDING HRV_FUZZY_SCORE;RUN;
- PROC PRINT DATA=LOWSCORE(OBS=20);TITLE 'LOWSCORE';RUN;
+     IF (REPTNO = 1001 AND (FMTCODE IN (1,10,22,019,020,021))) THEN DO;
+        INPUT @110  ACCTNO    PD6.
+              @116  ACCTNAME  $15.;
+     APPL_NO = PUT(ACCTNO,Z11.);
+     END;
+  RUN;
+  PROC SORT  DATA=DPTRBALS NODUPKEY; BY APPL_NO;RUN;
 
- /*----------------------------------------------------------*/
- /* THIS DATASTEP WILL COUNT TOTAL RECORD AND TOTAL SAMPLING */
- /*----------------------------------------------------------*/
- DATA A;
-    SET ALLREC NOBS=TOT_ALL ;
-    CALL SYMPUT('TOTAL_ALL_RECORD',TOT_ALL);
- RUN;
+ /*----------------------------------------------------------------*/
+ /*    DEPOSIT TRIAL BALANCE                                       */
+ /*----------------------------------------------------------------*/
+DATA NAME;
+   INFILE NAMEFILE;
+       INPUT @005   CUSTNO          $11.
+             @089  CUSTNAME         $40.;
+RUN;
+PROC SORT  DATA=NAME NODUPKEY; BY CUSTNO ;RUN;
 
- DATA A1;
-    SET HIGHSCORE NOBS=TOT_HIGH;
-    CALL SYMPUT('TOTAL_HIGH',TOT_HIGH);
- RUN;
+DATA CISLOG ;
+   INFILE LOGFILE;
+       INPUT @001   TERMINAL_ID     $08.
+             @009   INQ_DATE        $10.
+             @009   INQ_DATE_YY     $4.
+             @014   INQ_DATE_MM     $2.
+             @017   INQ_DATE_DD     $2.
+             @019   INQ_TIME        $10.
+             @029   OPERATOR        $10.
+             @039   APPL_CODE       $05.
+             @044   APPL_NO         $20.
+             @044   CUSTNO          $20.
+             @064   APPL_NAME       $50.       /* NAME OR IC */
+             @114   SCREEN_ID       $08.
+             @122   SCREEN_DESC     $30. ;
+             IF CUSTNO = 'SEARCH BY NAME/ALIAS' THEN
+                         CUSTNAME = APPL_NAME;
+             IF APPL_NO       = 'SEARCH BY TAX ID' THEN
+                         CUSTNAME = APPL_NAME;
+             IF U_INQ_APPL_NO = 'SEARCH BY PHONE ' THEN
+                         CUSTNAME = APPL_NAME;
+   RUN;
 
- DATA B;
-    TAKE_SAMP = &TOTAL_ALL_RECORD * 0.3 ;      /* 30% SAMPLING */
-    TAKE_SAMP = ROUND(TAKE_SAMP);
-    CALL SYMPUT('TOTAL_SAMPLING',TAKE_SAMP);
- RUN;
+DATA CUSTLOG ACCTLOG;    /* CONTAINS WORK FOR SET XXXX ONLY */
+    SET CISLOG;
+    WHERE   ((OPERATOR  CONTAINS 'B752CWY'      )
+    OR       (OPERATOR  CONTAINS 'B752TSF'      )
+    OR       (OPERATOR  CONTAINS 'B752CKS'      )
+    OR       (OPERATOR  CONTAINS 'B752QYS'      ));
+    IF APPL_CODE EQ 'CUST ' THEN OUTPUT CUSTLOG;
+    IF APPL_CODE NE 'CUST ' THEN OUTPUT ACCTLOG;
+RUN;
 
- /*------------------------------------------------------*/
- /* COUNT IF HIGHSCORE >30% OF THE RECORDS               */
- /*------------------------------------------------------*/
- DATA COUNT;
-    PCT_HIGH = (&TOTAL_HIGH/&TOTAL_ALL_RECORD) * 100;
-    PCT_HIGH = ROUND(PCT_HIGH);
-    CALL SYMPUT('PCT_HIGH',PCT_HIGH);
- RUN;
- PROC PRINT DATA=COUNT;TITLE 'COUNT';RUN;
+PROC SORT  DATA=ACCTLOG      ;
+               BY APPL_NO;RUN;
 
- /*------------------------------------------------------*/
- /* FINAL OUTPUT BASED ON PERCENTAGE OF HIGHSCORE        */
- /*------------------------------------------------------*/
+DATA MERGE_ACCTNAME;
+     MERGE ACCTLOG(IN=X)  DPTRBALS(IN=Y); BY APPL_NO;
+     IF X;
+     IF APPL_CODE = 'DP   ' THEN CUSTNAME = ACCTNAME;
+     IF APPL_CODE = 'DP   ' AND CUSTNAME = '' THEN DELETE;
+RUN;
 
- DATA FINAL;
-    IF &PCT_HIGH >= 30 THEN SET HIGHSCORE;
-    ELSE SET ALLREC(OBS=&TOTAL_SAMPLING);
- RUN;
- /*------------------------------------------------------*/
- /* OUTPUT FILE                                          */
- /*------------------------------------------------------*/
- DATA INIT   ;        /* TO INITIALISE RECORDS IN THE MONTH*/
-    FILE INITFILE;
-    SET  FINAL (OBS=1);
-    PUT  @  1  HRV_MONTH               $6.
-         @  7  HRV_BRCH_CODE           $7.
-         @ 14  HRV_ACCT_TYPE           $5.
-         @ 19  HRV_ACCT_NO             $20.
-         @ 39  HRV_CUSTNO              $20.
-         @ 59  HRV_ACCT_OPENDATE       YYMMDD10. /* INIT THIS ONLY */
-         ;
- RUN;
+PROC SORT  DATA=CUSTLOG      ; BY CUSTNO ;RUN;
+PROC SQL;
+CREATE TABLE MERGENAME AS
+  SELECT CUSTLOG.TERMINAL_ID
+        ,CUSTLOG.INQ_DATE
+        ,CUSTLOG.INQ_DATE_YY
+        ,CUSTLOG.INQ_DATE_MM
+        ,CUSTLOG.INQ_DATE_DD
+        ,CUSTLOG.INQ_TIME
+        ,CUSTLOG.OPERATOR
+        ,CUSTLOG.APPL_CODE
+        ,CUSTLOG.APPL_NO
+        ,CUSTLOG.CUSTNO
+        ,CUSTLOG.APPL_NAME
+        ,CUSTLOG.SCREEN_ID
+        ,CUSTLOG.SCREEN_DESC
+        ,NAME.CUSTNAME
+  FROM CUSTLOG,NAME
+  WHERE CUSTLOG.CUSTNO = NAME.CUSTNO;
+QUIT;
 
- DATA UPDATE ;        /* TO UPDATE INDICATOR FOR DATA SAMPLING*/
-    FILE UPDFILE;
-    SET  FINAL;
-    PUT  @  1  HRV_MONTH               $6.
-         @  7  HRV_BRCH_CODE           $7.
-         @ 14  HRV_ACCT_TYPE           $5.
-         @ 19  HRV_ACCT_NO             $20.
-         @ 39  HRV_CUSTNO              $20.
-         @ 59  HRV_ACCT_OPENDATE       YYMMDD10.
-         ;
- RUN;
+
+PROC SORT  DATA=MERGENAME    ;
+               BY INQ_DATE  INQ_TIME APPL_CODE APPL_NO;RUN;
+
+PROC SORT  DATA=MERGE_ACCTNAME    ;
+               BY INQ_DATE  INQ_TIME APPL_CODE APPL_NO;RUN;
+
+DATA OUT1;
+  SET MERGENAME MERGE_ACCTNAME;
+               BY INQ_DATE  INQ_TIME APPL_CODE APPL_NO;
+  FILE OUTFILE;
+        IF CUSTNAME = '' AND APPL_NO = '' THEN DELETE;
+        IF SUBSTR(CUSTNAME,1,1) = '00'X THEN DELETE;
+        PUT @1     OPERATOR     $10.
+            @11    CUSTNAME     $40.
+            @55    APPL_CODE    $5.
+            @60    APPL_NO      $20.
+            @81    'CIS'
+            @91    INQ_DATE     $10.
+            @101   INQ_TIME     $8. ;
+
+RUN;
