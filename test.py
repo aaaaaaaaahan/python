@@ -2,49 +2,122 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIMULTIC JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB56145
+//CINMELON JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB81316
 //*--------------------------------------------------------------------
 //INITDASD EXEC PGM=IEFBR14
-//DLT      DD DSN=CIS.MULTIPLE.ALIAS.IC,
+//DEL1     DD DSN=CIS.LONGNAME.NONE,
 //            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*--------------------------------------------------------------------
 //STATS#01 EXEC SAS609
-//*UNLOAD ALL ALIAS CUSTOMERS FILE WITHOUT SORT FIRST FROM CIULDALS
-//ALSFILE  DD DISP=SHR,DSN=UNLOAD.ALLALIAS.FB
-//OUTFILE  DD DSN=CIS.MULTIPLE.ALIAS.IC,
+//NAMEFILE DD DISP=SHR,DSN=UNLOAD.PRIMNAME.OUT
+//RMRKFILE DD DISP=SHR,DSN=CCRIS.CISRMRK.LONGNAME
+//OUTFILE  DD DSN=CIS.LONGNAME.NONE,
 //            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(2,10),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
+DATA NAME;
+      INFILE NAMEFILE;
+      INPUT @ 1   HOLD_CO_NO         PD2.
+            @ 3   BANK_NO            PD2.
+            @ 5   CUSTNO             $20.
+            @25   REC_TYPE           PD2.
+            @27   REC_SEQ            PD2.
+            @29   EFF_DATE           PD5.
+            @34   PROCESS_TIME        $8.
+            @42   ADR_HOLD_CO_NO     PD2.
+            @44   ADR_BANK_NO        PD2.
+            @46   ADR_REF_NO         PD6.
+            @52   CUST_TYPE           $1.
+            @53   KEY_FIELD_1        $15.
+            @68   KEY_FIELD_2        $10.
+            @78   KEY_FIELD_3         $5.
+            @83   KEY_FIELD_4         $5.
+            @88   LINE_CODE           $1.
+            @89   NAME_LINE          $40.
+            @129  LINE_CODE_1         $1.
+            @130  NAME_TITLE_1       $40.
+            @170  LINE_CODE_2         $1.
+            @171  NAME_TITLE_2       $40.
+            @211  SALUTATION         $40.
+            @251  TITLE_CODE         PD2.
+            @253  FIRST_MID          $30.
+            @283  SURNAME            $20.
+            @303  SURNAME_KEY         $3.
+            @306  SUFFIX_CODE         $2.
+            @308  APPEND_CODE         $2.
+            @310  PRIM_PHONE         PD6.
+            @316  P_PHONE_LTH        PD2.
+            @318  SEC_PHONE          PD6.
+            @324  S_PHONE_LTH        PD2.
+            @326  TELEX_PHONE        PD6.
+            @332  T_PHONE_LTH        PD2.
+            @334  FAX_PHONE          PD6.
+            @340  F_PHONE_LTH        PD2.
+            @342  LAST_CHANGE        $10.
+            @352  PARSE_IND           $1.;
+   RUN;
+PROC SORT  DATA=NAME NODUPKEY;BY CUSTNO;RUN;
+PROC PRINT DATA=NAME(OBS=5);TITLE 'NAME ';RUN;
 
-DATA ALIASDATA;
-  INFILE ALSFILE;
-  INPUT  @005  CUSTNO             $11.
-         @089  ALIASKEY           $3.
-         @092  ALIAS              $20.;
-         IF ALIASKEY NE 'IC' THEN DELETE;
-PROC SORT  DATA=ALIASDATA; BY CUSTNO ALIAS ;
-PROC PRINT DATA=ALIASDATA(OBS=5);TITLE 'ALIAS DATA';
-RUN;
+DATA RMRK;
+   INFILE RMRKFILE;
+   INPUT @009   CUSTNO            $20.
+         @044   RMK_KEYWORD       $40.
+         @052   RMK_LINE_1        $60. ;
+         IF RMK_LINE_1 = '' THEN DELETE;
+        RUN;
+PROC SORT  DATA=RMRK NODUPKEY;BY CUSTNO;RUN;
+PROC PRINT DATA=RMRK(OBS=5);TITLE 'RMRK';RUN;
 
-PROC SQL;
-  CREATE TABLE TEMPALS AS
-  SELECT CUSTNO
-  FROM ALIASDATA
-  GROUP BY CUSTNO
-  HAVING COUNT(CUSTNO) > 1;
-QUIT;
-RUN;
-
+DATA MERGE;
+         MERGE NAME(IN=A) RMRK(IN=B);BY CUSTNO;
+         IF A AND NOT B ;
+    RUN;
+PROC SORT  DATA=MERGE;BY CUSTNO;RUN;
+PROC PRINT DATA=MERGE(OBS=5);TITLE 'MERGE';RUN;
 
 DATA OUT;
-  SET TEMPALS;
+  SET MERGE;
   FILE OUTFILE;
-     PUT @01   '033'
-         @05   CUSTNO            $11.;
-       /*@17   'IC '                  */
-       /*@20   ALIAS             $20.;*/
+        PUT @ 1   HOLD_CO_NO         PD2.
+            @ 3   BANK_NO            PD2.
+            @ 5   CUSTNO             $20.
+            @25   REC_TYPE           PD2.
+            @27   REC_SEQ            PD2.
+            @29   EFF_DATE           PD5.
+            @34   PROCESS_TIME        $8.
+            @42   ADR_HOLD_CO_NO     PD2.
+            @44   ADR_BANK_NO        PD2.
+            @46   ADR_REF_NO         PD6.
+            @52   CUST_TYPE           $1.
+            @53   KEY_FIELD_1        $15.
+            @68   KEY_FIELD_2        $10.
+            @78   KEY_FIELD_3         $5.
+            @83   KEY_FIELD_4         $5.
+            @88   LINE_CODE           $1.
+            @89   NAME_LINE          $40.
+            @129  LINE_CODE_1         $1.
+            @130  NAME_TITLE_1       $40.
+            @170  LINE_CODE_2         $1.
+            @171  NAME_TITLE_2       $40.
+            @211  SALUTATION         $40.
+            @251  TITLE_CODE         PD2.
+            @253  FIRST_MID          $30.
+            @283  SURNAME            $20.
+            @303  SURNAME_KEY         $3.
+            @306  SUFFIX_CODE         $2.
+            @308  APPEND_CODE         $2.
+            @310  PRIM_PHONE         PD6.
+            @316  P_PHONE_LTH        PD2.
+            @318  SEC_PHONE          PD6.
+            @324  S_PHONE_LTH        PD2.
+            @326  TELEX_PHONE        PD6.
+            @332  T_PHONE_LTH        PD2.
+            @334  FAX_PHONE          PD6.
+            @340  F_PHONE_LTH        PD2.
+            @342  LAST_CHANGE        $10.
+            @352  PARSE_IND           $1.;
+  RETURN;
+  RUN;
