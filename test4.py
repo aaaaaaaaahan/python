@@ -1,47 +1,11 @@
--- Example in DuckDB SQL
-CREATE TABLE MERGE_CLEAN AS
-SELECT
-    HOLDCONO,
-    BANKNO,
-    CUSTNO,
-    RECTYPE,
-    RECSEQ,
-    EFFDATE,
-    PROCESSTIME,
-    ADRHOLDCONO,
-    ADRBANKNO,
-    ADRREFNO,
-    CUSTTYPE,
-    KEYFIELD1,
-    KEYFIELD2,
-    KEYFIELD3,
-    KEYFIELD4,
-    LINECODE,
-    NAMELINE,
-    LINECODE1,
-    NAMETITLE1,
-    LINECODE2,
-    NAMETITLE2,
-    SALUTATION,
-    TITLECODE,
-    FIRSTMID,
-    SURNAME,
-    SURNAMEKEY,
-    SUFFIXCODE,
-    APPENDCODE,
-    PRIMPHONE,
-    PPHONELTH,
-    SECPHONE,
-    SPHONELTH,
-    TELEXPHONE,
-    TPHONELTH,
-    FAXPHONE,
-    FPHONELTH,
-    LASTCHANGE,
-    PARSEIND,
-    -- Replace NULLs in string fields with empty string
-    COALESCE(NAMELINE,'') AS NAMELINE_CLEAN,
-    COALESCE(NAMETITLE1,'') AS NAMETITLE1_CLEAN,
-    COALESCE(NAMETITLE2,'') AS NAMETITLE2_CLEAN,
-    COALESCE(SALUTATION,'') AS SALUTATION_CLEAN
-FROM MERGE;
+def safe_str(val):
+    """Convert None, NaN, literal 'NULL', or NUL bytes to empty string"""
+    import math
+    if val is None:
+        return ""
+    if isinstance(val, float) and math.isnan(val):
+        return ""
+    if isinstance(val, str):
+        # Replace literal 'NULL', 'NaN', and NUL bytes
+        return val.replace("\x00", "").replace("NULL", "").replace("NaN", "")
+    return str(val)
