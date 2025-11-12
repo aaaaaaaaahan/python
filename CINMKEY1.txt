@@ -159,4 +159,3 @@ DATA TOINSERT;
            @352  PARSE_IND           $1.;
       RETURN;
   RUN;
-
