@@ -2,13 +2,20 @@ import duckdb
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 import datetime
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
-date_str = batch_date.strftime("%Y%m%d")  # Equivalent to SAS YYMMDD8.
-#date_str = '2014-11-04'
+
+
+# === CONFIGURATION ===
+input_file = "UNLOAD_ALLCUST_FB.parquet"     # assumed input parquet file
+output_parquet_indv = "CIS_BLANK_MSIC.parquet"
+output_parquet_org = "CIS_BLANK_MASCO.parquet"
+output_txt_indv = "CIS_BLANK_MSIC.txt"
+output_txt_org = "CIS_BLANK_MASCO.txt"
+
 # -----------------------------
-# Connect DuckDB in memory
+# Connect to DuckDB (in-memory)
 # -----------------------------
 con = duckdb.connect()
 
@@ -16,122 +23,112 @@ con = duckdb.connect()
 # Load input Parquet file
 # -----------------------------
 con.execute(f"""
-    CREATE TABLE allrec AS
-    SELECT *
-    FROM '{host_parquet_path("UNLOAD_CIHRCRVT_FB.parquet")}'
+    CREATE TABLE cust AS 
+    SELECT 
+        CUSTNO,
+        GENDER,
+        MSICCODE,
+        MASCO2008,
+        CASE
+            WHEN GENDER = 'O' THEN 'O'
+            ELSE 'I'
+        END AS INDORG
+    FROM read_parquet('{host_parquet_path("ALLCUST_FB.parquet")}')
 """)
 
 # -----------------------------
-# Filter records according to SAS logic
+# In SAS:
+#  - Drop GENDER
+#  - Compute INDORG based on GENDER
+#  - Split to DATA_INDV and DATA_ORG
 # -----------------------------
-con.execute(f"""
-    CREATE TABLE filtered AS
-    SELECT *,
-    FROM allrec
-    WHERE CAST(REPLACE(HRV_ACCT_OPENDATE, '-', '') AS BIGINT) = '{date_str}'       -- Match reporting date
-        AND HRV_FUZZY_INDC = 'Y'                   -- Only fuzzy-indicated accounts
-        AND (HRV_OVERRIDING_INDC IS NULL OR HRV_OVERRIDING_INDC = 'N') -- No override
-        AND HRV_BRCH_CODE <> '996'                 -- Exclude branch code 996
-""")
 
-# -----------------------------
-# Split highscore and count
-# -----------------------------
 con.execute("""
-    CREATE TABLE highscore AS
-    SELECT *
-    FROM filtered
-    WHERE HRV_FUZZY_SCORE > 89
-    ORDER BY HRV_FUZZY_SCORE DESC
+    CREATE TABLE data_indv AS
+    SELECT 
+        CUSTNO,
+        MSICCODE
+    FROM cust
+    WHERE 
+        INDORG = 'I'
+        AND MSICCODE IS NOT NULL AND LENGTH(TRIM(MSICCODE)) > 0
+    ORDER BY CUSTNO
 """)
 
-# Counts for sampling logic
-total_all_record = con.execute("SELECT COUNT(*) FROM filtered").fetchone()[0]
-total_high = con.execute("SELECT COUNT(*) FROM highscore").fetchone()[0]
+con.execute("""
+    CREATE TABLE data_org AS
+    SELECT 
+        CUSTNO,
+        MASCO2008
+    FROM cust
+    WHERE 
+        INDORG = 'O'
+        AND MASCO2008 IS NOT NULL AND LENGTH(TRIM(MASCO2008)) > 0
+    ORDER BY CUSTNO
+""")
 
-# 30% sampling if needed
-total_sampling = round(total_all_record * 0.3)
-pct_high = round(total_high / total_all_record * 100) if total_all_record > 0 else 0
+# === EXPORT TO FIXED-WIDTH TXT FILES ===
+def write_fixed_width_txt(table_name, output_path, columns, widths):
+    """Write fixed-width text file like SAS PUT statement."""
+    data = con.execute(f"SELECT * FROM {table_name}").fetchall()
+    with open(output_path, "w", encoding="utf-8") as f:
+        for row in data:
+            line = ""
+            for i, col in enumerate(columns):
+                val = str(row[i]) if row[i] is not None else ""
+                line += val.ljust(widths[i])  # pad right to fixed width
+            f.write(line + "\n")
 
-# -----------------------------
-# Determine final records
-# -----------------------------
-if pct_high >= 30:
-    # Use highscore dataset
-    con.execute("CREATE TABLE final AS SELECT * FROM highscore")
-else:
-    # Use first N records from filtered
-    con.execute(f"CREATE TABLE final AS SELECT * FROM filtered LIMIT {total_sampling}")
-
-# Fetch final records for TXT output
-final_records = con.execute("SELECT * FROM final").fetchall()
-
-# -----------------------------
-# Helper function for fixed-width TXT
-# -----------------------------
-def format_record(row):
-    # Adjust indices according to your input Parquet columns
-    # Assuming order: HRV_MONTH, HRV_BRCH_CODE, HRV_ACCT_TYPE, HRV_ACCT_NO, HRV_CUSTNO, HRV_ACCT_OPENDATE, ...
-    return (
-        f"{row[0]:<6}"   # HRV_MONTH 6 char
-        f"{row[1]:<7}"   # HRV_BRCH_CODE 7 char
-        f"{row[2]:<5}"   # HRV_ACCT_TYPE 5 char
-        f"{row[3]:<20}"  # HRV_ACCT_NO 20 char
-        f"{row[4]:<20}"  # HRV_CUSTNO 20 char
-        f"{row[8]}"      # HRV_ACCT_OPENDATE at index 8, adjust if different
-    )
-
-# -----------------------------
-# Write INIT TXT (first record only)
-# -----------------------------
 init_txt = csv_output_path(f"CIHRCRVP_INIT_{report_date}").replace(".csv", ".txt")
 
-if final_records:
-    with open(init_txt, "w") as f:
-        f.write(format_record(final_records[0]) + "\n")
+# For INDIVIDUAL (MSIC)
+write_fixed_width_txt(
+    "out_indv",
+    output_txt_indv,
+    columns=["CUSTNO", "MSICCODE"],
+    widths=[44, 5]  # CUSTNO @001–@045 (11 chars), MSICCODE @045–@050
+)
+
+# For ORGANISATION (MASCO)
+write_fixed_width_txt(
+    "out_org",
+    output_txt_org,
+    columns=["CUSTNO", "MASCO2008"],
+    widths=[44, 5]
+)
 
 # -----------------------------
-# Write UPDATE TXT (all final records)
+# Export Parquet outputs (INIT + UPDATE)
 # -----------------------------
-update_txt = csv_output_path(f"CIHRCRVP_UPDATE_{report_date}").replace(".csv", ".txt")
-
-with open(update_txt, "w") as f:
-    for rec in final_records:
-        f.write(format_record(rec) + "\n")
-
-# -----------------------------
-# Export Parquet using the same queries
-# -----------------------------
-# INIT Parquet (first record)
-out = """
+out1 = f"""
     SELECT
-        *
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-    FROM final LIMIT 1
-""".format(year=year,month=month,day=day)
+        *,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM data_indv
+"""
 
-# UPDATE Parquet (all final records)
-out1 = """
+out2 = f"""
     SELECT
-        *
-        ,{year} AS year
-        ,{month} AS month 
-        ,{day} AS day
-    FROM final
-""".format(year=year,month=month,day=day)
+        *,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM data_org
+"""
 
 queries = {
-    "CIHRCRVP_INIT"                        : out,
-    "CIHRCRVP_UPDATE"                      : out1
+    "CIS_BLANK_MASCO": out1,
+    "CIS_BLANK_MSIC ": out2
 }
 
 for name, query in queries.items():
     parquet_path = parquet_output_path(name)
-
     con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);
+    """)
+
+print("✅ Process completed successfully.")
