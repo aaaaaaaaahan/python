@@ -1,12 +1,47 @@
-import math
-import numpy as np
-
-def safe_str(val):
-    """Convert None, NaN, 'NULL', 'NAN' (string) to empty string"""
-    if val is None:
-        return ""
-    if isinstance(val, float) and math.isnan(val):
-        return ""
-    if isinstance(val, str) and val.upper() in ("NULL", "NAN"):
-        return ""
-    return str(val)
+-- Example in DuckDB SQL
+CREATE TABLE MERGE_CLEAN AS
+SELECT
+    HOLDCONO,
+    BANKNO,
+    CUSTNO,
+    RECTYPE,
+    RECSEQ,
+    EFFDATE,
+    PROCESSTIME,
+    ADRHOLDCONO,
+    ADRBANKNO,
+    ADRREFNO,
+    CUSTTYPE,
+    KEYFIELD1,
+    KEYFIELD2,
+    KEYFIELD3,
+    KEYFIELD4,
+    LINECODE,
+    NAMELINE,
+    LINECODE1,
+    NAMETITLE1,
+    LINECODE2,
+    NAMETITLE2,
+    SALUTATION,
+    TITLECODE,
+    FIRSTMID,
+    SURNAME,
+    SURNAMEKEY,
+    SUFFIXCODE,
+    APPENDCODE,
+    PRIMPHONE,
+    PPHONELTH,
+    SECPHONE,
+    SPHONELTH,
+    TELEXPHONE,
+    TPHONELTH,
+    FAXPHONE,
+    FPHONELTH,
+    LASTCHANGE,
+    PARSEIND,
+    -- Replace NULLs in string fields with empty string
+    COALESCE(NAMELINE,'') AS NAMELINE_CLEAN,
+    COALESCE(NAMETITLE1,'') AS NAMETITLE1_CLEAN,
+    COALESCE(NAMETITLE2,'') AS NAMETITLE2_CLEAN,
+    COALESCE(SALUTATION,'') AS SALUTATION_CLEAN
+FROM MERGE;
