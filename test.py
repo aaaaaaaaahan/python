@@ -2,150 +2,64 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIINQTRY JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0086594
+//CIMSCBLK JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=128M,NOTIFY=&SYSUID     JOB25741
 //*--------------------------------------------------------------------
-//*-STEP 2 - PRINT OUT THE DATASET INTO A REPORT
-//*-------------------------------------------------------------------
-//STATS#01 EXEC SAS609
+//*-ESMR 2018-3979  BLANK MASCO IF ORG AND BLANK MSIC IF INDV
+//*-                UPDATE PROGRAM CIUPDMS9 AND CIUPDMSX(10)
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CIS.BLANK.MASCO,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.CIS.BLANK.MSIC,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//MERGE#01 EXEC SAS609
 //SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
-//LOGFILE   DD DISP=SHR,DSN=UNLOAD.CIINQLG2.FB
-//NAMEFILE  DD DISP=SHR,DSN=UNLOAD.PRIMNAME.OUT
-//DPTRBALS  DD DISP=SHR,DSN=DPTRBLGS
-//OUTFILE   DD DSN=UNLOAD.CIINQLGT.RPTSRY(+1),
-//             DISP=(NEW,CATLG,DELETE),
-//             SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//             DCB=(LRECL=133,BLKSIZE=0,RECFM=FBA)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
- /*----------------------------------------------------------------*/
- /*    SET DATES                                                   */
- /*----------------------------------------------------------------*/
-       DATA SRSDATE;
-             INFILE CTRLDATE;
-               INPUT @001  SRSYY    4.
-                     @005  SRSMM    2.
-                     @007  SRSDD    2.;
+//SORTWK09  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK10  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//CUSTFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.ALLCUST.FB
+//BLKMASCO DD DSN=RBP2.B033.CIS.BLANK.MASCO,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB),
+//            SPACE=(CYL,(100,100),RLSE)
+//BLKMSIC  DD DSN=RBP2.B033.CIS.BLANK.MSIC,
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB),
+//            SPACE=(CYL,(100,100),RLSE)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTION NOCENTER;
+DATA DATA_INDV DATA_ORG;
+  INFILE CUSTFILE;
+  DROP GENDER;
+  INPUT  @005  CUSTNO           $11.
+         @033  GENDER           $1.
+         @252  MSICCODE         $5.     /*  MISC-DEMO-9  */
+         @262  MASCO2008        $5.  ;  /*  MISC-DEMO-10 */
 
-             /* DISPLAY TODAY REPORTING DATE*/
-             TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-             CALL SYMPUT('DATE1',PUT(TODAYSAS,YYMMDD10.));
-       RUN;
-
- /*----------------------------------------------------------------*/
- /*    DEPOSIT TRIAL BALANCE                                       */
- /*----------------------------------------------------------------*/
-  DATA DPTRBALS;
-     INFILE DPTRBALS ;
-
-     INPUT @03  BANKNO       PD2.
-           @24  REPTNO       PD3.
-           @27  FMTCODE      PD2. @;
-
-     IF (REPTNO = 1001 AND (FMTCODE IN (1,10,22,019,020,021))) THEN DO;
-        INPUT @110  ACCTNO    PD6.
-              @116  ACCTNAME  $15.;
-     APPL_NO = PUT(ACCTNO,Z11.);
-     END;
-  RUN;
-  PROC SORT  DATA=DPTRBALS NODUPKEY; BY APPL_NO;RUN;
-
- /*----------------------------------------------------------------*/
- /*    DEPOSIT TRIAL BALANCE                                       */
- /*----------------------------------------------------------------*/
-DATA NAME;
-   INFILE NAMEFILE;
-       INPUT @005   CUSTNO          $11.
-             @089  CUSTNAME         $40.;
+         IF GENDER = 'O' THEN INDORG = 'O';
+         ELSE INDORG = 'I';
+         IF INDORG = 'O' AND MASCO2008 NE '' THEN OUTPUT DATA_ORG;
+         IF INDORG = 'I' AND MSICCODE  NE '' THEN OUTPUT DATA_INDV;
 RUN;
-PROC SORT  DATA=NAME NODUPKEY; BY CUSTNO ;RUN;
+PROC SORT  DATA=DATA_INDV; BY CUSTNO ;RUN;
+PROC PRINT DATA=DATA_INDV(OBS=50);TITLE 'INDIVIDUAL CUST';RUN;
 
-DATA CISLOG ;
-   INFILE LOGFILE;
-       INPUT @001   TERMINAL_ID     $08.
-             @009   INQ_DATE        $10.
-             @009   INQ_DATE_YY     $4.
-             @014   INQ_DATE_MM     $2.
-             @017   INQ_DATE_DD     $2.
-             @019   INQ_TIME        $10.
-             @029   OPERATOR        $10.
-             @039   APPL_CODE       $05.
-             @044   APPL_NO         $20.
-             @044   CUSTNO          $20.
-             @064   APPL_NAME       $50.       /* NAME OR IC */
-             @114   SCREEN_ID       $08.
-             @122   SCREEN_DESC     $30. ;
-             IF CUSTNO = 'SEARCH BY NAME/ALIAS' THEN
-                         CUSTNAME = APPL_NAME;
-             IF APPL_NO       = 'SEARCH BY TAX ID' THEN
-                         CUSTNAME = APPL_NAME;
-             IF U_INQ_APPL_NO = 'SEARCH BY PHONE ' THEN
-                         CUSTNAME = APPL_NAME;
-   RUN;
+PROC SORT  DATA=DATA_ORG ; BY CUSTNO ;RUN;
+PROC PRINT DATA=DATA_ORG (OBS=50);TITLE 'ORGANISATION CUST';RUN;
 
-DATA CUSTLOG ACCTLOG;    /* CONTAINS WORK FOR SET XXXX ONLY */
-    SET CISLOG;
-    WHERE   ((OPERATOR  CONTAINS 'B752CWY'      )
-    OR       (OPERATOR  CONTAINS 'B752TSF'      )
-    OR       (OPERATOR  CONTAINS 'B752CKS'      )
-    OR       (OPERATOR  CONTAINS 'B752QYS'      ));
-    IF APPL_CODE EQ 'CUST ' THEN OUTPUT CUSTLOG;
-    IF APPL_CODE NE 'CUST ' THEN OUTPUT ACCTLOG;
+DATA OUT_INDV;
+  SET DATA_INDV;
+  FILE BLKMSIC ;
+  MSICCODE = '' ;
+  PUT    @001  CUSTNO           $11.
+         @045  MSICCODE         $5.  ;
 RUN;
 
-PROC SORT  DATA=ACCTLOG      ;
-               BY APPL_NO;RUN;
-
-DATA MERGE_ACCTNAME;
-     MERGE ACCTLOG(IN=X)  DPTRBALS(IN=Y); BY APPL_NO;
-     IF X;
-     IF APPL_CODE = 'DP   ' THEN CUSTNAME = ACCTNAME;
-     IF APPL_CODE = 'DP   ' AND CUSTNAME = '' THEN DELETE;
-RUN;
-
-PROC SORT  DATA=CUSTLOG      ; BY CUSTNO ;RUN;
-PROC SQL;
-CREATE TABLE MERGENAME AS
-  SELECT CUSTLOG.TERMINAL_ID
-        ,CUSTLOG.INQ_DATE
-        ,CUSTLOG.INQ_DATE_YY
-        ,CUSTLOG.INQ_DATE_MM
-        ,CUSTLOG.INQ_DATE_DD
-        ,CUSTLOG.INQ_TIME
-        ,CUSTLOG.OPERATOR
-        ,CUSTLOG.APPL_CODE
-        ,CUSTLOG.APPL_NO
-        ,CUSTLOG.CUSTNO
-        ,CUSTLOG.APPL_NAME
-        ,CUSTLOG.SCREEN_ID
-        ,CUSTLOG.SCREEN_DESC
-        ,NAME.CUSTNAME
-  FROM CUSTLOG,NAME
-  WHERE CUSTLOG.CUSTNO = NAME.CUSTNO;
-QUIT;
-
-
-PROC SORT  DATA=MERGENAME    ;
-               BY INQ_DATE  INQ_TIME APPL_CODE APPL_NO;RUN;
-
-PROC SORT  DATA=MERGE_ACCTNAME    ;
-               BY INQ_DATE  INQ_TIME APPL_CODE APPL_NO;RUN;
-
-DATA OUT1;
-  SET MERGENAME MERGE_ACCTNAME;
-               BY INQ_DATE  INQ_TIME APPL_CODE APPL_NO;
-  FILE OUTFILE;
-        IF CUSTNAME = '' AND APPL_NO = '' THEN DELETE;
-        IF SUBSTR(CUSTNAME,1,1) = '00'X THEN DELETE;
-        PUT @1     OPERATOR     $10.
-            @11    CUSTNAME     $40.
-            @55    APPL_CODE    $5.
-            @60    APPL_NO      $20.
-            @81    'CIS'
-            @91    INQ_DATE     $10.
-            @101   INQ_TIME     $8. ;
-
+DATA OUT_ORG;
+  SET DATA_ORG;
+  FILE BLKMASCO;
+  MASCO2008 = '' ;
+  PUT    @001  CUSTNO           $11.
+         @045  MASCO2008        $5.  ;
 RUN;
