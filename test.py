@@ -2,122 +2,164 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CINMELON JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB81316
+//CINMKEY1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB58828
+//*--------------------------------------------------------------------
+//*-A2016-00028065
+//*-MISSING NAME KEY
+//*- JOB CINMKEY1, CIDLTKEY , CIINCKEY
 //*--------------------------------------------------------------------
 //INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.LONGNAME.NONE,
+//DEL1     DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.DEL,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.INS,
 //            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*--------------------------------------------------------------------
 //STATS#01 EXEC SAS609
-//NAMEFILE DD DISP=SHR,DSN=UNLOAD.PRIMNAME.OUT
-//RMRKFILE DD DISP=SHR,DSN=CCRIS.CISRMRK.LONGNAME
-//OUTFILE  DD DSN=CIS.LONGNAME.NONE,
+//*AMEFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.PRIMNAME.OUT
+//NAMEFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.PRIMNAME.FB
+//DELFILE  DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.DEL,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
+//INSFILE  DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.INS,
 //            DISP=(NEW,CATLG,DELETE),
 //            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
 //            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
+
 DATA NAME;
-      INFILE NAMEFILE;
-      INPUT @ 1   HOLD_CO_NO         PD2.
-            @ 3   BANK_NO            PD2.
-            @ 5   CUSTNO             $20.
-            @25   REC_TYPE           PD2.
-            @27   REC_SEQ            PD2.
-            @29   EFF_DATE           PD5.
-            @34   PROCESS_TIME        $8.
-            @42   ADR_HOLD_CO_NO     PD2.
-            @44   ADR_BANK_NO        PD2.
-            @46   ADR_REF_NO         PD6.
-            @52   CUST_TYPE           $1.
-            @53   KEY_FIELD_1        $15.
-            @68   KEY_FIELD_2        $10.
-            @78   KEY_FIELD_3         $5.
-            @83   KEY_FIELD_4         $5.
-            @88   LINE_CODE           $1.
-            @89   NAME_LINE          $40.
-            @129  LINE_CODE_1         $1.
-            @130  NAME_TITLE_1       $40.
-            @170  LINE_CODE_2         $1.
-            @171  NAME_TITLE_2       $40.
-            @211  SALUTATION         $40.
-            @251  TITLE_CODE         PD2.
-            @253  FIRST_MID          $30.
-            @283  SURNAME            $20.
-            @303  SURNAME_KEY         $3.
-            @306  SUFFIX_CODE         $2.
-            @308  APPEND_CODE         $2.
-            @310  PRIM_PHONE         PD6.
-            @316  P_PHONE_LTH        PD2.
-            @318  SEC_PHONE          PD6.
-            @324  S_PHONE_LTH        PD2.
-            @326  TELEX_PHONE        PD6.
-            @332  T_PHONE_LTH        PD2.
-            @334  FAX_PHONE          PD6.
-            @340  F_PHONE_LTH        PD2.
-            @342  LAST_CHANGE        $10.
-            @352  PARSE_IND           $1.;
-   RUN;
-PROC SORT  DATA=NAME NODUPKEY;BY CUSTNO;RUN;
-PROC PRINT DATA=NAME(OBS=5);TITLE 'NAME ';RUN;
+  INFILE NAMEFILE;
+      INPUT  @001  HOLD_CO_NO       PD2.
+             @003  BANK_NO          PD2.
+             @005  CUSTNO           $20.
+             @025  REC_TYPE         PD2.
+             @027  REC_SEQ          PD2.
+             @029  EFF_DATE         PD5.
+             @034  PROCESS_TIME     $8.
+             @042  ADR_HOLD_CO_NO   PD2.
+             @044  ADR_BANK_NO      PD2.
+             @046  ADR_REF_NO       PD6.
+             @052  CUST_TYPE        $01.
+             @053  KEY_FIELD_1      $15.
+             @068  KEY_FIELD_2      $10.
+             @078  KEY_FIELD_3      $05.
+             @083  KEY_FIELD_4      $05.
+             @088  LINE_CODE        $01.
+             @089  NAME_LINE        $40.
+             @129  LINE_CODE_1      $01.
+             @130  NAME_TITLE_1     $40.
+             @170  LINE_CODE_2      $01.
+             @171  NAME_TITLE_2     $40.
+             @211  SALUTATION       $40.
+             @251  TITLE_CODE       PD2.
+             @253  FIRST_MID        $30.
+             @283  SURNAME          $20.
+             @303  SURNAME_KEY      $03.
+             @306  SUFFIX_CODE      PD2.
+             @308  APPEND_CODE      PD2.
+             @310  PRIM_PHONE       PD6.
+             @316  P_PHONE_LTH      PD2.
+             @318  SEC_PHONE        PD6.
+             @324  S_PHONE_LTH      PD2.
+             @326  TELEX_PHONE      PD6.
+             @332  T_PHONE_LTH      PD2.
+             @334  FAX_PHONE        PD6.
+             @340  F_PHONE_LTH      PD2.
+             @343  LAST_CHANGE      $10.
+             @353  PARSE_IND        $1. ;
+       IF KEY_FIELD_1  = '';
+RUN;
+PROC SORT  DATA=NAME;BY CUSTNO;RUN;
 
-DATA RMRK;
-   INFILE RMRKFILE;
-   INPUT @009   CUSTNO            $20.
-         @044   RMK_KEYWORD       $40.
-         @052   RMK_LINE_1        $60. ;
-         IF RMK_LINE_1 = '' THEN DELETE;
-        RUN;
-PROC SORT  DATA=RMRK NODUPKEY;BY CUSTNO;RUN;
-PROC PRINT DATA=RMRK(OBS=5);TITLE 'RMRK';RUN;
+DATA TODELETE;
+  SET NAME;
+  FILE DELFILE;
+        PUT  @001  HOLD_CO_NO       PD2.
+             @003  BANK_NO          PD2.
+             @005  CUSTNO           $20.
+             @025  REC_TYPE         PD2.
+             @027  REC_SEQ          PD2.
+             @029  EFF_DATE         PD5.
+             @034  PROCESS_TIME     $8.
+             @042  ADR_HOLD_CO_NO   PD2.
+             @044  ADR_BANK_NO      PD2.
+             @046  ADR_REF_NO       PD6.
+             @052  CUST_TYPE        $01.
+             @053  KEY_FIELD_1      $15.
+             @068  KEY_FIELD_2      $10.
+             @078  KEY_FIELD_3      $05.
+             @083  KEY_FIELD_4      $05.
+             @088  LINE_CODE        $01.
+             @089  NAME_LINE        $40.
+             @129  LINE_CODE_1      $01.
+             @130  NAME_TITLE_1     $40.
+             @170  LINE_CODE_2      $01.
+             @171  NAME_TITLE_2     $40.
+             @211  SALUTATION       $40.
+             @251  TITLE_CODE       PD2.
+             @253  FIRST_MID        $30.
+             @283  SURNAME          $20.
+             @303  SURNAME_KEY      $03.
+             @306  SUFFIX_CODE      PD2.
+             @308  APPEND_CODE      PD2.
+             @310  PRIM_PHONE       PD6.
+             @316  P_PHONE_LTH      PD2.
+             @318  SEC_PHONE        PD6.
+             @324  S_PHONE_LTH      PD2.
+             @326  TELEX_PHONE      PD6.
+             @332  T_PHONE_LTH      PD2.
+             @334  FAX_PHONE        PD6.
+             @340  F_PHONE_LTH      PD2.
+             @342  LAST_CHANGE      $10.
+             @352  PARSE_IND        $1. ;
+ RUN;
 
-DATA MERGE;
-         MERGE NAME(IN=A) RMRK(IN=B);BY CUSTNO;
-         IF A AND NOT B ;
-    RUN;
-PROC SORT  DATA=MERGE;BY CUSTNO;RUN;
-PROC PRINT DATA=MERGE(OBS=5);TITLE 'MERGE';RUN;
-
-DATA OUT;
-  SET MERGE;
-  FILE OUTFILE;
-        PUT @ 1   HOLD_CO_NO         PD2.
-            @ 3   BANK_NO            PD2.
-            @ 5   CUSTNO             $20.
-            @25   REC_TYPE           PD2.
-            @27   REC_SEQ            PD2.
-            @29   EFF_DATE           PD5.
-            @34   PROCESS_TIME        $8.
-            @42   ADR_HOLD_CO_NO     PD2.
-            @44   ADR_BANK_NO        PD2.
-            @46   ADR_REF_NO         PD6.
-            @52   CUST_TYPE           $1.
-            @53   KEY_FIELD_1        $15.
-            @68   KEY_FIELD_2        $10.
-            @78   KEY_FIELD_3         $5.
-            @83   KEY_FIELD_4         $5.
-            @88   LINE_CODE           $1.
-            @89   NAME_LINE          $40.
-            @129  LINE_CODE_1         $1.
-            @130  NAME_TITLE_1       $40.
-            @170  LINE_CODE_2         $1.
-            @171  NAME_TITLE_2       $40.
-            @211  SALUTATION         $40.
-            @251  TITLE_CODE         PD2.
-            @253  FIRST_MID          $30.
-            @283  SURNAME            $20.
-            @303  SURNAME_KEY         $3.
-            @306  SUFFIX_CODE         $2.
-            @308  APPEND_CODE         $2.
-            @310  PRIM_PHONE         PD6.
-            @316  P_PHONE_LTH        PD2.
-            @318  SEC_PHONE          PD6.
-            @324  S_PHONE_LTH        PD2.
-            @326  TELEX_PHONE        PD6.
-            @332  T_PHONE_LTH        PD2.
-            @334  FAX_PHONE          PD6.
-            @340  F_PHONE_LTH        PD2.
-            @342  LAST_CHANGE        $10.
-            @352  PARSE_IND           $1.;
-  RETURN;
+DATA TOINSERT;
+  SET NAME;
+  FILE INSFILE;
+       KF1 = SCAN(NAME_LINE,1);
+       KF2 = SCAN(NAME_LINE,2);
+       KF3 = SCAN(NAME_LINE,3);
+       KF4 = SCAN(NAME_LINE,4);
+       IF PARSE_IND = '' THEN PARSE_IND = 'C';
+       PUT @001  HOLD_CO_NO          PD2.
+           @003  BANK_NO             PD2.
+           @005  CUSTNO              $20.
+           @025  REC_TYPE            PD2.
+           @027  REC_SEQ             PD2.
+           @029  EFF_DATE            PD5.
+           @034  PROCESS_TIME        $8.
+           @042  ADR_HOLD_CO_NO      PD2.
+           @044  ADR_BANK_NO         PD2.
+           @046  ADR_REF_NO          PD6.
+           @052  CUST_TYPE           $1.
+           @053  KF1                 $15.
+           @068  KF2                 $10.
+           @078  KF3                 $5.
+           @083  KF4                 $5.
+           @088  LINE_CODE           $1.
+           @089  NAME_LINE           $40.
+           @129  LINE_CODE_1         $1.
+           @130  NAME_TITLE_1        $40.
+           @170  LINE_CODE_2         $1.
+           @171  NAME_TITLE_2        $40.
+           @211  SALUTATION          $40.
+           @251  TITLE_CODE          PD2.
+           @253  FIRST_MID           $30.
+           @283  SURNAME             $20.
+           @303  SURNAME_KEY         $3.
+           @306  SUFFIX_CODE         PD2.
+           @308  APPEND_CODE         PD2.
+           @310  PRIM_PHONE          PD6.
+           @316  P_PHONE_LTH         PD2.
+           @318  SEC_PHONE           PD6.
+           @324  S_PHONE_LTH         PD2.
+           @326  TELEX_PHONE         PD6.
+           @332  T_PHONE_LTH         PD2.
+           @334  FAX_PHONE           PD6.
+           @340  F_PHONE_LTH         PD2.
+           @342  LAST_CHANGE         $10.
+           @352  PARSE_IND           $1.;
+      RETURN;
   RUN;
