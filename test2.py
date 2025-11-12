@@ -1,85 +1,96 @@
 import duckdb
-import datetime
 import pyarrow.parquet as pq
-from CIS_PY_READER import host_parquet_path, csv_output_path
+import pyarrow as pa
+from pathlib import Path
 
-# ---------------------------------------------------------------------
-# SETUP
-# ---------------------------------------------------------------------
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
-report_date = batch_date.strftime("%Y%m%d")
+# Paths
+name_parquet_path = Path("UNLOAD.PRIMNAME.OUT.parquet")  # NAMEFILE
+rmrk_parquet_path = Path("CISRMRK.LONGNAME.parquet")    # RMRKFILE
+output_txt_path = Path("CIS_LONGNAME_NONE.txt")
+output_parquet_path = Path("CIS_LONGNAME_NONE.parquet")
 
-# Input & Output paths
-input_parquet = host_parquet_path("UNLOAD.ALLALIAS.FB")
-output_parquet = csv_output_path(f"CIS_MULTIPLE_ALIAS_IC_{report_date}").replace(".csv", ".parquet")
-output_txt = csv_output_path(f"CIS_MULTIPLE_ALIAS_IC_{report_date}").replace(".csv", ".txt")
+# Connect to DuckDB in-memory
+con = duckdb.connect(database=':memory:')
 
-# ---------------------------------------------------------------------
-# DUCKDB PROCESSING
-# ---------------------------------------------------------------------
-con = duckdb.connect()
-
-# Step 1: Read fixed-width Parquet (positions from SAS INPUT)
-# Assuming input Parquet has one column per row as 'column1'
+# Read input parquet files into DuckDB tables
 con.execute(f"""
-    CREATE OR REPLACE TABLE aliasdata AS
-    SELECT 
-        substr(column1, 5, 11) AS custno,
-        substr(column1, 89, 3) AS aliaskey,
-        substr(column1, 92, 20) AS alias
-    FROM read_parquet('{input_parquet}');
+    CREATE TABLE NAME AS 
+    SELECT * FROM read_parquet('{name_parquet_path}')
 """)
 
-# Step 2: Filter ALIASKEY = 'IC'
+con.execute(f"""
+    CREATE TABLE RMRK AS 
+    SELECT * FROM read_parquet('{rmrk_parquet_path}')
+    WHERE RMK_LINE_1 IS NOT NULL AND RMK_LINE_1 != ''
+""")
+
+# Remove duplicates by CUSTNO
+con.execute("CREATE TABLE NAME_UQ AS SELECT DISTINCT * FROM NAME ORDER BY CUSTNO")
+con.execute("CREATE TABLE RMRK_UQ AS SELECT DISTINCT * FROM RMRK ORDER BY CUSTNO")
+
+# Merge NAME and RMRK by CUSTNO, keep NAME only if no matching RMRK
 con.execute("""
-    CREATE OR REPLACE TABLE alias_filtered AS
-    SELECT *
-    FROM aliasdata
-    WHERE aliaskey = 'IC'
+    CREATE TABLE MERGE AS
+    SELECT n.*
+    FROM NAME_UQ n
+    LEFT JOIN RMRK_UQ r
+    ON n.CUSTNO = r.CUSTNO
+    WHERE r.CUSTNO IS NULL
 """)
 
-# Step 3: Sort by CUSTNO and ALIAS (like PROC SORT)
-con.execute("""
-    CREATE OR REPLACE TABLE alias_sorted AS
-    SELECT *
-    FROM alias_filtered
-    ORDER BY custno, alias
-""")
+# Export to Parquet
+con.execute(f"COPY MERGE TO '{output_parquet_path}' (FORMAT PARQUET)")
 
-# Step 4: Find customers with multiple aliases (PROC SQL HAVING COUNT>1)
-con.execute("""
-    CREATE OR REPLACE TABLE tempals AS
-    SELECT custno
-    FROM alias_sorted
-    GROUP BY custno
-    HAVING COUNT(custno) > 1
-""")
+# Export to fixed-width TXT
+rows = con.execute("SELECT * FROM MERGE ORDER BY CUSTNO").fetchall()
+columns = [desc[0] for desc in con.description]
 
-# Step 5: Output dataset (DATA OUT in SAS)
-result_arrow = con.execute("""
-    SELECT custno
-    FROM tempals
-""").fetch_arrow_table()
+def format_fixed_width(row):
+    # Map SAS input/output positions to Python slicing
+    fmt = (
+        '{:0>2}'   # HOLD_CO_NO PD2
+        '{:0>2}'   # BANK_NO PD2
+        '{:<20}'   # CUSTNO $20
+        '{:0>2}'   # REC_TYPE PD2
+        '{:0>2}'   # REC_SEQ PD2
+        '{:0>5}'   # EFF_DATE PD5
+        '{:<8}'    # PROCESS_TIME $8
+        '{:0>2}'   # ADR_HOLD_CO_NO PD2
+        '{:0>2}'   # ADR_BANK_NO PD2
+        '{:0>6}'   # ADR_REF_NO PD6
+        '{:<1}'    # CUST_TYPE $1
+        '{:<15}'   # KEY_FIELD_1 $15
+        '{:<10}'   # KEY_FIELD_2 $10
+        '{:<5}'    # KEY_FIELD_3 $5
+        '{:<5}'    # KEY_FIELD_4 $5
+        '{:<1}'    # LINE_CODE $1
+        '{:<40}'   # NAME_LINE $40
+        '{:<1}'    # LINE_CODE_1 $1
+        '{:<40}'   # NAME_TITLE_1 $40
+        '{:<1}'    # LINE_CODE_2 $1
+        '{:<40}'   # NAME_TITLE_2 $40
+        '{:<40}'   # SALUTATION $40
+        '{:0>2}'   # TITLE_CODE PD2
+        '{:<30}'   # FIRST_MID $30
+        '{:<20}'   # SURNAME $20
+        '{:<3}'    # SURNAME_KEY $3
+        '{:<2}'    # SUFFIX_CODE $2
+        '{:<2}'    # APPEND_CODE $2
+        '{:0>6}'   # PRIM_PHONE PD6
+        '{:0>2}'   # P_PHONE_LTH PD2
+        '{:0>6}'   # SEC_PHONE PD6
+        '{:0>2}'   # S_PHONE_LTH PD2
+        '{:0>6}'   # TELEX_PHONE PD6
+        '{:0>2}'   # T_PHONE_LTH PD2
+        '{:0>6}'   # FAX_PHONE PD6
+        '{:0>2}'   # F_PHONE_LTH PD2
+        '{:<10}'   # LAST_CHANGE $10
+        '{:<1}'    # PARSE_IND $1
+    )
+    return fmt.format(*row)
 
-# ---------------------------------------------------------------------
-# WRITE OUTPUT FILES
-# ---------------------------------------------------------------------
+with open(output_txt_path, 'w') as f:
+    for r in rows:
+        f.write(format_fixed_width(r) + '\n')
 
-# 5a: Parquet output
-pq.write_table(result_arrow, output_parquet)
-
-# 5b: Fixed-width TXT (like SAS PUT @01 '033' @05 CUSTNO $11.)
-with open(output_txt, "w", encoding="utf-8") as f:
-    for row in result_arrow.to_pydict()["custno"]:
-        line = f"{'033':<3}{row:<11}\n"
-        f.write(line)
-
-# ---------------------------------------------------------------------
-# LOG & SAMPLE OUTPUT
-# ---------------------------------------------------------------------
-print("Job: CIMULTIC - COMPLETED")
-print(f"Input File  : {input_parquet}")
-print(f"Output Parquet: {output_parquet}")
-print(f"Output TXT  : {output_txt}")
-print("\nSample Output (First 5 Rows):")
-print(con.execute("SELECT * FROM tempals LIMIT 5").fetchdf())
+print("Processing complete. Output TXT and Parquet generated.")
