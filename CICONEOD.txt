@@ -1,0 +1,121 @@
+//CICONEOD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB31513
+//*---------------------------------------------------------------------
+//* ESMR 2012-2661 UPDATE OF CUSTOMER CONSENT INTO REMARKS TABLE
+//*     THIS JOB : GET CONSENT UPDATES FROM CIDARPGS
+//* RELATED ESMR 2012-2672 CUST CONSENT STORE EXISTING RECORD(1 OFF)
+//*              2012-3001 CUST CONSENT (BDS)
+//*              2013-346 CUST CONSENT NEW CUST
+//*              2013-2146 GET ALL MISC DEMO FIELD THAT CHANGE CONSENT
+//* ESMR 2013-2007 UPDATING CONSENT FROM UNICARD TO CIS (DROPPED)
+//* ESMR 2014-827  UPDATING CONSENT FROM UNICARD TO CIS (NEW)
+//*---------------------------------------------------------------------
+//DELETE1  EXEC PGM=IEFBR14
+//DD00     DD DSN=RBP2.B033.CIDARPGS.CONSENT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//CONSENT EXEC SAS609
+//IEFRDER   DD DUMMY
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.B033.CIDARPGS.TEST
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5274V00 (4/10/12)
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5275V00 (5/10/12)
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5276V00 (6/10/12)
+//CIDARPGS  DD DISP=SHR,DSN=RBP2.B033.CIDARPGS
+//OUTFILE   DD DSN=RBP2.B033.CIDARPGS.CONSENT,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=120,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+ /*----------------------------------------------------------------*/
+ /*    DATA DECLARATION                                            */
+ /*----------------------------------------------------------------*/
+ DATA CISEOD;
+    INFILE CIDARPGS;
+       FORMAT UPDDATEX $11.
+              CUSTNOX   11.
+              UPDATEDATE $10.;
+       INPUT @003  BANKNO            PD2.
+             @024  REPORTNO          PD3.
+             @029  SORTSETNO         PD2.
+             @108  UPDATEOPERATOR     $8.
+             @116  UPDDATE           PD6.
+             @132  CUSTNO            PD6.
+             @180  MISCA              $3.
+             @193  CONSENTA           $3.
+             @203  MISCB              $3.
+             @216  CONSENTB           $3.
+             @226  MISCC              $3.
+             @239  CONSENTC           $3.
+             @249  MISCD              $3.
+             @262  CONSENTD           $3.
+             @272  MISCE              $3.
+             @285  CONSENTE           $3.
+             @295  MISCF              $3.
+             @308  CONSENTF           $3.
+             @318  MISCG              $3.
+             @331  CONSENTG           $3.
+             @341  MISCH              $3.
+             @354  CONSENTH           $3.
+             @364  MISCI              $3.
+             @377  CONSENTI           $3.
+             @387  MISCJ              $3.
+             @400  CONSENTJ           $3.;
+
+             CONSENTX = '';
+             IF ((REPORTNO = 8106) AND (SORTSETNO = 001));
+             IF  MISCA IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTA;
+             IF  MISCB IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTB;
+             IF  MISCC IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTC;
+             IF  MISCD IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTD;
+             IF  MISCE IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTE;
+             IF  MISCF IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTF;
+             IF  MISCG IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTG;
+             IF  MISCH IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTH;
+             IF  MISCI IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTI;
+             IF  MISCJ IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTJ;
+             IF  CONSENTX NE '';
+
+             CUSTNOX=CUSTNO*1;
+             APPLCODE='CUST';
+             UPDATESOURCE='BATCH';
+             IF CONSENTX='001' THEN CONSENT='Y';
+             IF CONSENTX='002' THEN CONSENT='N';
+             UPDDATEX = PUT(UPDDATE,Z11.);
+             UPDDD=SUBSTR(UPDDATEX,3,2.);
+             UPDMM=SUBSTR(UPDDATEX,1,2.);
+             UPDYY=SUBSTR(UPDDATEX,5,4.);
+             UPDATEDATE=COMPRESS(UPDYY||'-'||UPDMM||'-'||UPDDD);
+ RUN;
+ PROC SORT  DATA=CISEOD NODUPKEY;BY CUSTNOX; RUN;
+ PROC PRINT DATA=CISEOD(OBS=05);TITLE 'EOD REC   '; RUN;
+
+ DATA CONST1;
+ SET CISEOD;
+      FILE OUTFILE ;
+         PUT @01   BANKNO              Z3.
+             @04   'CUST'
+             @09   CUSTNOX            Z11.
+             @29   CONSENT             $1.
+    /*       @30   CUSTTYPE            $1.     NOT USED   */
+             @31   UPDATEDATE         $10.     /* FIRST DATE   */
+             @41   'X'                         /* NOOFPROMPT   */
+             @42   UPDATESOURCE        $5.     /* PROMPTSOURCE */
+             @47   UPDATEDATE         $10.     /* PROMPTDATE   */
+             @57   UPDATETIME          $8.     /* PROMPTTIME   */
+             @65   UPDATESOURCE        $5.
+             @70   UPDATEDATE         $10.
+             @80   UPDATETIME          $8.
+             @88   UPDATEOPERATOR      $8.;
+    /*       @96   TRXAPPLCODE          5.     NOT USED   */
+    /*       @101  TRXAPPLNO           20.;    NOT USED   */
+ RUN;
