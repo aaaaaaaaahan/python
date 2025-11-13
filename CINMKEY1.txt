@@ -1,161 +1,34 @@
-//CINMKEY1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB58828
-//*--------------------------------------------------------------------
-//*-A2016-00028065
-//*-MISSING NAME KEY
-//*- JOB CINMKEY1, CIDLTKEY , CIINCKEY
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.DEL,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL2     DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.INS,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//*AMEFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.PRIMNAME.OUT
-//NAMEFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.PRIMNAME.FB
-//DELFILE  DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.DEL,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
-//INSFILE  DD DSN=RBP2.B033.CIS.MISSING.NAMEKEY.INS,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB)
+//CIINCHKA JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB30877
+//*---------------------------------------------------------------------
+//* ESMR 2018-847 CHECK FOR FAILED RECORDS FOR ABEND
+//* ABEND 77 : INCOMPLETE FILE ( DUE TO FAILED RECORDS )
+//* JOB TO ABEND IF GOT ANY FAILED RECORDS IN JOB CIINCKEY
+//*---------------------------------------------------------------------
+//*- BACKUP FAILED RECORDS FOR CHECK AND LOAD PURPOSES
+//*---------------------------------------------------------------------
+//COPYFIL1 EXEC PGM=ICEGENER
+//SYSPRINT DD SYSOUT=X
+//SYSUT1   DD DISP=SHR,DSN=RBP2.B033.CIS.INNAMEKY.FAIL
+//SYSUT2   DD DSN=RBP2.B033.CIS.INNAMEKY.FBKP(+1),
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB),
+//            SPACE=(CYL,(100,50),RLSE)
+//SYSIN    DD DUMMY
+//*---------------------------------------------------------------------
+//*- PROCESS EMPLOYER INFORMATION (DELTA FILE)
+//*---------------------------------------------------------------------
+//SOCSOFUL EXEC SAS609
+//CIINCKEY DD DISP=SHR,DSN=RBP2.B033.CIS.INNAMEKY.FAIL
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
+OPTION NOCENTER;
+ DATA CIINCKEY;
+    RETAIN X;
+    INFILE CIINCKEY END=LAST EOF=EOFRTN;
+      INPUT @01 ALLRECS       $352.;
 
-DATA NAME;
-  INFILE NAMEFILE;
-      INPUT  @001  HOLD_CO_NO       PD2.
-             @003  BANK_NO          PD2.
-             @005  CUSTNO           $20.
-             @025  REC_TYPE         PD2.
-             @027  REC_SEQ          PD2.
-             @029  EFF_DATE         PD5.
-             @034  PROCESS_TIME     $8.
-             @042  ADR_HOLD_CO_NO   PD2.
-             @044  ADR_BANK_NO      PD2.
-             @046  ADR_REF_NO       PD6.
-             @052  CUST_TYPE        $01.
-             @053  KEY_FIELD_1      $15.
-             @068  KEY_FIELD_2      $10.
-             @078  KEY_FIELD_3      $05.
-             @083  KEY_FIELD_4      $05.
-             @088  LINE_CODE        $01.
-             @089  NAME_LINE        $40.
-             @129  LINE_CODE_1      $01.
-             @130  NAME_TITLE_1     $40.
-             @170  LINE_CODE_2      $01.
-             @171  NAME_TITLE_2     $40.
-             @211  SALUTATION       $40.
-             @251  TITLE_CODE       PD2.
-             @253  FIRST_MID        $30.
-             @283  SURNAME          $20.
-             @303  SURNAME_KEY      $03.
-             @306  SUFFIX_CODE      PD2.
-             @308  APPEND_CODE      PD2.
-             @310  PRIM_PHONE       PD6.
-             @316  P_PHONE_LTH      PD2.
-             @318  SEC_PHONE        PD6.
-             @324  S_PHONE_LTH      PD2.
-             @326  TELEX_PHONE      PD6.
-             @332  T_PHONE_LTH      PD2.
-             @334  FAX_PHONE        PD6.
-             @340  F_PHONE_LTH      PD2.
-             @343  LAST_CHANGE      $10.
-             @353  PARSE_IND        $1. ;
-       IF KEY_FIELD_1  = '';
-RUN;
-PROC SORT  DATA=NAME;BY CUSTNO;RUN;
+    EOFRTN:
+      IF _N_ NE 1  THEN ABORT 77;
 
-DATA TODELETE;
-  SET NAME;
-  FILE DELFILE;
-        PUT  @001  HOLD_CO_NO       PD2.
-             @003  BANK_NO          PD2.
-             @005  CUSTNO           $20.
-             @025  REC_TYPE         PD2.
-             @027  REC_SEQ          PD2.
-             @029  EFF_DATE         PD5.
-             @034  PROCESS_TIME     $8.
-             @042  ADR_HOLD_CO_NO   PD2.
-             @044  ADR_BANK_NO      PD2.
-             @046  ADR_REF_NO       PD6.
-             @052  CUST_TYPE        $01.
-             @053  KEY_FIELD_1      $15.
-             @068  KEY_FIELD_2      $10.
-             @078  KEY_FIELD_3      $05.
-             @083  KEY_FIELD_4      $05.
-             @088  LINE_CODE        $01.
-             @089  NAME_LINE        $40.
-             @129  LINE_CODE_1      $01.
-             @130  NAME_TITLE_1     $40.
-             @170  LINE_CODE_2      $01.
-             @171  NAME_TITLE_2     $40.
-             @211  SALUTATION       $40.
-             @251  TITLE_CODE       PD2.
-             @253  FIRST_MID        $30.
-             @283  SURNAME          $20.
-             @303  SURNAME_KEY      $03.
-             @306  SUFFIX_CODE      PD2.
-             @308  APPEND_CODE      PD2.
-             @310  PRIM_PHONE       PD6.
-             @316  P_PHONE_LTH      PD2.
-             @318  SEC_PHONE        PD6.
-             @324  S_PHONE_LTH      PD2.
-             @326  TELEX_PHONE      PD6.
-             @332  T_PHONE_LTH      PD2.
-             @334  FAX_PHONE        PD6.
-             @340  F_PHONE_LTH      PD2.
-             @342  LAST_CHANGE      $10.
-             @352  PARSE_IND        $1. ;
  RUN;
-
-DATA TOINSERT;
-  SET NAME;
-  FILE INSFILE;
-       KF1 = SCAN(NAME_LINE,1);
-       KF2 = SCAN(NAME_LINE,2);
-       KF3 = SCAN(NAME_LINE,3);
-       KF4 = SCAN(NAME_LINE,4);
-       IF PARSE_IND = '' THEN PARSE_IND = 'C';
-       PUT @001  HOLD_CO_NO          PD2.
-           @003  BANK_NO             PD2.
-           @005  CUSTNO              $20.
-           @025  REC_TYPE            PD2.
-           @027  REC_SEQ             PD2.
-           @029  EFF_DATE            PD5.
-           @034  PROCESS_TIME        $8.
-           @042  ADR_HOLD_CO_NO      PD2.
-           @044  ADR_BANK_NO         PD2.
-           @046  ADR_REF_NO          PD6.
-           @052  CUST_TYPE           $1.
-           @053  KF1                 $15.
-           @068  KF2                 $10.
-           @078  KF3                 $5.
-           @083  KF4                 $5.
-           @088  LINE_CODE           $1.
-           @089  NAME_LINE           $40.
-           @129  LINE_CODE_1         $1.
-           @130  NAME_TITLE_1        $40.
-           @170  LINE_CODE_2         $1.
-           @171  NAME_TITLE_2        $40.
-           @211  SALUTATION          $40.
-           @251  TITLE_CODE          PD2.
-           @253  FIRST_MID           $30.
-           @283  SURNAME             $20.
-           @303  SURNAME_KEY         $3.
-           @306  SUFFIX_CODE         PD2.
-           @308  APPEND_CODE         PD2.
-           @310  PRIM_PHONE          PD6.
-           @316  P_PHONE_LTH         PD2.
-           @318  SEC_PHONE           PD6.
-           @324  S_PHONE_LTH         PD2.
-           @326  TELEX_PHONE         PD6.
-           @332  T_PHONE_LTH         PD2.
-           @334  FAX_PHONE           PD6.
-           @340  F_PHONE_LTH         PD2.
-           @342  LAST_CHANGE         $10.
-           @352  PARSE_IND           $1.;
-      RETURN;
-  RUN;
+ PROC PRINT DATA=CIINCKEY(OBS=100);TITLE 'FAILED REC';RUN;
