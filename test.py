@@ -2,33 +2,334 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIINCHKA JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB30877
+//CIHKCTRL JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB58016
 //*---------------------------------------------------------------------
-//*- BACKUP FAILED RECORDS FOR CHECK AND LOAD PURPOSES
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS.HSEKEEP.CENTRAL,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DEL2     DD DSN=CIS.HSEKEEP.CENTRAL.SUM,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*---------------------------------------------------------------------
-//COPYFIL1 EXEC PGM=ICEGENER
-//SYSPRINT DD SYSOUT=X
-//SYSUT1   DD DISP=SHR,DSN=CIS.INNAMEKY.FAIL
-//SYSUT2   DD DSN=CIS.INNAMEKY.FBKP(+1),
+//GENRPT   EXEC SAS609,REGION=4M,WORK='50000,50000'
+//IEFRDER   DD DUMMY
+//ERRFILE   DD DISP=SHR,DSN=ECCRIS.BLANK.ADDR.POSTCODE
+//          DD DISP=SHR,DSN=CIS.CCRIS.ERROR
+//RPTFILE   DD DSN=CIS.HSEKEEP.CENTRAL,
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(200,200),RLSE),
+//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*  SET DATES                                                     */
+ /*----------------------------------------------------------------*/
+DATA GETDATE;
+     DT=TODAY();
+     DD=PUT(DAY(DT),Z2.);
+     MM=PUT(MONTH(DT),Z2.);
+     CCYY=PUT(YEAR(DT),Z4.);
+     YY = SUBSTR(PUT(CCYY, 4.),3,2);
+     CALL SYMPUT('DAY', PUT(DD,2.));
+     CALL SYMPUT('MONTH', PUT(MM,2.));
+     CALL SYMPUT('YEAR', PUT(CCYY,4.));
+RUN;
+ /*----------------------------------------------------------------*/
+ /* DECLARE INPUT DATA                                             */
+ /*----------------------------------------------------------------*/
+DATA CCRIS1;
+  INFILE ERRFILE;
+          INPUT @01   BRANCH            $5.
+                @06   ACCTCODE          $5.
+                @11   ACCTNOC           $20.
+                @31   PRIMSEC           $1.
+                @32   CUSTNO            $11.
+                @43   ERRORCODE         $03.
+                @46   FIELDTYPE         $20.
+                @66   FIELDVALUE        $30.
+                @96   REMARKS           $40.;
+RUN;
+
+PROC PRINT DATA = CCRIS1(OBS=10);RUN;
+PROC SORT  DATA = CCRIS1; BY BRANCH CUSTNO ACCTNOC;RUN;
+ /*----------------------------------------------------------------*/
+ /* GENERATE REPORT                                                */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+  SET CCRIS1 END=EOF;  BY BRANCH CUSTNO ACCTNOC;
+  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
+  LINECNT = 0.;
+
+  IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
+     PUT _PAGE_;
+  END;
+
+    LINECNT + 6;
+    BRCNT + 1;
+
+  LINECNT + 1;
+  PUT @1    ACCTCODE          $5.
+      @5    ACCTNOC           $20.
+      @24   CUSTNO            $11.
+      @37   FIELDTYPE         $20.
+      @57   FIELDVALUE        $30.
+      @87   REMARKS           $40.;
+  BRCUST   + 1;
+  GRCUST   + 1;
+  IF ERRORCODE = '001' THEN ERR001+1;
+  IF ERRORCODE = '002' THEN ERR002+1;
+  IF ERRORCODE = '003' THEN ERR003+1;
+  IF ERRORCODE = '004' THEN ERR004+1;
+  IF ERRORCODE = '005' THEN ERR005+1;
+  IF ERRORCODE = '100' THEN ERR100+1;
+
+  IF LAST.BRANCH AND BRCUST > 0 THEN DO;
+     IF ERR001 NE 0 THEN
+           PUT  @01 'TOTAL UNKNOWN CITIZENSHIP   = ' @45  ERR001  9.;
+     IF ERR002 NE 0 THEN
+           PUT  @01 'TOTAL BLANK ID (INDV)       = ' @45  ERR002  9.;
+     IF ERR003 NE 0 THEN
+           PUT  @01 'TOTAL BLANK ID (ORG)        = ' @45  ERR003  9.;
+     IF ERR004 NE 0 THEN
+           PUT  @01 'TOTAL BLANK DATE OF BIRTH   = ' @45  ERR004  9.;
+     IF ERR005 NE 0 THEN
+           PUT  @01 'TOTAL BLANK DATE OF REG     = ' @45  ERR005  9.;
+     IF ERR100 NE 0 THEN
+           PUT  @01 'TOTAL INVALID POSTCODE      = ' @45  ERR100  9.;
+
+     PUT  @01 'TOTAL ERRORS                = ' @45  BRCUST  9.;
+
+          ERR001  = 0;
+          ERR002  = 0;
+          ERR003  = 0;
+          ERR004  = 0;
+          ERR005  = 0;
+          ERR100  = 0;
+          BRCUST  = 0;
+          PAGECNT = 0;
+  END;
+
+     IF EOF THEN DO;
+        PUT /@3    'GRAND TOTAL OF ALL BRANCHES = '
+             @35   GRCUST     9.;
+     END;
+      RETURN;
+
+  NEWPAGE :
+    PAGECNT+1;
+    LINECNT = 0;
+
+    PUT @1   'REPORT ID   : CIS HSEKEEP RPT'
+        @55  'PUBLIC BANK BERHAD'
+        @94  'PAGE        : ' PAGECNT   4.
+       /@1   'PROGRAM ID  : CIHKCTRL'
+        @94  'REPORT DATE : ' "&DAY" '/' "&MONTH" '/' "&YEAR"
+       /@1   'BRANCH      : 00' BRANCH $5.
+        @37  "MISSING FIELDS DETECTED IN CIS SYSTEM FOR DATA SCRUBBING"
+       /@37  '========================================================';
+
+    PUT /  @1    'ACCOUNT'
+           @24   'CUSTNO'
+           @37   'FIELD TYPE'
+           @57   'FIELD VALUE'
+           @87   'REMARKS';
+    PUT /  @1    '======='
+           @24   '======'
+           @37   '=========='
+           @57   '==========='
+           @87   '=======' ;
+
+    LINECNT = 9;
+  RETURN;
+RUN;
+//*-------------------------------------------------------------------
+//GENSUM   EXEC SAS609,REGION=4M,WORK='50000,50000'
+//IEFRDER   DD DUMMY
+//ERRFILE   DD DISP=SHR,DSN=ECCRIS.BLANK.ADDR.POSTCODE
+//          DD DISP=SHR,DSN=CIS.CCRIS.ERROR
+//SUMFILE   DD DISP=(NEW,PASS),DSN=&&TOTLIST,
+//             DCB=(LRECL=150,BLKSIZE=0,RECFM=FB),
+//             UNIT=SYSDA,SPACE=(TRK,(5,5),RLSE)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*  SET DATES                                                     */
+ /*----------------------------------------------------------------*/
+DATA GETDATE;
+     DT=TODAY();
+     DD=PUT(DAY(DT),Z2.);
+     MM=PUT(MONTH(DT),Z2.);
+     CCYY=PUT(YEAR(DT),Z4.);
+     YY = SUBSTR(PUT(CCYY, 4.),3,2);
+     CALL SYMPUT('DAY', PUT(DD,2.));
+     CALL SYMPUT('MONTH', PUT(MM,2.));
+     CALL SYMPUT('YEAR', PUT(CCYY,4.));
+RUN;
+ /*----------------------------------------------------------------*/
+ /* DECLARE INPUT DATA                                             */
+ /*----------------------------------------------------------------*/
+DATA SUM1;
+  INFILE ERRFILE;
+  FORMAT ERRORDESC $40.;
+          INPUT @01   BRANCH            $5.
+                @06   ACCTCODE          $5.
+                @11   ACCTNOC           $20.
+                @31   PRIMSEC           $1.
+                @32   CUSTNO            $11.
+                @43   ERRORCODE         $03.
+                @46   FIELDTYPE         $20.
+                @66   FIELDVALUE        $30.
+                @96   REMARKS           $40.;
+     IF ERRORCODE = '001'
+        THEN ERRORDESC='EMPTY CITIZENSHIP                       ';
+     IF ERRORCODE = '002'
+        THEN ERRORDESC='EMPTY INDIVIDUAL ID                     ';
+     IF ERRORCODE = '003'
+        THEN ERRORDESC='EMPTY ORGANISATION ID                   ';
+     IF ERRORCODE = '004'
+        THEN ERRORDESC='EMPTY DATE OF BIRTH                     ';
+     IF ERRORCODE = '005'
+        THEN ERRORDESC='EMPTY DATE OF REGISTRATION              ';
+     IF ERRORCODE = '100'
+        THEN ERRORDESC='EMPTY POSTCODE                          ';
+RUN;
+
+PROC PRINT DATA = SUM1(OBS=10);RUN;
+PROC SORT  DATA = SUM1; BY ERRORCODE;RUN;
+ /*----------------------------------------------------------------*/
+ /* GENERATE SUMMARY                                               */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+  SET SUM1 END=EOF;  BY ERRORCODE;
+  FILE SUMFILE PRINT HEADER=NEWPAGE NOTITLE;
+  LINECNT = 0.;
+
+  IF  LINECNT >= 52 OR FIRST.BRANCH    THEN DO;
+     PUT _PAGE_;
+  END;
+
+    LINECNT + 6;
+    BRCNT + 1;
+
+  LINECNT + 1;
+  ERRORTOTAL + 1;
+  GRCUST   + 1;
+  IF LAST.ERRORCODE THEN DO;
+      PUT @01   ERRORCODE         $5.
+          @06   ERRORDESC         $40.
+          @47   ERRORTOTAL         9. ;
+  END;
+  IF FIRST.ERRORCODE THEN ERRORTOTAL = 1;
+
+     IF EOF THEN DO;
+        PUT /@06   'GRAND TOTAL  = '
+             @47   GRCUST     9.;
+     END;
+      RETURN;
+
+  NEWPAGE :
+    PAGECNT+1;
+    LINECNT = 0;
+
+    PUT @1   'REPORT ID   : CIS HSEKEEP SUM'
+        @53  'PUBLIC BANK BERHAD'
+        @94  'PAGE        : ' PAGECNT   4.
+       /@1   'PROGRAM ID  : CIHKCTRL'
+        @94  'REPORT DATE : ' "&DAY" '/' "&MONTH" '/' "&YEAR"
+       /@1   'BRANCH      : 0000000'
+        @47  "DATA SCRUBBING SUMMARY REPORT"
+       /@47  '=============================';
+
+    PUT /  @01   '                 ';
+    PUT /  @01   '                 ';
+    PUT /  @01   '******    OVERVIEW    ****** ';
+    PUT /  @01   '                 ';
+    PUT /  @01   'ERROR DESCRIPTION'
+           @47   'TOTAL RECORDS';
+    PUT /  @01   '================='
+           @47   '=============';
+
+    LINECNT = 9;
+  RETURN;
+RUN;
+//*--------------------------------------------------------------------
+//SUMLIST  EXEC SAS609,REGION=4M,WORK='50000,50000'
+//IEFRDER   DD DUMMY
+//REPORT    DD DISP=SHR,DSN=CIS.HSEKEEP.CENTRAL
+//SUMLIST   DD DISP=(NEW,PASS),DSN=&&SUMLIST,
+//             DCB=(LRECL=150,BLKSIZE=0,RECFM=FB),
+//             UNIT=SYSDA,SPACE=(TRK,(5,5),RLSE)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /* DECLARE INPUT DATA                                             */
+ /*----------------------------------------------------------------*/
+DATA RPT;
+  INFILE REPORT;
+    INPUT  @01   DATA              $60.
+           @46   TOTREC              9.;
+            IF TOTREC = 0 THEN DELETE;
+    IF SUBSTR(DATA,1,6)  = 'BRANCH' THEN DO;
+            BRANCH=SUBSTR(DATA,15,7);
+            RETAIN BRANCH;
+            END;
+    ELSE IF SUBSTR(DATA,1,6)  = 'TOTAL ' THEN
+            KEEPDATA=SUBSTR(DATA,1,60);
+    ELSE DELETE;
+RUN;
+
+PROC PRINT DATA = RPT(OBS=20);RUN;
+ /*----------------------------------------------------------------*/
+ /* GENERATE REPORT                                                */
+ /*----------------------------------------------------------------*/
+DATA LISTING;
+  SET RPT ;
+  FILE SUMLIST;
+  IF _N_ = 1 THEN DO;
+    PUT @1   '       ';
+    PUT @1   '       ';
+    PUT @1   '       ';
+    PUT @1   '******    SUMMARY BY BRANCH AND ERROR TYPE      ******';
+    PUT @1   '       ';
+    PUT @1   'BRANCH '
+        @10  'ERROR DESCRIPTION'
+        @51  'TOTAL RECORD';
+    PUT @1   '------ '
+        @10  '-----------------'
+        @51  '------------';
+  END;
+
+    IF SUBSTR(KEEPDATA,10,20) = '' THEN DELETE;
+    IF SUBSTR(KEEPDATA,1,17) EQ 'TOTAL ERRORS     '  THEN DO;
+           PUT @1   BRANCH     $7.
+               @10  KEEPDATA   $60.
+               @64  '**'
+              /@1 '--------------------------------'
+                  '--------------------------------';
+              END;
+    ELSE PUT @1   BRANCH     $7.
+               @10  KEEPDATA   $60.;
+
+  RETURN;
+RUN;
+PROC PRINT DATA = LISTING(OBS=20);RUN;
+//*********************************************************************
+//*CONCATENATE SUMMARY FILE
+//*********************************************************************
+//COPY     EXEC PGM=ICEGENER
+//SYSPRINT DD SYSOUT=*
+//SYSUT1   DD DISP=(OLD,DELETE),DSN=&&TOTLIST
+//         DD DISP=(OLD,DELETE),DSN=&&SUMLIST
+//SYSUT2   DD DSN=CIS.HSEKEEP.CENTRAL.SUM,
 //            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            DCB=(LRECL=353,BLKSIZE=0,RECFM=FB),
-//            SPACE=(CYL,(100,50),RLSE)
+//            DCB=(LRECL=150,BLKSIZE=0,RECFM=FB),
+//            SPACE=(TRK,(5,5),RLSE)
 //SYSIN    DD DUMMY
-//*---------------------------------------------------------------------
-//*- PROCESS EMPLOYER INFORMATION (DELTA FILE)
-//*---------------------------------------------------------------------
-//SOCSOFUL EXEC SAS609
-//CIINCKEY DD DISP=SHR,DSN=CIS.INNAMEKY.FAIL
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTION NOCENTER;
- DATA CIINCKEY;
-    RETAIN X;
-    INFILE CIINCKEY END=LAST EOF=EOFRTN;
-      INPUT @01 ALLRECS       $352.;
-
-    EOFRTN:
-      IF _N_ NE 1  THEN ABORT 77;
-
- RUN;
- PROC PRINT DATA=CIINCKEY(OBS=100);TITLE 'FAILED REC';RUN;
