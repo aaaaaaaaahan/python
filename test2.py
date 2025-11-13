@@ -1,127 +1,126 @@
 import duckdb
-import pyarrow.parquet as pq
-import pandas as pd
+import datetime
 
 # ---------------------------------------------------------------------
-# INPUT PARQUET FILES (already prepared)
+# CONFIGURATION
 # ---------------------------------------------------------------------
-CISFILE_PATH = "CIS_CUST_DAILY.parquet"
-RLEN_PATH = "UNLOAD_RLEN_CA.parquet"
-EMAILADD_PATH = "CCRIS_CISRMRK_EMAIL_FIRST.parquet"
-
-# OUTPUT FILES
-OUTPUT_PARQUET = "BTRADE_EMAILADD.parquet"
-OUTPUT_TXT = "BTRADE_EMAILADD.txt"
+input_parquet_path = "CIDARPGS.parquet"          # Input file (already Parquet)
+output_parquet_path = "CIDARPGS_CONSENT.parquet" # Output Parquet
+output_txt_path = "CIDARPGS_CONSENT.txt"         # Output text file
 
 # ---------------------------------------------------------------------
-# OPEN DUCKDB CONNECTION
+# DUCKDB PROCESSING
 # ---------------------------------------------------------------------
 con = duckdb.connect()
 
-# Register parquet files as tables
-con.execute(f"CREATE VIEW CISFILE AS SELECT * FROM read_parquet('{CISFILE_PATH}')")
-con.execute(f"CREATE VIEW RLEN AS SELECT * FROM read_parquet('{RLEN_PATH}')")
-con.execute(f"CREATE VIEW EMAIL AS SELECT * FROM read_parquet('{EMAILADD_PATH}')")
-
-# ---------------------------------------------------------------------
-# STEP 1: CREATE CIS DATASET
-# ---------------------------------------------------------------------
-con.execute("""
-CREATE OR REPLACE TEMP TABLE CIS AS
-SELECT 
-    CUSTNO, 
-    ALIAS, 
-    ALIASKEY
-FROM CISFILE
-WHERE ACCTCODE = 'LN'
-  AND PRISEC = 901
+# Load input parquet into DuckDB
+con.execute(f"""
+    CREATE OR REPLACE TABLE CISEOD AS
+    SELECT *
+    FROM read_parquet('{input_parquet_path}')
 """)
 
 # ---------------------------------------------------------------------
-# STEP 2: CREATE RLEN DATASET
+# Transform logic (convert SAS logic into SQL)
 # ---------------------------------------------------------------------
-# Simulate SAS INPUT positions (we assume columns exist in parquet)
+# This will handle:
+#  - Filtering REPORTNO=8106 and SORTSETNO=1
+#  - Deriving CONSENTX from MISC(A–J)
+#  - Mapping 001→Y, 002→N
+#  - Formatting date from UPDDATE (PD6 numeric to YYYY-MM-DD)
+#  - Add fixed constant fields
+# ---------------------------------------------------------------------
 con.execute("""
-CREATE OR REPLACE TEMP TABLE RLEN_CLEAN AS
-SELECT 
-    ACCTNOC,
-    ACCTCODE,
-    CUSTNO,
-    CAST(RLENCODE AS INTEGER) AS RLENCODE,
-    CAST(PRISEC AS INTEGER) AS PRISEC
-FROM RLEN
-WHERE ACCTCODE = 'LN'
-  AND PRISEC = 901
+    CREATE OR REPLACE TABLE CONSENT AS
+    WITH BASE AS (
+        SELECT 
+            BANKNO,
+            REPORTNO,
+            SORTSETNO,
+            UPDATEOPERATOR,
+            UPDDATE,
+            CUSTNO,
+            CASE 
+                WHEN MISCA IN ('07A','07C','07D') THEN CONSENTA
+                WHEN MISCB IN ('07A','07C','07D') THEN CONSENTB
+                WHEN MISCC IN ('07A','07C','07D') THEN CONSENTC
+                WHEN MISCD IN ('07A','07C','07D') THEN CONSENTD
+                WHEN MISCE IN ('07A','07C','07D') THEN CONSENTE
+                WHEN MISCF IN ('07A','07C','07D') THEN CONSENTF
+                WHEN MISCG IN ('07A','07C','07D') THEN CONSENTG
+                WHEN MISCH IN ('07A','07C','07D') THEN CONSENTH
+                WHEN MISCI IN ('07A','07C','07D') THEN CONSENTI
+                WHEN MISCJ IN ('07A','07C','07D') THEN CONSENTJ
+                ELSE ''
+            END AS CONSENTX
+        FROM CISEOD
+        WHERE REPORTNO = 8106 AND SORTSETNO = 1
+    ),
+    FILTERED AS (
+        SELECT *
+        FROM BASE
+        WHERE CONSENTX <> ''
+    ),
+    FINAL AS (
+        SELECT DISTINCT
+            BANKNO,
+            CUSTNO AS CUSTNOX,
+            'CUST' AS APPLCODE,
+            'BATCH' AS UPDATESOURCE,
+            CASE 
+                WHEN CONSENTX = '001' THEN 'Y'
+                WHEN CONSENTX = '002' THEN 'N'
+                ELSE ''
+            END AS CONSENT,
+            -- Convert numeric date to YYYY-MM-DD
+            CASE 
+                WHEN length(cast(UPDDATE AS VARCHAR)) = 6 THEN 
+                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),5,4) || '-' ||
+                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),3,2) || '-' ||
+                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),1,2)
+                ELSE ''
+            END AS UPDATEDATE,
+            '00000000' AS UPDATETIME,
+            UPDATEOPERATOR
+        FROM FILTERED
+    )
+    SELECT * FROM FINAL
 """)
 
 # ---------------------------------------------------------------------
-# STEP 3: CREATE EMAIL DATASET
+# OUTPUT PARQUET
 # ---------------------------------------------------------------------
-con.execute("""
-CREATE OR REPLACE TEMP TABLE EMAIL_CLEAN AS
-SELECT 
-    CUSTNO,
-    UPPER(EMAILADD) AS EMAILADD
-FROM EMAIL
+con.execute(f"""
+    COPY (SELECT * FROM CONSENT)
+    TO '{output_parquet_path}' (FORMAT PARQUET);
 """)
+print(f"✅ Parquet file created: {output_parquet_path}")
 
 # ---------------------------------------------------------------------
-# STEP 4: MERGE RLEN + EMAIL + CIS
+# OUTPUT FIXED-WIDTH TEXT
 # ---------------------------------------------------------------------
-con.execute("""
-CREATE OR REPLACE TEMP TABLE BTLIST AS
-SELECT 
-    R.CUSTNO,
-    R.ACCTNOC,
-    R.ACCTCODE,
-    C.ALIASKEY,
-    C.ALIAS,
-    E.EMAILADD,
-    CASE 
-        WHEN substr(R.ACCTNOC, 1, 3) = '025' THEN 'Y'
-        WHEN substr(R.ACCTNOC, 1, 4) = '0285' THEN 'Y'
-        ELSE NULL
-    END AS BTRADE
-FROM RLEN_CLEAN R
-JOIN EMAIL_CLEAN E ON R.CUSTNO = E.CUSTNO
-JOIN CIS C ON R.CUSTNO = C.CUSTNO
-WHERE R.ACCTCODE = 'LN'
-  AND (substr(R.ACCTNOC, 1, 3) = '025' OR substr(R.ACCTNOC, 1, 4) = '0285')
+# We can use DuckDB's string formatting functions to simulate SAS PUT positions
+# Equivalent to the SAS PUT @positions logic
+# ---------------------------------------------------------------------
+con.execute(f"""
+    COPY (
+        SELECT
+            printf('%03d', BANKNO) ||
+            'CUST' ||
+            printf('%011d', CUSTNOX) ||
+            CONSENT ||
+            UPDATEDATE ||
+            'X' ||
+            rpad(UPDATESOURCE,5,' ') ||
+            UPDATEDATE ||
+            UPDATETIME ||
+            rpad(UPDATESOURCE,5,' ') ||
+            UPDATEDATE ||
+            UPDATETIME ||
+            rpad(UPDATEOPERATOR,8,' ')
+        AS LINE
+        FROM CONSENT
+    )
+    TO '{output_txt_path}' (FORMAT CSV, DELIMITER '', HEADER FALSE);
 """)
-
-# Remove duplicates by CUSTNO + ACCTNOC
-con.execute("""
-CREATE OR REPLACE TEMP TABLE BTLIST_CLEAN AS
-SELECT DISTINCT CUSTNO, ACCTNOC, ACCTCODE, BTRADE, EMAILADD, ALIASKEY, ALIAS
-FROM BTLIST
-""")
-
-# ---------------------------------------------------------------------
-# STEP 5: EXPORT TO PARQUET
-# ---------------------------------------------------------------------
-btlist_df = con.execute("SELECT * FROM BTLIST_CLEAN").fetchdf()
-btlist_df.to_parquet(OUTPUT_PARQUET, index=False)
-print(f"✅ Parquet output saved to: {OUTPUT_PARQUET}")
-
-# ---------------------------------------------------------------------
-# STEP 6: EXPORT TO FIXED-WIDTH TEXT FILE
-# ---------------------------------------------------------------------
-with open(OUTPUT_TXT, "w", encoding="utf-8") as f:
-    for _, row in btlist_df.iterrows():
-        # follow SAS PUT formatting positions
-        line = (
-            f"{row['CUSTNO']:<11}"
-            f"{row['ALIASKEY']:<5}"
-            f"{row['ALIAS']:<20}"
-            f"{row['EMAILADD']:<60}"
-            f"{row['ACCTNOC']:<20}"
-        )
-        f.write(line + "\n")
-
-print(f"✅ Text output saved to: {OUTPUT_TXT}")
-
-# ---------------------------------------------------------------------
-# (Optional) Show sample output
-# ---------------------------------------------------------------------
-print("\nSample output:")
-print(btlist_df.head(10))
+print(f"✅ Text output created: {output_txt_path}")
