@@ -1,10 +1,5 @@
 error:
-Traceback (most recent call last):
-  File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 102, in <module>
-    write_fixed_width_txt(table, title, report_code)
-  File "/pythonITD/cis_dev/jobs/cis_internal/CIHCMRPT.py", line 60, in write_fixed_width_txt
-    txt_path = base_path / f"HCM_MATCH_{report_code}_RPT_{date_str}.txt"
-TypeError: unsupported operand type(s) for /: 'str' and 'str'
+no binding for nonlocal 'pagecnt' found
 
 program:
 import duckdb
