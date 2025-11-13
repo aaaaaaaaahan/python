@@ -1,3 +1,21 @@
+REPORT ID   : CIS HSEKEEP SUM                       PUBLIC BANK BERHAD                         PAGE        :    1      
+PROGRAM ID  : CIHKCTRL                                                                         REPORT DATE : 13/11/2025  
+BRANCH      : 0000000                         DATA SCRUBBING SUMMARY REPORT    
+                                              =============================    
+                                                                               
+******    OVERVIEW    ******                                                   
+                                                                               
+ERROR DESCRIPTION                             TOTAL RECORDS                    
+=================                             =============                    
+001  EMPTY CITIZENSHIP                              853                        
+002  EMPTY INDIVIDUAL ID                           1284                        
+003  EMPTY ORGANISATION ID                         1168                        
+004  EMPTY DATE OF BIRTH                             11                        
+005  EMPTY DATE OF REGISTRATION                     878                        
+100  EMPTY POSTCODE                                 182                        
+     GRAND TOTAL  =                                4376                        
+                                                                               
+
 ******    SUMMARY BY BRANCH AND ERROR TYPE      ******              
                                                                     
 BRANCH   ERROR DESCRIPTION                        TOTAL RECORD      
