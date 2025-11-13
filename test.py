@@ -2,115 +2,99 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CICONEOD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB31513
-//*---------------------------------------------------------------------
-//DELETE1  EXEC PGM=IEFBR14
-//DD00     DD DSN=CIDARPGS.CONSENT,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//CONSENT EXEC SAS609
-//IEFRDER   DD DUMMY
-//*CIDARPGS  DD DISP=SHR,DSN=CIDARPGS.TEST
-//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5274V00 (4/10/12)
-//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5275V00 (5/10/12)
-//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5276V00 (6/10/12)
-//CIDARPGS  DD DISP=SHR,DSN=CIDARPGS
-//OUTFILE   DD DSN=CIDARPGS.CONSENT,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
-//             DCB=(LRECL=120,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
- /*----------------------------------------------------------------*/
- /*    DATA DECLARATION                                            */
- /*----------------------------------------------------------------*/
- DATA CISEOD;
-    INFILE CIDARPGS;
-       FORMAT UPDDATEX $11.
-              CUSTNOX   11.
-              UPDATEDATE $10.;
-       INPUT @003  BANKNO            PD2.
-             @024  REPORTNO          PD3.
-             @029  SORTSETNO         PD2.
-             @108  UPDATEOPERATOR     $8.
-             @116  UPDDATE           PD6.
-             @132  CUSTNO            PD6.
-             @180  MISCA              $3.
-             @193  CONSENTA           $3.
-             @203  MISCB              $3.
-             @216  CONSENTB           $3.
-             @226  MISCC              $3.
-             @239  CONSENTC           $3.
-             @249  MISCD              $3.
-             @262  CONSENTD           $3.
-             @272  MISCE              $3.
-             @285  CONSENTE           $3.
-             @295  MISCF              $3.
-             @308  CONSENTF           $3.
-             @318  MISCG              $3.
-             @331  CONSENTG           $3.
-             @341  MISCH              $3.
-             @354  CONSENTH           $3.
-             @364  MISCI              $3.
-             @377  CONSENTI           $3.
-             @387  MISCJ              $3.
-             @400  CONSENTJ           $3.;
+//*------------------------------------------------------------------
+//STATS#01 EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
+//CUSTFILE DD DISP=SHR,DSN=CIS.CUST.DAILY
+//CONSENT  DD DISP=SHR,DSN=REMARKS.CONSENT.ALL(+1)
+//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
+//ALLFILE  DD DSN=UNICARD.MAILFLAG.ALL(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//DLYFILE  DD DSN=UNICARD.MAILFLAG.DLY(+1),
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+OPTIONS NOSORTBLKMODE;
+DATA SRSDATE;
+      INFILE CTRLDATE;
+        INPUT @001  SRSYY    4.
+              @005  SRSMM    2.
+              @007  SRSDD    2.;
 
-             CONSENTX = '';
-             IF ((REPORTNO = 8106) AND (SORTSETNO = 001));
-             IF  MISCA IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTA;
-             IF  MISCB IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTB;
-             IF  MISCC IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTC;
-             IF  MISCD IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTD;
-             IF  MISCE IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTE;
-             IF  MISCF IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTF;
-             IF  MISCG IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTG;
-             IF  MISCH IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTH;
-             IF  MISCI IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTI;
-             IF  MISCJ IN ('07A','07C','07D') THEN
-                 CONSENTX = CONSENTJ;
-             IF  CONSENTX NE '';
+      /* DISPLAY TODAY REPORTING DATE*/
+      TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+      TODAYDATE=PUT(SRSYY,Z4.)||PUT(SRSMM,Z2.)||PUT(SRSDD,Z2.);
+      CALL SYMPUT('DATE1',PUT(TODAYSAS,YYMMDD8.));
+      CALL SYMPUT('DATE2',PUT(TODAYDATE,$8.));
+RUN;
+   PROC PRINT DATA=SRSDATE (OBS=05);TITLE 'DATE';RUN;
 
-             CUSTNOX=CUSTNO*1;
-             APPLCODE='CUST';
-             UPDATESOURCE='BATCH';
-             IF CONSENTX='001' THEN CONSENT='Y';
-             IF CONSENTX='002' THEN CONSENT='N';
-             UPDDATEX = PUT(UPDDATE,Z11.);
-             UPDDD=SUBSTR(UPDDATEX,3,2.);
-             UPDMM=SUBSTR(UPDDATEX,1,2.);
-             UPDYY=SUBSTR(UPDDATEX,5,4.);
-             UPDATEDATE=COMPRESS(UPDYY||'-'||UPDMM||'-'||UPDDD);
- RUN;
- PROC SORT  DATA=CISEOD NODUPKEY;BY CUSTNOX; RUN;
- PROC PRINT DATA=CISEOD(OBS=05);TITLE 'EOD REC   '; RUN;
+DATA CONSENT;
+   INFILE CONSENT;
+   FORMAT EFFDATETIME Z14.  EFFDATETIMEX $14.;
 
- DATA CONST1;
- SET CISEOD;
-      FILE OUTFILE ;
-         PUT @01   BANKNO              Z3.
-             @04   'CUST'
-             @09   CUSTNOX            Z11.
-             @29   CONSENT             $1.
-    /*       @30   CUSTTYPE            $1.     NOT USED   */
-             @31   UPDATEDATE         $10.     /* FIRST DATE   */
-             @41   'X'                         /* NOOFPROMPT   */
-             @42   UPDATESOURCE        $5.     /* PROMPTSOURCE */
-             @47   UPDATEDATE         $10.     /* PROMPTDATE   */
-             @57   UPDATETIME          $8.     /* PROMPTTIME   */
-             @65   UPDATESOURCE        $5.
-             @70   UPDATEDATE         $10.
-             @80   UPDATETIME          $8.
-             @88   UPDATEOPERATOR      $8.;
-    /*       @96   TRXAPPLCODE          5.     NOT USED   */
-    /*       @101  TRXAPPLNO           20.;    NOT USED   */
- RUN;
+       INPUT @09    CUSTNO        $11. /* FROM CURRENT DB */
+             @29    EFFTIMESTAMP  15.
+             @44    KEYWORD       $8.
+             @52    CHANNEL       $8.
+             @380   CONSENT       $8.;
+     EFFDATETIME = 100000000000000 - EFFTIMESTAMP ;
+     EFFDATETIMEX = EFFDATETIME;
+     EFFDATE = SUBSTR(EFFDATETIMEX,1,8);
+     EFFTIME = SUBSTR(EFFDATETIMEX,9,6);
+RUN;
+   PROC SORT  DATA=CONSENT; BY CUSTNO ;RUN;
+   PROC PRINT DATA=CONSENT (OBS=05);TITLE 'CONSENT';RUN;
+
+DATA CUST;
+  KEEP CUSTNO ACCTCODE ACCTNOC ALIASKEY ALIAS TAXID;
+  SET CUSTFILE.CUSTDLY;
+   IF ACCTCODE IN ('DP   ','LN   ','EQC  ','FSF  ') THEN DELETE;
+   IF '1000000000000000' < ACCTNOC < '9999999999999999';
+   IF ALIASKEY = '' AND TAXID = '' THEN DELETE;
+   RUN;
+   PROC SORT  DATA=CUST NODUPKEY; BY ACCTNOC;RUN;
+   PROC SORT  DATA=CUST ; BY CUSTNO;RUN;
+   PROC PRINT DATA=CUST (OBS=05);TITLE 'CUST';RUN;
+
+DATA MERGE;
+   MERGE CONSENT (IN=A)  CUST (IN=B); BY CUSTNO;
+      IF A AND B;
+   RUN;
+   PROC SORT  DATA=MERGE; BY ACCTNOC;RUN;
+   PROC PRINT DATA=MERGE (OBS=05);TITLE 'MERGE';RUN;
+
+DATA ALL;
+  SET MERGE;
+  FILE ALLFILE;
+      PUT @001  ACCTNOC        $16.
+          @017  ALIASKEY       $3.
+          @020  ALIAS          $12.
+          @032  TAXID          $12.
+          @044  CONSENT        $1.
+          @045  CHANNEL        $8. ;
+  RUN;
+
+DATA DAY;
+  SET MERGE;
+  FILE DLYFILE;
+      IF &DATE2 = EFFDATE;
+      IF CHANNEL = 'UNIBATCH' THEN DELETE;
+      PUT @001  ACCTNOC        $16.
+          @017  ALIASKEY       $3.
+          @020  ALIAS          $12.
+          @032  TAXID          $12.
+          @044  CONSENT        $1.
+          @045  CHANNEL        $8. ;
+  RETURN;
+  RUN;
