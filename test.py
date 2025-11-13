@@ -2,80 +2,115 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIBTRDEM JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0132950
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=BTRADE.EMAILADD,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//STATS#01 EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//CISFILE  DD DISP=SHR,DSN=CIS.CUST.DAILY
-//RLEN#CA  DD DISP=SHR,DSN=UNLOAD.RLEN#CA
-//EMAILADD DD DISP=SHR,DSN=CCRIS.CISRMRK.EMAIL.FIRST
-//EMAILLST DD DSN=BTRADE.EMAILADD,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(200,200),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=150,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTION NOCENTER;
-DATA CIS;
-   SET CISFILE.CUSTDLY;
-   KEEP CUSTNO ALIAS ALIASKEY;
-   IF ACCTCODE = 'LN';
-   IF PRISEC = 901;
-RUN;
-PROC SORT  DATA=CIS NODUPKEY; BY CUSTNO ;RUN;
-PROC PRINT DATA=CIS(OBS=10);TITLE 'CIS';RUN;
-
+//CICONEOD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB31513
+//*---------------------------------------------------------------------
+//DELETE1  EXEC PGM=IEFBR14
+//DD00     DD DSN=CIDARPGS.CONSENT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//CONSENT EXEC SAS609
+//IEFRDER   DD DUMMY
+//*CIDARPGS  DD DISP=SHR,DSN=CIDARPGS.TEST
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5274V00 (4/10/12)
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5275V00 (5/10/12)
+//*CIDARPGS  DD DISP=SHR,DSN=RBP2.BKUP.B033.CIDARPGS.G5276V00 (6/10/12)
+//CIDARPGS  DD DISP=SHR,DSN=CIDARPGS
+//OUTFILE   DD DSN=CIDARPGS.CONSENT,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=120,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
  /*----------------------------------------------------------------*/
- /* DEFINE RLEN FILE TO GET ACCT NO                             */
+ /*    DATA DECLARATION                                            */
  /*----------------------------------------------------------------*/
- DATA RLEN;
-  INFILE RLEN#CA;
-  INPUT  @005  ACCTNOC           $20.
-         @025  ACCTCODE          $5.
-         @046  CUSTNO            $20.
-         @066  RLENCODE          PD2.
-         @068  PRISEC            PD2.;
-         RLENCD = PUT(RLENCODE,Z3.);
-         IF ACCTCODE NOT = 'LN' THEN DELETE;
-         IF PRISEC = '901';
-  RUN;
-  PROC SORT  DATA=RLEN; BY CUSTNO;RUN;
-  PROC PRINT DATA=RLEN(OBS=10); TITLE 'RLEN' ; RUN;
+ DATA CISEOD;
+    INFILE CIDARPGS;
+       FORMAT UPDDATEX $11.
+              CUSTNOX   11.
+              UPDATEDATE $10.;
+       INPUT @003  BANKNO            PD2.
+             @024  REPORTNO          PD3.
+             @029  SORTSETNO         PD2.
+             @108  UPDATEOPERATOR     $8.
+             @116  UPDDATE           PD6.
+             @132  CUSTNO            PD6.
+             @180  MISCA              $3.
+             @193  CONSENTA           $3.
+             @203  MISCB              $3.
+             @216  CONSENTB           $3.
+             @226  MISCC              $3.
+             @239  CONSENTC           $3.
+             @249  MISCD              $3.
+             @262  CONSENTD           $3.
+             @272  MISCE              $3.
+             @285  CONSENTE           $3.
+             @295  MISCF              $3.
+             @308  CONSENTF           $3.
+             @318  MISCG              $3.
+             @331  CONSENTG           $3.
+             @341  MISCH              $3.
+             @354  CONSENTH           $3.
+             @364  MISCI              $3.
+             @377  CONSENTI           $3.
+             @387  MISCJ              $3.
+             @400  CONSENTJ           $3.;
 
-DATA EMAIL;
-   INFILE EMAILADD;
-   INPUT @009     CUSTNO                      $20.
-         @052     EMAILADD                    $60. ;
-   EMAILADD = UPCASE(EMAILADD);
-RUN;
-PROC SORT  DATA=EMAIL; BY CUSTNO ;RUN;
-PROC PRINT DATA=EMAIL(OBS=10);TITLE 'EMAIL';RUN;
+             CONSENTX = '';
+             IF ((REPORTNO = 8106) AND (SORTSETNO = 001));
+             IF  MISCA IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTA;
+             IF  MISCB IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTB;
+             IF  MISCC IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTC;
+             IF  MISCD IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTD;
+             IF  MISCE IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTE;
+             IF  MISCF IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTF;
+             IF  MISCG IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTG;
+             IF  MISCH IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTH;
+             IF  MISCI IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTI;
+             IF  MISCJ IN ('07A','07C','07D') THEN
+                 CONSENTX = CONSENTJ;
+             IF  CONSENTX NE '';
 
- DATA BTLIST;
-      KEEP CUSTNO ACCTNOC ACCTCODE BTRADE EMAILADD ALIASKEY ALIAS;
- MERGE RLEN(IN=A) EMAIL (IN=B) CIS(IN=C);
-       BY CUSTNO;
- IF A AND B AND C;
- IF SUBSTR(ACCTNOC,1,3) = '025'  THEN BTRADE = 'Y';
- IF SUBSTR(ACCTNOC,1,4) = '0285' THEN BTRADE = 'Y';
- IF ACCTCODE =  'LN   ' AND BTRADE = 'Y' THEN OUTPUT BTLIST;
+             CUSTNOX=CUSTNO*1;
+             APPLCODE='CUST';
+             UPDATESOURCE='BATCH';
+             IF CONSENTX='001' THEN CONSENT='Y';
+             IF CONSENTX='002' THEN CONSENT='N';
+             UPDDATEX = PUT(UPDDATE,Z11.);
+             UPDDD=SUBSTR(UPDDATEX,3,2.);
+             UPDMM=SUBSTR(UPDDATEX,1,2.);
+             UPDYY=SUBSTR(UPDDATEX,5,4.);
+             UPDATEDATE=COMPRESS(UPDYY||'-'||UPDMM||'-'||UPDDD);
  RUN;
- PROC SORT  DATA=BTLIST NODUPKEY; BY CUSTNO ACCTNOC;RUN;
- PROC PRINT DATA=BTLIST(OBS=50);TITLE 'BTRADE LIST';RUN;
+ PROC SORT  DATA=CISEOD NODUPKEY;BY CUSTNOX; RUN;
+ PROC PRINT DATA=CISEOD(OBS=05);TITLE 'EOD REC   '; RUN;
 
- DATA DWHACCT;
- FILE EMAILLST;
-   SET BTLIST;
-       PUT @001    CUSTNO                      $11.
-           @013    ALIASKEY                    $5.
-           @018    ALIAS                       $20.
-           @039    EMAILADD                    $60.
-           @099    ACCTNOC                     $20.
-           ;
+ DATA CONST1;
+ SET CISEOD;
+      FILE OUTFILE ;
+         PUT @01   BANKNO              Z3.
+             @04   'CUST'
+             @09   CUSTNOX            Z11.
+             @29   CONSENT             $1.
+    /*       @30   CUSTTYPE            $1.     NOT USED   */
+             @31   UPDATEDATE         $10.     /* FIRST DATE   */
+             @41   'X'                         /* NOOFPROMPT   */
+             @42   UPDATESOURCE        $5.     /* PROMPTSOURCE */
+             @47   UPDATEDATE         $10.     /* PROMPTDATE   */
+             @57   UPDATETIME          $8.     /* PROMPTTIME   */
+             @65   UPDATESOURCE        $5.
+             @70   UPDATEDATE         $10.
+             @80   UPDATETIME          $8.
+             @88   UPDATEOPERATOR      $8.;
+    /*       @96   TRXAPPLCODE          5.     NOT USED   */
+    /*       @101  TRXAPPLNO           20.;    NOT USED   */
  RUN;
