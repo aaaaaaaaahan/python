@@ -1,126 +1,109 @@
 import duckdb
-import datetime
+import pyarrow as pa
+import pyarrow.parquet as pq
+from datetime import datetime
 
-# ---------------------------------------------------------------------
-# CONFIGURATION
-# ---------------------------------------------------------------------
-input_parquet_path = "CIDARPGS.parquet"          # Input file (already Parquet)
-output_parquet_path = "CIDARPGS_CONSENT.parquet" # Output Parquet
-output_txt_path = "CIDARPGS_CONSENT.txt"         # Output text file
+# -------------------------------
+# CONFIG: File paths
+# -------------------------------
+consent_file = 'consent.parquet'  # Assuming you already converted CONSENT file to Parquet
+cust_file = 'cust.parquet'        # Assuming you already converted CUSTFILE to Parquet
 
-# ---------------------------------------------------------------------
-# DUCKDB PROCESSING
-# ---------------------------------------------------------------------
+all_output_txt = 'ALLFILE.txt'
+daily_output_txt = 'DLYFILE.txt'
+all_output_parquet = 'ALLFILE.parquet'
+daily_output_parquet = 'DLYFILE.parquet'
+
+# -------------------------------
+# CREATE TODAY DATE VARIABLES
+# -------------------------------
+today = datetime.today()
+DATE1 = today.strftime('%Y%m%d')
+DATE2 = today.strftime('%Y%m%d')  # Same as SAS &DATE2
+
+# -------------------------------
+# CONNECT TO DUCKDB
+# -------------------------------
 con = duckdb.connect()
 
-# Load input parquet into DuckDB
+# -------------------------------
+# LOAD CONSENT DATA
+# -------------------------------
+# Convert EFFTIMESTAMP to inverted value like in SAS: 100000000000000 - EFFTIMESTAMP
 con.execute(f"""
-    CREATE OR REPLACE TABLE CISEOD AS
-    SELECT *
-    FROM read_parquet('{input_parquet_path}')
+    CREATE OR REPLACE VIEW consent AS
+    SELECT
+        CUSTNO,
+        100000000000000 - EFFTIMESTAMP AS EFFDATETIME,
+        CAST(100000000000000 - EFFTIMESTAMP AS VARCHAR) AS EFFDATETIMEX,
+        SUBSTR(CAST(100000000000000 - EFFTIMESTAMP AS VARCHAR), 1, 8) AS EFFDATE,
+        SUBSTR(CAST(100000000000000 - EFFTIMESTAMP AS VARCHAR), 9, 6) AS EFFTIME,
+        KEYWORD,
+        CHANNEL,
+        CONSENT
+    FROM read_parquet('{consent_file}')
 """)
 
-# ---------------------------------------------------------------------
-# Transform logic (convert SAS logic into SQL)
-# ---------------------------------------------------------------------
-# This will handle:
-#  - Filtering REPORTNO=8106 and SORTSETNO=1
-#  - Deriving CONSENTX from MISC(A–J)
-#  - Mapping 001→Y, 002→N
-#  - Formatting date from UPDDATE (PD6 numeric to YYYY-MM-DD)
-#  - Add fixed constant fields
-# ---------------------------------------------------------------------
+# -------------------------------
+# LOAD CUSTOMER DATA
+# -------------------------------
+# Filter out specific ACCTCODE, invalid ACCTNOC, and empty ALIASKEY & TAXID
+con.execute(f"""
+    CREATE OR REPLACE VIEW cust AS
+    SELECT DISTINCT *
+    FROM read_parquet('{cust_file}')
+    WHERE ACCTCODE NOT IN ('DP   ','LN   ','EQC  ','FSF  ')
+      AND ACCTNOC > '1000000000000000'
+      AND ACCTNOC < '9999999999999999'
+      AND NOT (ALIASKEY = '' AND TAXID = '')
+""")
+
+# -------------------------------
+# MERGE CONSENT AND CUSTOMER DATA
+# -------------------------------
 con.execute("""
-    CREATE OR REPLACE TABLE CONSENT AS
-    WITH BASE AS (
-        SELECT 
-            BANKNO,
-            REPORTNO,
-            SORTSETNO,
-            UPDATEOPERATOR,
-            UPDDATE,
-            CUSTNO,
-            CASE 
-                WHEN MISCA IN ('07A','07C','07D') THEN CONSENTA
-                WHEN MISCB IN ('07A','07C','07D') THEN CONSENTB
-                WHEN MISCC IN ('07A','07C','07D') THEN CONSENTC
-                WHEN MISCD IN ('07A','07C','07D') THEN CONSENTD
-                WHEN MISCE IN ('07A','07C','07D') THEN CONSENTE
-                WHEN MISCF IN ('07A','07C','07D') THEN CONSENTF
-                WHEN MISCG IN ('07A','07C','07D') THEN CONSENTG
-                WHEN MISCH IN ('07A','07C','07D') THEN CONSENTH
-                WHEN MISCI IN ('07A','07C','07D') THEN CONSENTI
-                WHEN MISCJ IN ('07A','07C','07D') THEN CONSENTJ
-                ELSE ''
-            END AS CONSENTX
-        FROM CISEOD
-        WHERE REPORTNO = 8106 AND SORTSETNO = 1
-    ),
-    FILTERED AS (
-        SELECT *
-        FROM BASE
-        WHERE CONSENTX <> ''
-    ),
-    FINAL AS (
-        SELECT DISTINCT
-            BANKNO,
-            CUSTNO AS CUSTNOX,
-            'CUST' AS APPLCODE,
-            'BATCH' AS UPDATESOURCE,
-            CASE 
-                WHEN CONSENTX = '001' THEN 'Y'
-                WHEN CONSENTX = '002' THEN 'N'
-                ELSE ''
-            END AS CONSENT,
-            -- Convert numeric date to YYYY-MM-DD
-            CASE 
-                WHEN length(cast(UPDDATE AS VARCHAR)) = 6 THEN 
-                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),5,4) || '-' ||
-                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),3,2) || '-' ||
-                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),1,2)
-                ELSE ''
-            END AS UPDATEDATE,
-            '00000000' AS UPDATETIME,
-            UPDATEOPERATOR
-        FROM FILTERED
-    )
-    SELECT * FROM FINAL
+    CREATE OR REPLACE VIEW merge_data AS
+    SELECT c.*, co.CONSENT, co.CHANNEL, co.EFFDATETIME, co.EFFDATE, co.EFFTIME
+    FROM cust c
+    INNER JOIN consent co
+    ON c.CUSTNO = co.CUSTNO
 """)
 
-# ---------------------------------------------------------------------
-# OUTPUT PARQUET
-# ---------------------------------------------------------------------
-con.execute(f"""
-    COPY (SELECT * FROM CONSENT)
-    TO '{output_parquet_path}' (FORMAT PARQUET);
-""")
-print(f"✅ Parquet file created: {output_parquet_path}")
+# -------------------------------
+# OUTPUT ALLFILE
+# -------------------------------
+all_df = con.execute("""
+    SELECT ACCTNOC, ALIASKEY, ALIAS, TAXID, CONSENT, CHANNEL
+    FROM merge_data
+    ORDER BY ACCTNOC
+""").fetchdf()
 
-# ---------------------------------------------------------------------
-# OUTPUT FIXED-WIDTH TEXT
-# ---------------------------------------------------------------------
-# We can use DuckDB's string formatting functions to simulate SAS PUT positions
-# Equivalent to the SAS PUT @positions logic
-# ---------------------------------------------------------------------
-con.execute(f"""
-    COPY (
-        SELECT
-            printf('%03d', BANKNO) ||
-            'CUST' ||
-            printf('%011d', CUSTNOX) ||
-            CONSENT ||
-            UPDATEDATE ||
-            'X' ||
-            rpad(UPDATESOURCE,5,' ') ||
-            UPDATEDATE ||
-            UPDATETIME ||
-            rpad(UPDATESOURCE,5,' ') ||
-            UPDATEDATE ||
-            UPDATETIME ||
-            rpad(UPDATEOPERATOR,8,' ')
-        AS LINE
-        FROM CONSENT
-    )
-    TO '{output_txt_path}' (FORMAT CSV, DELIMITER '', HEADER FALSE);
-""")
-print(f"✅ Text output created: {output_txt_path}")
+# TXT output like SAS PUT
+with open(all_output_txt, 'w') as f:
+    for row in all_df.itertuples(index=False):
+        f.write(f"{row.ACCTNOC:<16}{row.ALIASKEY:<3}{row.ALIAS:<12}{row.TAXID:<12}{row.CONSENT:<1}{row.CHANNEL:<8}\n")
+
+# Parquet output
+all_table = pa.Table.from_pandas(all_df)
+pq.write_table(all_table, all_output_parquet)
+
+# -------------------------------
+# OUTPUT DAILY FILE (DAY)
+# -------------------------------
+daily_df = con.execute(f"""
+    SELECT ACCTNOC, ALIASKEY, ALIAS, TAXID, CONSENT, CHANNEL
+    FROM merge_data
+    WHERE EFFDATE = '{DATE2}' AND CHANNEL != 'UNIBATCH'
+    ORDER BY ACCTNOC
+""").fetchdf()
+
+# TXT output
+with open(daily_output_txt, 'w') as f:
+    for row in daily_df.itertuples(index=False):
+        f.write(f"{row.ACCTNOC:<16}{row.ALIASKEY:<3}{row.ALIAS:<12}{row.TAXID:<12}{row.CONSENT:<1}{row.CHANNEL:<8}\n")
+
+# Parquet output
+daily_table = pa.Table.from_pandas(daily_df)
+pq.write_table(daily_table, daily_output_parquet)
+
+print("Processing completed!")
