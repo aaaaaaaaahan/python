@@ -1,169 +1,159 @@
-
 import duckdb
-from CIS_PY_READER import csv_output_path, get_hive_parquet
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
 
-# -----------------------------
-# SET DATES
-# -----------------------------
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
 
-# -----------------------------
-# CONNECT TO DUCKDB
-# -----------------------------
+# ---------------------------------------------------------------------
+# DUCKDB PROCESSING
+# ---------------------------------------------------------------------
 con = duckdb.connect()
 
-# -----------------------------
-# GET INPUT FILES
-# -----------------------------
-eccris = get_hive_parquet('ECCRIS_BLANK_ADDR_POSTCODE')
-ccris = get_hive_parquet('CIS_CCRIS_ERROR')
-
-# -----------------------------
-# PART 1: CONCAT 2 INPUT FILES
-# -----------------------------
+# Load input parquet into DuckDB
 con.execute(f"""
-CREATE TABLE ERRFILE AS
-SELECT * FROM read_parquet('{eccris[0]}')
-UNION ALL
-SELECT * FROM read_parquet('{ccris[0]}')
+    CREATE OR REPLACE TABLE CISEOD AS
+    SELECT *
+    FROM '{host_parquet_path("CIDARPGS.parquet")}'
 """)
 
+# ---------------------------------------------------------------------
+# Transform logic (convert SAS logic into SQL)
+# ---------------------------------------------------------------------
+# This will handle:
+#  - Filtering REPORTNO=8106 and SORTSETNO=1
+#  - Deriving CONSENTX from MISC(A–J)
+#  - Mapping 001→Y, 002→N
+#  - Formatting date from UPDDATE (PD6 numeric to YYYY-MM-DD)
+#  - Add fixed constant fields
+# ---------------------------------------------------------------------
 con.execute("""
-CREATE TABLE ERRFILE_SORTED AS
-SELECT *
-FROM ERRFILE
-ORDER BY BRANCH, CUSTNO, ACCTNOC;
+    CREATE OR REPLACE TABLE CONSENT AS
+    WITH BASE AS (
+        SELECT 
+            BANKNO,
+            REPORTNO,
+            SORTSETNO,
+            UPDATEOPERATOR,
+            UPDDATE,
+            CUSTNO,
+            CASE 
+                WHEN MISCA IN ('07A','07C','07D') THEN CONSENTA
+                WHEN MISCB IN ('07A','07C','07D') THEN CONSENTB
+                WHEN MISCC IN ('07A','07C','07D') THEN CONSENTC
+                WHEN MISCD IN ('07A','07C','07D') THEN CONSENTD
+                WHEN MISCE IN ('07A','07C','07D') THEN CONSENTE
+                WHEN MISCF IN ('07A','07C','07D') THEN CONSENTF
+                WHEN MISCG IN ('07A','07C','07D') THEN CONSENTG
+                WHEN MISCH IN ('07A','07C','07D') THEN CONSENTH
+                WHEN MISCI IN ('07A','07C','07D') THEN CONSENTI
+                WHEN MISCJ IN ('07A','07C','07D') THEN CONSENTJ
+                ELSE ''
+            END AS CONSENTX
+        FROM CISEOD
+        WHERE REPORTNO = 8106 AND SORTSETNO = 1
+    ),
+    FILTERED AS (
+        SELECT *
+        FROM BASE
+        WHERE CONSENTX <> ''
+    ),
+    FINAL AS (
+        SELECT DISTINCT
+            BANKNO,
+            CUSTNO AS CUSTNOX,
+            'CUST' AS APPLCODE,
+            'BATCH' AS UPDATESOURCE,
+            CASE 
+                WHEN CONSENTX = '001' THEN 'Y'
+                WHEN CONSENTX = '002' THEN 'N'
+                ELSE ''
+            END AS CONSENT,
+            -- Convert numeric date to YYYY-MM-DD
+            CASE 
+                WHEN length(cast(UPDDATE AS VARCHAR)) = 6 THEN 
+                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),5,4) || '-' ||
+                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),3,2) || '-' ||
+                    substr(lpad(cast(UPDDATE AS VARCHAR),8,'0'),1,2)
+                ELSE ''
+            END AS UPDATEDATE,
+            '00000000' AS UPDATETIME,
+            UPDATEOPERATOR
+        FROM FILTERED
+    )
+    SELECT * FROM FINAL
 """)
 
-# -----------------------------
-# PART 1: GENERATE DETAILED REPORT TXT
-# -----------------------------
-hkctrl_path = csv_output_path(f"CIS_HSEKEEP_CENTRAL_{report_date}").replace(".csv", ".txt")
+# ---------------------------------------------------------------------
+# OUTPUT PARQUET
+# ---------------------------------------------------------------------
+out = """
+    SELECT 
+        BANKNO,
+        'CUST' AS INDICATOR1,
+        CUSTNOX,
+        CONSENT,
+        UPDATEDATE,
+        'X' AS INDICATOR2,
+        UPDATESOURCE,
+        UPDATEDATE,
+        UPDATETIME,
+        UPDATESOURCE,
+        UPDATEDATE,
+        UPDATETIME,
+        UPDATEOPERATOR,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM CONSENT
+""".format(year=year,month=month,day=day)
 
-error_codes = ['001','002','003','004','005','100']
-error_desc_map = {
-    '001': 'TOTAL UNKNOWN CITIZENSHIP',
-    '002': 'TOTAL BLANK ID (INDV)',
-    '003': 'TOTAL BLANK ID (ORG)',
-    '004': 'TOTAL BLANK DATE OF BIRTH',
-    '005': 'TOTAL BLANK DATE OF REG',
-    '100': 'TOTAL INVALID POSTCODE'
+queries = {
+    "CIDARPGS_CONSENT"                      : out
 }
 
-# Fetch all records (tuple list)
-records = con.execute("SELECT * FROM ERRFILE_SORTED").fetchall()
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-# Column mapping
-col_index = {
-    'BRANCH': 0,
-    'ACCTCODE': 1,
-    'ACCTNOC': 2,
-    'PRIMSEC': 3,
-    'CUSTNO': 4,
-    'ERRORCODE': 5,
-    'FIELDTYPE': 6,
-    'FIELDVALUE': 7,
-    'REMARKS': 8
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
+
+# ---------------------------------------------------------------------
+# OUTPUT FIXED-WIDTH TEXT
+# ---------------------------------------------------------------------
+txt_queries = {
+        "CIDARPGS_CONSENT"                      : out
 }
 
-with open(hkctrl_path, "w") as rpt_file:
-    rpt_file.write(f"REPORT ID   : CIS HSEKEEP RPT{'':45}PUBLIC BANK BERHAD\n")
-    rpt_file.write(f"PROGRAM ID  : CIHKCTRL{'':55}REPORT DATE : {day}/{month}/{year}\n")
-    rpt_file.write("BRANCH      : ALL\n")
-    rpt_file.write("MISSING FIELDS DETECTED IN CIS SYSTEM FOR DATA SCRUBBING\n")
-    rpt_file.write("="*56 + "\n")
-    rpt_file.write(f"{'ACCOUNT':<23}{'CUSTNO':<12}{'FIELD TYPE':<20}{'FIELD VALUE':<30}{'REMARKS':<40}\n")
-    rpt_file.write(f"{'='*7:<7}{'='*6:<6}{'='*10:<10}{'='*11:<11}{'='*6:<6}\n")
+for txt_name, txt_query in txt_queries.items():
+    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
+    df_txt = con.execute(txt_query).fetchdf()
 
-    branch = None
-    brcust = 0
-    grcust = 0
-    err_counts = {code:0 for code in error_codes}
-
-    for rec in records:
-        rec_branch = rec[col_index['BRANCH']]
-        if branch != rec_branch:
-            branch = rec_branch
-            brcust = 0
-
-        rpt_file.write(
-            f"{rec[col_index['ACCTCODE']]:<5}"
-            f"{rec[col_index['ACCTNOC']]:<20}"
-            f"{rec[col_index['CUSTNO']]:<11}"
-            f"{rec[col_index['FIELDTYPE']]:<20}"
-            f"{rec[col_index['FIELDVALUE']]:<30}"
-            f"{rec[col_index['REMARKS']]:<40}\n"
-        )
-
-        code = rec[col_index['ERRORCODE']]
-        if code in err_counts:
-            err_counts[code] += 1
-        brcust += 1
-        grcust += 1
-
-    for code, count in err_counts.items():
-        if count != 0:
-            rpt_file.write(f"{error_desc_map[code]:<45}{count:>9}\n")
-    rpt_file.write(f"{'TOTAL ERRORS':<45}{brcust:>9}\n")
-    rpt_file.write(f"GRAND TOTAL OF ALL BRANCHES = {grcust}\n")
-
-# -----------------------------
-# PART 2: GENERATE SUMMARY (TOTLIST & SUMLIST)
-# -----------------------------
-con.execute("""
-CREATE TABLE SUM1 AS
-SELECT *,
-CASE 
-    WHEN ERRORCODE='001' THEN 'EMPTY CITIZENSHIP'
-    WHEN ERRORCODE='002' THEN 'EMPTY INDIVIDUAL ID'
-    WHEN ERRORCODE='003' THEN 'EMPTY ORGANISATION ID'
-    WHEN ERRORCODE='004' THEN 'EMPTY DATE OF BIRTH'
-    WHEN ERRORCODE='005' THEN 'EMPTY DATE OF REGISTRATION'
-    WHEN ERRORCODE='100' THEN 'EMPTY POSTCODE'
-END AS ERRORDESC
-FROM ERRFILE_SORTED;
-""")
-
-# TOTLIST: summary per error code
-totlist = con.execute("""
-SELECT ERRORCODE, ERRORDESC, COUNT(*) AS ERRORTOTAL
-FROM SUM1
-GROUP BY ERRORCODE, ERRORDESC
-ORDER BY ERRORCODE;
-""").fetchall()
-
-# SUMLIST: summary per branch
-sumlist = con.execute("""
-SELECT BRANCH, COUNT(*) AS TOTAL_ERRORS
-FROM SUM1
-GROUP BY BRANCH
-ORDER BY BRANCH;
-""").fetchall()
-
-# -----------------------------
-# PART 3: CONCAT SUMMARY & EXPORT TXT
-# -----------------------------
-sum_path_txt = csv_output_path(f"CIS_HSEKEEP_CENTRAL_SUM_{report_date}").replace(".csv", ".txt")
-
-with open(sum_path_txt, "w") as f:
-    f.write(f"REPORT ID   : CIS HSEKEEP SUM{'':40}PUBLIC BANK BERHAD\n")
-    f.write(f"PROGRAM ID  : CIHKCTRL{'':55}REPORT DATE : {day}/{month}/{year}\n")
-    f.write("DATA SCRUBBING SUMMARY REPORT\n")
-    f.write("=============================\n")
-    f.write(f"{'ERROR DESCRIPTION/BRANCH':<47}{'TOTAL RECORDS':>12}\n")
-    f.write("="*60 + "\n")
-
-    # TOTLIST
-    for rec in totlist:
-        # rec = (ERRORCODE, ERRORDESC, ERRORTOTAL)
-        f.write(f"{rec[1]:<47}{rec[2]:>12}\n")
-
-    # SUMLIST
-    for rec in sumlist:
-        # rec = (BRANCH, TOTAL_ERRORS)
-        f.write(f"{rec[0]:<47}{rec[1]:>12}\n")
-
-print("TXT reports generated successfully using fetchall() (safe for 10M+ records).")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row['BANKNO']).ljust(3)}"
+                f"{str(row['INDICATOR1']).ljust(5)}"
+                f"{str(row['CUSTNOX']).ljust(11)}"
+                f"{str(row['CONSENT']).ljust(1)}"
+                f"{str(row['UPDATEDATE']).ljust(10)}"
+                f"{str(row['INDICATOR2']).ljust(1)}"
+                f"{str(row['UPDATESOURCE']).ljust(5)}"
+                f"{str(row['UPDATEDATE']).ljust(10)}"
+                f"{str(row['UPDATETIME']).ljust(8)}"
+                f"{str(row['UPDATESOURCE']).ljust(5)}"
+                f"{str(row['UPDATEDATE']).ljust(10)}"
+                f"{str(row['UPDATETIME']).ljust(8)}"
+            )
+            f.write(line + "\n")
