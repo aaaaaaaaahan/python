@@ -5,141 +5,174 @@ import datetime
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
-DATE1 = batch_date.strftime('%Y%m%d')
-DATE2 = batch_date.strftime('%Y%m%d')
+PURGEDATE = batch_date.isoformat()
 
-# -------------------------------
-# CONNECT TO DUCKDB
-# -------------------------------
 con = duckdb.connect()
-cis = get_hive_parquet('CIS_CUST_DAILY')
 
-# -------------------------------
-# LOAD CONSENT DATA
-# -------------------------------
-# Convert EFFTIMESTAMP to inverted value like in SAS: 100000000000000 - EFFTIMESTAMP
+# -----------------------------------------------------------------
+# DESCRIPTION → CLASS, NATURE, DEPT
+# -----------------------------------------------------------------
 con.execute(f"""
-    CREATE OR REPLACE VIEW consent AS
-    SELECT
-        CUSTNO,
-        100000000000000 - CAST(EFFTIMESTAMP AS BIGINT) AS EFFDATETIME,
-        CAST(100000000000000 - CAST(EFFTIMESTAMP AS BIGINT) AS VARCHAR) AS EFFDATETIMEX,
-        SUBSTR(CAST(100000000000000 - CAST(EFFTIMESTAMP AS BIGINT) AS VARCHAR), 1, 8) AS EFFDATE,
-        SUBSTR(CAST(100000000000000 - CAST(EFFTIMESTAMP AS BIGINT) AS VARCHAR), 9, 6) AS EFFTIME,
-        KEYWORD,
-        CHANNEL,
-        CONSENT
-    FROM '{host_parquet_path("REMARKS_CONSENT_ALL.parquet")}'
+    CREATE VIEW descr_trim AS
+    SELECT TRIM(KEY_ID) AS KEY_ID,
+           KEY_CODE,
+           KEY_DESCRIBE
+    FROM '{host_parquet_path("UNLOAD_CIRHODCT_FB.parquet")}'
 """)
 
-# -------------------------------
-# LOAD CUSTOMER DATA
-# -------------------------------
-# Filter out specific ACCTCODE, invalid ACCTNOC, and empty ALIASKEY & TAXID
-con.execute(f"""
-    CREATE OR REPLACE VIEW cust AS
-    SELECT DISTINCT *
-    FROM read_parquet('{cis[0]}')
-    WHERE ACCTCODE NOT IN ('DP   ','LN   ','EQC  ','FSF  ')
-      AND ACCTNOC > '1000000000000000'
-      AND ACCTNOC < '9999999999999999'
-      AND NOT (ALIASKEY = '' AND TAXID = '')
-""")
-
-# -------------------------------
-# MERGE CONSENT AND CUSTOMER DATA
-# -------------------------------
 con.execute("""
-    CREATE OR REPLACE VIEW merge_data AS
-    SELECT c.*, co.CONSENT, co.CHANNEL, co.EFFDATETIME, co.EFFDATE, co.EFFTIME
-    FROM cust c
-    INNER JOIN consent co
-    ON c.CUSTNO = co.CUSTNO
+    CREATE VIEW class_map AS
+    SELECT 
+        KEY_CODE AS CLASS_CODE, 
+        KEY_DESCRIBE AS CLASS_DESC
+    FROM descr_trim
+    WHERE KEY_ID = 'CLASS'
 """)
 
-# -------------------------------
-# ALLFILE
-# -------------------------------
 con.execute("""
-    CREATE OR REPLACE TABLE all AS
-    SELECT ACCTNOC, ALIASKEY, ALIAS, TAXID, CONSENT, CHANNEL
-    FROM merge_data
-    ORDER BY ACCTNOC
+    CREATE VIEW nature_map AS
+    SELECT 
+        KEY_CODE AS NATURE_CODE, 
+        KEY_DESCRIBE AS NATURE_DESC
+    FROM descr_trim
+    WHERE KEY_ID = 'NATURE'
 """)
 
-# -------------------------------
-# DAILY FILE (DAY)
-# -------------------------------
+con.execute("""
+    CREATE VIEW dept_map AS
+    SELECT 
+        KEY_CODE AS DEPT_CODE, 
+        KEY_DESCRIBE AS DEPT_DESC
+    FROM descr_trim
+    WHERE KEY_ID = 'DEPT'
+""")
+
+
+# -----------------------------------------------------------------
+# CONTROL: filter
+# -----------------------------------------------------------------
 con.execute(f"""
-    CREATE OR REPLACE TABLE daily AS
-    SELECT ACCTNOC, ALIASKEY, ALIAS, TAXID, CONSENT, CHANNEL
-    FROM merge_data
-    WHERE EFFDATE = '{DATE2}' AND CHANNEL != 'UNIBATCH'
-    ORDER BY ACCTNOC
+    CREATE VIEW control AS
+    SELECT *
+    FROM '{host_parquet_path("UNLOAD_CIRHOBCT_FB.parquet")}'
+    WHERE TRIM(CLASS_CODE) = 'CLS0000004'
+      AND TRIM(NATURE_CODE) = 'NAT0000044'
 """)
 
-# ---------------------------------------------------------------------
-# OUTPUT PARQUET
-# ---------------------------------------------------------------------
-out1 = """
-    SELECT 
-        *,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM all
-""".format(year=year,month=month,day=day)
 
-out2 = """
-    SELECT 
-        *,
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM daily
-""".format(year=year,month=month,day=day)
+# -----------------------------------------------------------------
+# DETAIL FILTERING (match SAS logic)
+# -----------------------------------------------------------------
+con.execute(f"""
+    CREATE VIEW det AS
+    SELECT *,
+           MAKE_DATE(CAST(LASTMNT_YYYY AS INTEGER),
+                     CAST(LASTMNT_MM AS INTEGER),
+                     CAST(LASTMNT_DD AS INTEGER)) AS lastsas,
+           DATE_ADD('day', 732,
+              MAKE_DATE(CAST(LASTMNT_YYYY AS INTEGER),
+                        CAST(LASTMNT_MM AS INTEGER),
+                        CAST(LASTMNT_DD AS INTEGER))
+           ) AS twoyr
+    FROM '{host_parquet_path("UNLOAD_CIRHOLDT_FB.parquet")}'
+    WHERE COALESCE(TRIM(ACTV_IND),'') <> 'Y'
+""")
 
-queries = {
-    "UNICARD_MAILFLAG_ALL"                      : out1,
-    "UNICARD_MAILFLAG_DLY"                      : out2
-}
+con.execute(f"""
+    CREATE VIEW detail AS
+    SELECT *
+    FROM det
+    WHERE twoyr < DATE '{PURGEDATE}'
+""")
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
 
-    con.execute(f"""
-    COPY ({query})
-    TO '{parquet_path}'
-    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
-     """)
-    
-    con.execute(f"""
-    COPY ({query})
-    TO '{csv_path}'
-    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
-     """)
+# -----------------------------------------------------------------
+# MERGE DETAIL + CONTROL (SAS MERGE A AND B)
+# -----------------------------------------------------------------
+con.execute("""
+    CREATE VIEW first_merge AS
+    SELECT d.*,
+           c.CLASS_CODE AS CTRL_CLASS_CODE,
+           c.NATURE_CODE AS CTRL_NATURE_CODE,
+           c.DEPT_CODE AS CTRL_DEPT_CODE,
+           c.GUIDE_CODE AS CTRL_GUIDE_CODE
+    FROM detail d
+    INNER JOIN control c
+      ON TRIM(d.CLASS_ID) = TRIM(c.CLASS_ID)
+""")
 
-# ---------------------------------------------------------------------
-# OUTPUT FIXED-WIDTH TEXT
-# ---------------------------------------------------------------------
-txt_queries = {
-    "UNICARD_MAILFLAG_ALL"                      : out1,
-    "UNICARD_MAILFLAG_DLY"                      : out2
-}
 
-for txt_name, txt_query in txt_queries.items():
-    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
-    df_txt = con.execute(txt_query).fetchdf()
+# -----------------------------------------------------------------
+# ADD CLASS_DESC, NATURE_DESC, DEPT_DESC
+# -----------------------------------------------------------------
+con.execute("""
+    CREATE VIEW final_enriched AS
+    SELECT f.*,
+           cm.CLASS_DESC,
+           nm.NATURE_DESC,
+           dm.DEPT_DESC
+    FROM first_merge f
+    LEFT JOIN class_map cm  ON TRIM(f.CTRL_CLASS_CODE)  = TRIM(cm.CLASS_CODE)
+    LEFT JOIN nature_map nm ON TRIM(f.CTRL_NATURE_CODE) = TRIM(nm.NATURE_CODE)
+    LEFT JOIN dept_map dm   ON TRIM(f.CTRL_DEPT_CODE)   = TRIM(dm.DEPT_CODE)
+""")
 
-    with open(txt_path, "w", encoding="utf-8") as f:
-        for _, row in df_txt.iterrows():
-            line = (
-                f"{str(row['ACCTNOC']).ljust(16)}"
-                f"{str(row['ALIASKEY']).ljust(3)}"
-                f"{str(row['ALIAS']).ljust(12)}"
-                f"{str(row['TAXID']).ljust(12)}"
-                f"{str(row['CONSENT']).ljust(1)}"
-                f"{str(row['CHANNEL']).ljust(8)}"
-            )
-            f.write(line + "\n")
+df = con.execute("""
+    SELECT *
+    FROM final_enriched
+    ORDER BY CLASS_ID, INDORG, NAME
+""").fetchall()
+
+cols = [c[0] for c in con.execute("DESCRIBE final_enriched").fetchall()]
+
+
+# -----------------------------------------------------------------
+# WRITE PARQUET (NO pandas)
+# -----------------------------------------------------------------
+pa_table = pa.Table.from_pylist([dict(zip(cols, r)) for r in df])
+pq.write_table(pa_table, OUT_PARQUET)
+print("Generated parquet:", OUT_PARQUET)
+
+
+# -----------------------------------------------------------------
+# GENERATE FIXED-WIDTH TXT
+# -----------------------------------------------------------------
+def fw(v, w):
+    s = "" if v is None else str(v)
+    return s[:w].ljust(w)
+
+with open(OUT_TEXT, "w", encoding="utf-8") as f:
+    for r in df:
+        row = dict(zip(cols, r))
+
+        line = (
+            fw(row.get("INDORG",""), 1) +
+            fw(row.get("NAME",""), 40) +
+            fw(row.get("ID1",""), 20) +
+            fw(row.get("ID2",""), 20) +
+            fw(row.get("CLASS_ID",""), 10) +
+            fw(PURGEDATE, 10) +
+            fw(row.get("DTL_REMARK1",""), 40) +
+            fw(row.get("DTL_REMARK2",""), 40) +
+            fw(row.get("DTL_REMARK3",""), 40) +
+            fw(row.get("DTL_REMARK4",""), 40) +
+            fw(row.get("DTL_REMARK5",""), 40) +
+            fw(row.get("DTL_CRT_DATE",""), 10) +
+            fw(row.get("DTL_CRT_TIME",""), 8) +
+            fw(row.get("DTL_LASTOPERATOR",""), 8) +
+            fw(row.get("DTL_LASTMNT_DATE",""), 10) +
+            fw(row.get("DTL_LASTMNT_TIME",""), 8) +
+            fw(row.get("CTRL_CLASS_CODE",""), 10) +
+            fw(row.get("CLASS_DESC",""), 150) +
+            fw(row.get("CTRL_NATURE_CODE",""), 10) +
+            fw(row.get("NATURE_DESC",""), 150) +
+            fw(row.get("CTRL_DEPT_CODE",""), 10) +
+            fw(row.get("DEPT_DESC",""), 150) +
+            fw(row.get("CTRL_GUIDE_CODE",""), 10)
+        )
+
+        # Ensure exact 835 bytes like SAS
+        line = line[:835].ljust(835)
+        f.write(line + "\n")
+
+print("Generated TXT:", OUT_TEXT)
