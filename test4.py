@@ -4,6 +4,7 @@ import pyarrow as pa
 import duckdb
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import math
 
 # --------------------------
 # Configuration
@@ -11,8 +12,8 @@ from datetime import datetime
 folder = "input_parquets"  # folder containing Parquet files
 log_file = os.path.join(folder, "cleaning_log.txt")
 
-# Define all markers for empty values (including SAS binary/hex)
-markers = ['NULL', 'NIL', '\x00', '\x20']  # add more if needed
+# Define markers for empty values
+markers = ['NULL', 'NIL', 'NaN']
 
 # Number of parallel workers
 max_workers = 4
@@ -32,13 +33,29 @@ def log(message):
     print(message)
 
 # --------------------------
+# Helper function to detect empty values
+# --------------------------
+def is_empty_value(val):
+    if val is None:
+        return True
+    if isinstance(val, float) and math.isnan(val):
+        return True
+    if isinstance(val, bytes):
+        val = val.decode('utf-8', errors='ignore').strip()
+    if isinstance(val, str):
+        val = val.strip()
+        if val in markers or val == '':
+            return True
+    return False
+
+# --------------------------
 # Check if a file needs cleaning
 # --------------------------
 def needs_cleaning(file_path):
     table = pq.read_table(file_path)
     for col in table.schema.names:
         if pa.types.is_string(table.schema.field(col).type):
-            if any(x is None or x in markers for x in table[col].to_pylist()):
+            if any(is_empty_value(x) for x in table[col].to_pylist()):
                 return True
     return False
 
@@ -53,26 +70,24 @@ def clean_file(file_name):
             log(f"Skipping {file_name}: no empty markers found")
             return
 
-        # Read schema to build cleaning expressions
         schema = pq.read_schema(file_path)
         col_exprs = []
         for col in schema.names:
             if pa.types.is_string(schema.field(col).type):
-                # Replace NULL, NIL, SAS hex (\x00, \x20), etc. with empty string
+                # Replace NULL, NIL, NaN, NUL bytes with empty string
                 expr = f"""
-                CASE 
-                    WHEN {col} IS NULL OR {col} IN {tuple(markers)} THEN '' 
-                    ELSE {col} 
+                CASE
+                    WHEN {col} IS NULL OR {col} IN {tuple(markers)} OR LENGTH(TRIM(REPLACE({col}, '\\x00', ''))) = 0
+                    THEN '' ELSE {col}
                 END AS {col}
                 """
             else:
                 expr = col
             col_exprs.append(expr)
 
-        # Temporary file to write cleaned data
         temp_file = file_path + ".tmp"
 
-        # Directly export SELECT to Parquet without creating a table
+        # Directly export from SELECT to Parquet
         sql = f"""
         COPY (
             SELECT {', '.join(col_exprs)}
