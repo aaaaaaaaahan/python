@@ -1,9 +1,11 @@
 error:
-line 163, in <module>
-    con.execute(f"""
-duckdb.duckdb.ConversionException: Conversion Error: Could not convert string '0-' to INT32
-
-LINE 30:     FROM final_enriched
+ File "/pythonITD/cis_dev/jobs/cis_internal/CIRHIND1.py", line 193, in <module>
+    f"{str(row[{PURGEDATE}]).ljust(10)}"
+  File "/pythonITD/cis_dev/lib64/python3.9/site-packages/pandas/core/series.py", line 1096, in __getitem__
+    check_dict_or_set_indexers(key)
+  File "/pythonITD/cis_dev/lib64/python3.9/site-packages/pandas/core/indexing.py", line 2774, in check_dict_or_set_indexers
+    raise TypeError(
+TypeError: Passing a set as an indexer is not supported. Use a list instead.
 
 program:
 import duckdb
@@ -74,12 +76,12 @@ con.execute(f"""
            SUBSTR(DTL_LASTMNT_DATE,5,2) AS LASTMNT_MM,
            SUBSTR(DTL_LASTMNT_DATE,7,2) AS LASTMNT_DD,
            MAKE_DATE(CAST(SUBSTR(DTL_LASTMNT_DATE,1,4) AS INTEGER),
-                     CAST(SUBSTR(DTL_LASTMNT_DATE,5,2) AS INTEGER),
-                     CAST(SUBSTR(DTL_LASTMNT_DATE,7,2) AS INTEGER)) AS lastsas,
+                     CAST(SUBSTR(DTL_LASTMNT_DATE,6,2) AS INTEGER),
+                     CAST(SUBSTR(DTL_LASTMNT_DATE,9,2) AS INTEGER)) AS lastsas,
            DATE_ADD(
               MAKE_DATE(CAST(SUBSTR(DTL_LASTMNT_DATE,1,4) AS INTEGER),
-                        CAST(SUBSTR(DTL_LASTMNT_DATE,5,2) AS INTEGER),
-                        CAST(SUBSTR(DTL_LASTMNT_DATE,7,2) AS INTEGER)),
+                        CAST(SUBSTR(DTL_LASTMNT_DATE,6,2) AS INTEGER),
+                        CAST(SUBSTR(DTL_LASTMNT_DATE,9,2) AS INTEGER)),
               INTERVAL '732 DAY'
            ) AS twoyr
     FROM '{host_parquet_path("UNLOAD_CIRHOLDT_FB.parquet")}'
@@ -198,7 +200,7 @@ for txt_name, txt_query in txt_queries.items():
                 f"{str(row['ID1']).ljust(20)}"
                 f"{str(row['ID2']).ljust(20)}"
                 f"{str(row['CLASS_ID']).ljust(10)}"
-                f"{str(row['PURGEDATE']).ljust(10)}"
+                f"{str(row[{PURGEDATE}]).ljust(10)}"
                 f"{str(row['DTL_REMARK1']).ljust(40)}"
                 f"{str(row['DTL_REMARK2']).ljust(40)}"
                 f"{str(row['DTL_REMARK3']).ljust(40)}"
