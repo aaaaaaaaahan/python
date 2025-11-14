@@ -6,20 +6,19 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 # Configuration
-folder = "input_parquets"  # folder containing your Parquet files
+folder = "input_parquets"
 markers = ['NULL', 'NIL']
 log_file = os.path.join(folder, "cleaning_log.txt")
 
 con = duckdb.connect()
 
 def log(message):
-    """Append log message with timestamp."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, "a") as f:
         f.write(f"[{timestamp}] {message}\n")
     print(message)
 
-def needs_cleaning(file_path, markers=markers):
+def needs_cleaning(file_path):
     """Check if the parquet file contains empty markers."""
     table = pq.read_table(file_path)
     for col in table.schema.names:
@@ -47,21 +46,23 @@ def clean_file(file_name):
 
         temp_file = file_path + ".tmp"
 
+        # Directly export from SELECT to Parquet without creating a table
         sql = f"""
-        CREATE TABLE cleaned AS
-        SELECT {', '.join(col_exprs)} FROM read_parquet('{file_path}');
-        COPY cleaned TO '{temp_file}' (FORMAT PARQUET);
+        COPY (
+            SELECT {', '.join(col_exprs)}
+            FROM read_parquet('{file_path}')
+        ) TO '{temp_file}' (FORMAT PARQUET);
         """
         con.execute(sql)
 
-        # Replace original file with cleaned file
+        # Replace original file safely
         os.replace(temp_file, file_path)
         log(f"Cleaned {file_name}")
 
     except Exception as e:
         log(f"Error processing {file_name}: {e}")
 
-# Process all Parquet files in the folder in parallel
+# Process all Parquet files in parallel
 with ThreadPoolExecutor(max_workers=4) as executor:
     executor.map(clean_file, [f for f in os.listdir(folder) if f.endswith(".parquet")])
 
