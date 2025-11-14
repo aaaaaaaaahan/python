@@ -1,6 +1,9 @@
 error:
-no binding for nonlocal 'pagecnt' found
+line 163, in <module>
+    con.execute(f"""
+duckdb.duckdb.ConversionException: Conversion Error: Could not convert string '0-' to INT32
 
+LINE 30:     FROM final_enriched
 program:
 import duckdb
 import datetime
