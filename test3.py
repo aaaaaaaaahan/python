@@ -1,17 +1,20 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 import datetime
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
 PURGEDATE = batch_date.isoformat()
 
+# ----------------------------
+# Connection DUCKDB
+# ----------------------------
 con = duckdb.connect()
 
-# -----------------------------------------------------------------
-# DESCRIPTION → CLASS, NATURE, DEPT
-# -----------------------------------------------------------------
+# ----------------------------
+# DESCRIPTION TABLES
+# ----------------------------
 con.execute(f"""
     CREATE VIEW descr_trim AS
     SELECT TRIM(KEY_ID) AS KEY_ID,
@@ -20,37 +23,31 @@ con.execute(f"""
     FROM '{host_parquet_path("UNLOAD_CIRHODCT_FB.parquet")}'
 """)
 
+# CLASS, NATURE, DEPT mapping
 con.execute("""
     CREATE VIEW class_map AS
-    SELECT 
-        KEY_CODE AS CLASS_CODE, 
-        KEY_DESCRIBE AS CLASS_DESC
+    SELECT KEY_CODE AS CLASS_CODE, KEY_DESCRIBE AS CLASS_DESC
     FROM descr_trim
     WHERE KEY_ID = 'CLASS'
 """)
 
 con.execute("""
     CREATE VIEW nature_map AS
-    SELECT 
-        KEY_CODE AS NATURE_CODE, 
-        KEY_DESCRIBE AS NATURE_DESC
+    SELECT KEY_CODE AS NATURE_CODE, KEY_DESCRIBE AS NATURE_DESC
     FROM descr_trim
     WHERE KEY_ID = 'NATURE'
 """)
 
 con.execute("""
     CREATE VIEW dept_map AS
-    SELECT 
-        KEY_CODE AS DEPT_CODE, 
-        KEY_DESCRIBE AS DEPT_DESC
+    SELECT KEY_CODE AS DEPT_CODE, KEY_DESCRIBE AS DEPT_DESC
     FROM descr_trim
     WHERE KEY_ID = 'DEPT'
 """)
 
-
-# -----------------------------------------------------------------
-# CONTROL: filter
-# -----------------------------------------------------------------
+# ----------------------------
+# CONTROL TABLE
+# ----------------------------
 con.execute(f"""
     CREATE VIEW control AS
     SELECT *
@@ -59,20 +56,23 @@ con.execute(f"""
       AND TRIM(NATURE_CODE) = 'NAT0000044'
 """)
 
-
-# -----------------------------------------------------------------
-# DETAIL FILTERING (match SAS logic)
-# -----------------------------------------------------------------
+# ----------------------------
+# DETAIL TABLE (with LASTMNT extraction)
+# ----------------------------
 con.execute(f"""
     CREATE VIEW det AS
     SELECT *,
-           MAKE_DATE(CAST(LASTMNT_YYYY AS INTEGER),
-                     CAST(LASTMNT_MM AS INTEGER),
-                     CAST(LASTMNT_DD AS INTEGER)) AS lastsas,
-           DATE_ADD('day', 732,
-              MAKE_DATE(CAST(LASTMNT_YYYY AS INTEGER),
-                        CAST(LASTMNT_MM AS INTEGER),
-                        CAST(LASTMNT_DD AS INTEGER))
+           SUBSTR(DTL_LASTMNT_DATE,1,4) AS LASTMNT_YYYY,
+           SUBSTR(DTL_LASTMNT_DATE,5,2) AS LASTMNT_MM,
+           SUBSTR(DTL_LASTMNT_DATE,7,2) AS LASTMNT_DD,
+           MAKE_DATE(CAST(SUBSTR(DTL_LASTMNT_DATE,1,4) AS INTEGER),
+                     CAST(SUBSTR(DTL_LASTMNT_DATE,5,2) AS INTEGER),
+                     CAST(SUBSTR(DTL_LASTMNT_DATE,7,2) AS INTEGER)) AS lastsas,
+           DATE_ADD(
+              MAKE_DATE(CAST(SUBSTR(DTL_LASTMNT_DATE,1,4) AS INTEGER),
+                        CAST(SUBSTR(DTL_LASTMNT_DATE,5,2) AS INTEGER),
+                        CAST(SUBSTR(DTL_LASTMNT_DATE,7,2) AS INTEGER)),
+              INTERVAL '732 DAY'
            ) AS twoyr
     FROM '{host_parquet_path("UNLOAD_CIRHOLDT_FB.parquet")}'
     WHERE COALESCE(TRIM(ACTV_IND),'') <> 'Y'
@@ -85,26 +85,24 @@ con.execute(f"""
     WHERE twoyr < DATE '{PURGEDATE}'
 """)
 
-
-# -----------------------------------------------------------------
-# MERGE DETAIL + CONTROL (SAS MERGE A AND B)
-# -----------------------------------------------------------------
+# ----------------------------
+# MERGE DETAIL + CONTROL
+# ----------------------------
 con.execute("""
     CREATE VIEW first_merge AS
     SELECT d.*,
-           c.CLASS_CODE AS CTRL_CLASS_CODE,
-           c.NATURE_CODE AS CTRL_NATURE_CODE,
-           c.DEPT_CODE AS CTRL_DEPT_CODE,
-           c.GUIDE_CODE AS CTRL_GUIDE_CODE
+           c.CLASS_CODE,
+           c.NATURE_CODE,
+           c.DEPT_CODE,
+           c.GUIDE_CODE
     FROM detail d
     INNER JOIN control c
       ON TRIM(d.CLASS_ID) = TRIM(c.CLASS_ID)
 """)
 
-
-# -----------------------------------------------------------------
-# ADD CLASS_DESC, NATURE_DESC, DEPT_DESC
-# -----------------------------------------------------------------
+# ----------------------------
+# ADD CLASS, NATURE, DEPT DESCRIPTIONS
+# ----------------------------
 con.execute("""
     CREATE VIEW final_enriched AS
     SELECT f.*,
@@ -112,67 +110,105 @@ con.execute("""
            nm.NATURE_DESC,
            dm.DEPT_DESC
     FROM first_merge f
-    LEFT JOIN class_map cm  ON TRIM(f.CTRL_CLASS_CODE)  = TRIM(cm.CLASS_CODE)
-    LEFT JOIN nature_map nm ON TRIM(f.CTRL_NATURE_CODE) = TRIM(nm.NATURE_CODE)
-    LEFT JOIN dept_map dm   ON TRIM(f.CTRL_DEPT_CODE)   = TRIM(dm.DEPT_CODE)
+    LEFT JOIN class_map cm  ON TRIM(f.CLASS_CODE)  = TRIM(cm.CLASS_CODE)
+    LEFT JOIN nature_map nm ON TRIM(f.NATURE_CODE) = TRIM(nm.NATURE_CODE)
+    LEFT JOIN dept_map dm   ON TRIM(f.DEPT_CODE)   = TRIM(dm.DEPT_CODE)
 """)
 
-df = con.execute("""
-    SELECT *
+# ----------------------------
+# OUTPUT TO PARQUET, CSV, TXT (looping style)
+# ----------------------------
+rhold_query = F"""
+    SELECT 
+        INDORG,
+        NAME,
+        ID1,
+        ID2,
+        CLASS_ID,
+        {PURGEDATE},
+        DTL_REMARK1,     
+        DTL_REMARK2,     
+        DTL_REMARK3,     
+        DTL_REMARK4,     
+        DTL_REMARK5,     
+        DTL_CRT_DATE,    
+        DTL_CRT_TIME,    
+        DTL_LASTOPERATOR,
+        DTL_LASTMNT_DATE,
+        DTL_LASTMNT_TIME,
+        CLASS_CODE,  
+        CLASS_DESC,  
+        NATURE_CODE, 
+        NATURE_DESC, 
+        DEPT_CODE,   
+        DEPT_DESC,   
+        GUIDE_CODE,  
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
     FROM final_enriched
     ORDER BY CLASS_ID, INDORG, NAME
-""").fetchall()
+""".format(year=year,month=month,day=day)
 
-cols = [c[0] for c in con.execute("DESCRIBE final_enriched").fetchall()]
+# Dictionary of outputs for parquet & CSV
+queries = {
+    "RHOLD_LIST_TOSET":              rhold_query
+    }
 
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
 
-# -----------------------------------------------------------------
-# WRITE PARQUET (NO pandas)
-# -----------------------------------------------------------------
-pa_table = pa.Table.from_pylist([dict(zip(cols, r)) for r in df])
-pq.write_table(pa_table, OUT_PARQUET)
-print("Generated parquet:", OUT_PARQUET)
+    # COPY to Parquet with partitioning
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
+    """)
 
+    # COPY to CSV with header
+    con.execute(f"""
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE TRUE)
+    """)
 
-# -----------------------------------------------------------------
-# GENERATE FIXED-WIDTH TXT
-# -----------------------------------------------------------------
-def fw(v, w):
-    s = "" if v is None else str(v)
-    return s[:w].ljust(w)
+# Dictionary for fixed-width TXT
+txt_queries = {
+        "RHOLD_LIST_TOSET":              rhold_query
+    }
 
-with open(OUT_TEXT, "w", encoding="utf-8") as f:
-    for r in df:
-        row = dict(zip(cols, r))
+for txt_name, txt_query in txt_queries.items():
+    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
+    df_txt = con.execute(txt_query).fetchdf()
 
-        line = (
-            fw(row.get("INDORG",""), 1) +
-            fw(row.get("NAME",""), 40) +
-            fw(row.get("ID1",""), 20) +
-            fw(row.get("ID2",""), 20) +
-            fw(row.get("CLASS_ID",""), 10) +
-            fw(PURGEDATE, 10) +
-            fw(row.get("DTL_REMARK1",""), 40) +
-            fw(row.get("DTL_REMARK2",""), 40) +
-            fw(row.get("DTL_REMARK3",""), 40) +
-            fw(row.get("DTL_REMARK4",""), 40) +
-            fw(row.get("DTL_REMARK5",""), 40) +
-            fw(row.get("DTL_CRT_DATE",""), 10) +
-            fw(row.get("DTL_CRT_TIME",""), 8) +
-            fw(row.get("DTL_LASTOPERATOR",""), 8) +
-            fw(row.get("DTL_LASTMNT_DATE",""), 10) +
-            fw(row.get("DTL_LASTMNT_TIME",""), 8) +
-            fw(row.get("CTRL_CLASS_CODE",""), 10) +
-            fw(row.get("CLASS_DESC",""), 150) +
-            fw(row.get("CTRL_NATURE_CODE",""), 10) +
-            fw(row.get("NATURE_DESC",""), 150) +
-            fw(row.get("CTRL_DEPT_CODE",""), 10) +
-            fw(row.get("DEPT_DESC",""), 150) +
-            fw(row.get("CTRL_GUIDE_CODE",""), 10)
-        )
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row['INDORG']).ljust(1)}"
+                f"{str(row['NAME']).ljust(40)}"
+                f"{str(row['ID1']).ljust(20)}"
+                f"{str(row['ID2']).ljust(20)}"
+                f"{str(row['CLASS_ID']).ljust(10)}"
+                f"{str(row['PURGEDATE']).ljust(10)}"
+                f"{str(row['DTL_REMARK1']).ljust(40)}"
+                f"{str(row['DTL_REMARK2']).ljust(40)}"
+                f"{str(row['DTL_REMARK3']).ljust(40)}"
+                f"{str(row['DTL_REMARK4']).ljust(40)}"
+                f"{str(row['DTL_REMARK5']).ljust(40)}"
+                f"{str(row['DTL_CRT_DATE']).ljust(10)}"
+                f"{str(row['DTL_CRT_TIME']).ljust(8)}"
+                f"{str(row['DTL_LASTOPERATOR']).ljust(8)}"
+                f"{str(row['DTL_LASTMNT_DATE']).ljust(10)}"
+                f"{str(row['DTL_LASTMNT_TIME']).ljust(8)}"
+                f"{str(row['CTRL_CLASS_CODE']).ljust(10)}"
+                f"{str(row['CLASS_DESC']).ljust(150)}"
+                f"{str(row['CTRL_NATURE_CODE']).ljust(10)}"
+                f"{str(row['NATURE_DESC']).ljust(150)}"
+                f"{str(row['CTRL_DEPT_CODE']).ljust(10)}"
+                f"{str(row['DEPT_DESC']).ljust(150)}"
+                f"{str(row['CTRL_GUIDE_CODE']).ljust(10)}"
+            )
+            f.write(line + "\n")
 
-        # Ensure exact 835 bytes like SAS
-        line = line[:835].ljust(835)
-        f.write(line + "\n")
-
-print("Generated TXT:", OUT_TEXT)
+print("Generated parquet, CSV, and fixed-width TXT for RHOLD_LIST_TOSET")
