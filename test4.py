@@ -12,8 +12,8 @@ import math
 folder = "input_parquets"  # folder containing Parquet files
 log_file = os.path.join(folder, "cleaning_log.txt")
 
-# Define markers for empty values
-markers = ['NULL', 'NIL', 'NaN']
+# Empty markers
+markers = ['NULL', 'NIL', 'NaN']  # uppercased for case-insensitive match
 
 # Number of parallel workers
 max_workers = 4
@@ -41,10 +41,13 @@ def is_empty_value(val):
     if isinstance(val, float) and math.isnan(val):
         return True
     if isinstance(val, bytes):
+        # Treat SAS-style all-zero bytes as empty
+        if val.hex() == '000000':
+            return True
         val = val.decode('utf-8', errors='ignore').strip()
     if isinstance(val, str):
-        val = val.strip()
-        if val in markers or val == '':
+        val = val.strip().upper()
+        if val == '' or val in markers:
             return True
     return False
 
@@ -72,13 +75,17 @@ def clean_file(file_name):
 
         schema = pq.read_schema(file_path)
         col_exprs = []
+
         for col in schema.names:
             if pa.types.is_string(schema.field(col).type):
-                # Replace NULL, NIL, NaN, NUL bytes with empty string
+                # DuckDB SQL expression to clean string columns
                 expr = f"""
-                CASE
-                    WHEN {col} IS NULL OR {col} IN {tuple(markers)} OR LENGTH(TRIM(REPLACE({col}, '\\x00', ''))) = 0
-                    THEN '' ELSE {col}
+                CASE 
+                    WHEN {col} IS NULL
+                         OR UPPER({col}) IN {tuple(markers)}
+                         OR LENGTH(TRIM(REPLACE({col}, '\\x00', ''))) = 0
+                    THEN ''
+                    ELSE {col}
                 END AS {col}
                 """
             else:
@@ -87,7 +94,7 @@ def clean_file(file_name):
 
         temp_file = file_path + ".tmp"
 
-        # Directly export from SELECT to Parquet
+        # Export cleaned data directly to Parquet
         sql = f"""
         COPY (
             SELECT {', '.join(col_exprs)}
@@ -96,7 +103,7 @@ def clean_file(file_name):
         """
         con.execute(sql)
 
-        # Overwrite original file safely
+        # Overwrite original file
         os.replace(temp_file, file_path)
         log(f"Cleaned {file_name}")
 
