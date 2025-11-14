@@ -9,63 +9,75 @@ import math
 # --------------------------
 # Configuration
 # --------------------------
-folder = "/host/cis/parquet/sas_parquet_test_jkh"  # folder containing Parquet files
-log_file = os.path.join(folder, "/host/cis/logs/cleaning_log.txt")
+folder = "/host/cis/parquet/sas_parquet_test_jkh"   # Folder containing Parquet files
+log_file = "/host/cis/logs/cleaning_log.txt"
 
 # Empty markers
-markers = ['NULL', 'NIL', 'NaN']  # uppercased for case-insensitive match
+markers = ['NULL', 'NIL', 'NaN']
 
-# Number of parallel workers
 max_workers = 4
 
 # --------------------------
-# Setup DuckDB connection
+# Setup DuckDB
 # --------------------------
 con = duckdb.connect()
 
 # --------------------------
-# Logging function
+# Logging
 # --------------------------
-def log(message):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def log(msg):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(log_file, "a") as f:
-        f.write(f"[{timestamp}] {message}\n")
-    print(message)
+        f.write(f"[{ts}] {msg}\n")
+    print(msg)
 
 # --------------------------
-# Helper function to detect empty values
+# Helper: Detect empty / zero-null binary
 # --------------------------
 def is_empty_value(val):
     if val is None:
         return True
+
     if isinstance(val, float) and math.isnan(val):
         return True
+
+    # --- NEW: handle binary ----
     if isinstance(val, bytes):
-        # Treat SAS-style all-zero bytes as empty
-        if val.hex() == '000000':
+        hexv = val.hex()
+        # If hex is all zeros (any length)
+        if len(hexv) > 0 and set(hexv) == {"0"}:
             return True
-        val = val.decode('utf-8', errors='ignore').strip()
+
+        # Try decoding safely
+        sval = val.decode("utf-8", errors="ignore").replace("\x00", "").strip()
+        return sval == ""
+
+    # --- STRING handling ----
     if isinstance(val, str):
-        val = val.strip().upper()
-        if val == '' or val in markers:
+        cleaned = val.replace("\x00", "").strip()
+        if cleaned == "":
             return True
+        if cleaned.upper() in markers:
+            return True
+
     return False
 
 # --------------------------
-# Check if a file needs cleaning
+# Pre-check: does file NEED cleaning?
 # --------------------------
 def needs_cleaning(file_path):
     table = pq.read_table(file_path)
     for col in table.schema.names:
-        if pa.types.is_string(table.schema.field(col).type):
-            if any(is_empty_value(x) for x in table[col].to_pylist()):
-                return True
+        arr = table[col].to_pylist()
+        if any(is_empty_value(v) for v in arr):
+            return True
     return False
 
 # --------------------------
-# Clean a single Parquet file
+# Clean one parquet file
 # --------------------------
 def clean_file(file_name):
+
     file_path = os.path.join(folder, file_name)
 
     try:
@@ -77,47 +89,49 @@ def clean_file(file_name):
         col_exprs = []
 
         for col in schema.names:
-            if pa.types.is_string(schema.field(col).type):
-                # DuckDB SQL expression to clean string columns
+            ftype = schema.field(col).type
+
+            if pa.types.is_string(ftype) or pa.types.is_binary(ftype):
+                # --- DuckDB cleaning logic ---
                 expr = f"""
-                CASE 
+                CASE
                     WHEN {col} IS NULL
-                         OR UPPER({col}) IN {tuple(markers)}
-                         OR LENGTH(TRIM(REPLACE({col}, '\\x00', ''))) = 0
+                    OR LENGTH(REPLACE(CAST({col} AS VARCHAR), '\\x00', '')) = 0
+                    OR UPPER(REPLACE(CAST({col} AS VARCHAR), '\\x00', '')) IN {tuple(markers)}
                     THEN ''
-                    ELSE {col}
+                    ELSE CAST({col} AS VARCHAR)
                 END AS {col}
                 """
             else:
                 expr = col
+
             col_exprs.append(expr)
 
         temp_file = file_path + ".tmp"
 
-        # Export cleaned data directly to Parquet
         sql = f"""
         COPY (
-            SELECT {', '.join(col_exprs)}
+            SELECT {", ".join(col_exprs)}
             FROM read_parquet('{file_path}')
         ) TO '{temp_file}' (FORMAT PARQUET);
         """
-        con.execute(sql)
 
-        # Overwrite original file
+        con.execute(sql)
         os.replace(temp_file, file_path)
+
         log(f"Cleaned {file_name}")
 
     except Exception as e:
         log(f"Error processing {file_name}: {e}")
 
 # --------------------------
-# Process all Parquet files in parallel
+# Parallel processing
 # --------------------------
 if __name__ == "__main__":
     files = [f for f in os.listdir(folder) if f.endswith(".parquet")]
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        executor.map(clean_file, files)
+    with ThreadPoolExecutor(max_workers=max_workers) as exe:
+        exe.map(clean_file, files)
 
     con.close()
     log("All done!")
