@@ -2,99 +2,208 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//*------------------------------------------------------------------
-//STATS#01 EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,(500,500))
-//CUSTFILE DD DISP=SHR,DSN=CIS.CUST.DAILY
-//CONSENT  DD DISP=SHR,DSN=REMARKS.CONSENT.ALL(+1)
+//CIRHIND1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      J0063657
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DLT1     DD DSN=RHOLD.LIST.TOSET,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* EXTRACTION OF PURGING RECORDS IN RHOLD TABLE
+//*---------------------------------------------------------------------
+//RHOLDLST EXEC SAS609
+//IEFRDER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
 //CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
-//ALLFILE  DD DSN=UNICARD.MAILFLAG.ALL(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//DLYFILE  DD DSN=UNICARD.MAILFLAG.DLY(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(300,300),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTIONS NOSORTBLKMODE;
-DATA SRSDATE;
-      INFILE CTRLDATE;
-        INPUT @001  SRSYY    4.
-              @005  SRSMM    2.
-              @007  SRSDD    2.;
+//CIRHOBCT  DD DISP=SHR,DSN=UNLOAD.CIRHOBCT.FB
+//CIRHODCT  DD DISP=SHR,DSN=UNLOAD.CIRHODCT.FB
+//CIRHOLDT  DD DISP=SHR,DSN=UNLOAD.CIRHOLDT.FB
+//OUTFILE   DD DSN=RHOLD.LIST.TOSET,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(5,20),RLSE),
+//             DCB=(LRECL=835,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=20;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*    GET SAS DATE AND TODAY REPORTING DATE                       */
+ /*----------------------------------------------------------------*/
+ DATA SRSDATE;
+     INFILE CTRLDATE;
+     INPUT @001  SRSYY    4.
+           @001  YYYY     $4.
+           @005  SRSMM    2.
+           @005  MM       $2.
+           @007  SRSDD    2.
+           @007  DD       $2.;
 
-      /* DISPLAY TODAY REPORTING DATE*/
-      TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-      TODAYDATE=PUT(SRSYY,Z4.)||PUT(SRSMM,Z2.)||PUT(SRSDD,Z2.);
-      CALL SYMPUT('DATE1',PUT(TODAYSAS,YYMMDD8.));
-      CALL SYMPUT('DATE2',PUT(TODAYDATE,$8.));
-RUN;
-   PROC PRINT DATA=SRSDATE (OBS=05);TITLE 'DATE';RUN;
-
-DATA CONSENT;
-   INFILE CONSENT;
-   FORMAT EFFDATETIME Z14.  EFFDATETIMEX $14.;
-
-       INPUT @09    CUSTNO        $11. /* FROM CURRENT DB */
-             @29    EFFTIMESTAMP  15.
-             @44    KEYWORD       $8.
-             @52    CHANNEL       $8.
-             @380   CONSENT       $8.;
-     EFFDATETIME = 100000000000000 - EFFTIMESTAMP ;
-     EFFDATETIMEX = EFFDATETIME;
-     EFFDATE = SUBSTR(EFFDATETIMEX,1,8);
-     EFFTIME = SUBSTR(EFFDATETIMEX,9,6);
-RUN;
-   PROC SORT  DATA=CONSENT; BY CUSTNO ;RUN;
-   PROC PRINT DATA=CONSENT (OBS=05);TITLE 'CONSENT';RUN;
-
-DATA CUST;
-  KEEP CUSTNO ACCTCODE ACCTNOC ALIASKEY ALIAS TAXID;
-  SET CUSTFILE.CUSTDLY;
-   IF ACCTCODE IN ('DP   ','LN   ','EQC  ','FSF  ') THEN DELETE;
-   IF '1000000000000000' < ACCTNOC < '9999999999999999';
-   IF ALIASKEY = '' AND TAXID = '' THEN DELETE;
+   /* DISPLAY TODAY REPORTING DATE*/
+     TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+     TODAYDB2=YYYY||'-'||MM||'-'||DD;
+     CALL SYMPUT('TODAYDATE',TODAYSAS);
+     CALL SYMPUT('DB2DATE',TODAYDB2);
+ RUN;
+ PROC PRINT DATA=SRSDATE(OBS=5);TITLE 'DATE FILE';RUN;
+ /*----------------------------------------------------------------*/
+ /*    DESCRIPTION                                                 */
+ /*----------------------------------------------------------------*/
+   DATA DESCRIBE CLASS DEPT NATURE;
+     INFILE CIRHODCT;
+         INPUT @001 KEY_ID                  $10.
+               @011 KEY_CODE                $10.
+               @021 KEY_DESCRIBE            $150.
+               @171 KEY_REMARK_ID1          $10.
+               @181 KEY_REMARK_1            $50.
+               @231 KEY_REMARK_ID2          $10.
+               @241 KEY_REMARK_2            $50.
+               @291 KEY_REMARK_ID3          $10.
+               @301 KEY_REMARK_3            $50.
+               @351 DESC_LASTOPERATOR       $8.
+               @359 DESC_LASTMNT_DATE       $10.
+               @369 DESC_LASTMNT_TIME       $8.  ;
+         IF KEY_ID = 'CLASS ' THEN OUTPUT CLASS ;
+         IF KEY_ID = 'DEPT  ' THEN OUTPUT DEPT  ;
+         IF KEY_ID = 'NATURE' THEN OUTPUT NATURE;
    RUN;
-   PROC SORT  DATA=CUST NODUPKEY; BY ACCTNOC;RUN;
-   PROC SORT  DATA=CUST ; BY CUSTNO;RUN;
-   PROC PRINT DATA=CUST (OBS=05);TITLE 'CUST';RUN;
 
-DATA MERGE;
-   MERGE CONSENT (IN=A)  CUST (IN=B); BY CUSTNO;
-      IF A AND B;
+ DATA CLASS (INDEX=(CLASS_CODE/UNIQUE/NOMISS));
+ SET CLASS;
+      KEEP CLASS_CODE CLASS_DESC;
+      CLASS_CODE=KEY_CODE;
+      CLASS_DESC=KEY_DESCRIBE;
+ RUN;
+
+ DATA NATURE (INDEX=(NATURE_CODE/UNIQUE/NOMISS));
+ SET NATURE;
+      KEEP NATURE_CODE NATURE_DESC;
+      NATURE_CODE=KEY_CODE;
+      NATURE_DESC=KEY_DESCRIBE;
+ RUN;
+
+ DATA DEPT   (INDEX=(DEPT_CODE/UNIQUE/NOMISS));
+ SET DEPT;
+      DEPT_CODE=KEY_CODE;
+      DEPT_DESC=KEY_DESCRIBE;
+ RUN;
+ /*----------------------------------------------------------------*/
+ /*    CONTROL LIST                                                */
+ /*----------------------------------------------------------------*/
+   DATA CONTROL;
+     INFILE CIRHOBCT;
+         INPUT @01  CLASS_CODE             $10.
+               @11  NATURE_CODE            $10.
+               @21  DEPT_CODE              $10.
+               @31  GUIDE_CODE             $10.
+               @41  CLASS_ID               $10.
+               @51  CTRL_OPERATOR           $8.
+               @59  CTRL_LASTMNT_DATE      $10.
+               @69  CTRL_LASTMNT_TIME       $8.  ;
+         IF CLASS_CODE  EQ 'CLS0000004' AND
+            NATURE_CODE EQ 'NAT0000044' THEN OUTPUT;
    RUN;
-   PROC SORT  DATA=MERGE; BY ACCTNOC;RUN;
-   PROC PRINT DATA=MERGE (OBS=05);TITLE 'MERGE';RUN;
+ PROC SORT  DATA=CONTROL; BY CLASS_ID ; RUN;
+ PROC PRINT DATA=CONTROL; TITLE 'CONTROL' ; RUN;
+ /*----------------------------------------------------------------*/
+ /*    DETAIL LISTING                                              */
+ /*----------------------------------------------------------------*/
+   DATA DETAIL;
+     FORMAT PURGEDATE $10.;
+     PURGEDATE = "&DB2DATE";
+     INFILE CIRHOLDT;
+         INPUT @001 CLASS_ID              $10.
+               @011 INDORG                $01.
+               @012 NAME                  $40.
+               @052 ID1                   $20.
+               @072 ID2                   $20.
+               @092 DTL_REMARK1           $40.
+               @132 DTL_REMARK2           $40.
+               @172 DTL_REMARK3           $40.
+               @212 DTL_REMARK4           $40.
+               @252 DTL_REMARK5           $40.
+               @292 DTL_CRT_DATE          $10.
+               @302 DTL_CRT_TIME          $08.
+               @310 DTL_LASTOPERATOR      $08.
+               @318 DTL_LASTMNT_DATE      $10.
+               @318 LASTMNT_YYYY          $04.
+               @323 LASTMNT_MM            $02.
+               @326 LASTMNT_DD            $02.
+               @328 DTL_LASTMNT_TIME      $08.
+               @519 ACTV_IND              $01.;
 
-DATA ALL;
-  SET MERGE;
-  FILE ALLFILE;
-      PUT @001  ACCTNOC        $16.
-          @017  ALIASKEY       $3.
-          @020  ALIAS          $12.
-          @032  TAXID          $12.
-          @044  CONSENT        $1.
-          @045  CHANNEL        $8. ;
+         IF ACTV_IND = 'Y' THEN DELETE; /*TO EXCLUDE UPDATE FOR PREV*/
+         LASTSAS=MDY(LASTMNT_MM,LASTMNT_DD,LASTMNT_YYYY);
+         TWOYR=LASTSAS + 732;
+         IF TWOYR LT "&TODAYDATE" THEN OUTPUT;
   RUN;
+ PROC SORT DATA=DETAIL; BY CLASS_ID; RUN;
+ PROC PRINT DATA=DETAIL(OBS=10); TITLE 'DETAIL'; RUN;
+ /*------------------------------------------------------------------*/
+ /*- MERGE DETAIL AND CONTROL                                       -*/
+ /*------------------------------------------------------------------*/
+ DATA FIRST;
+     MERGE DETAIL(IN=A) CONTROL(IN=B);BY CLASS_ID;
+         IF A AND B;
+ RUN;
 
-DATA DAY;
-  SET MERGE;
-  FILE DLYFILE;
-      IF &DATE2 = EFFDATE;
-      IF CHANNEL = 'UNIBATCH' THEN DELETE;
-      PUT @001  ACCTNOC        $16.
-          @017  ALIASKEY       $3.
-          @020  ALIAS          $12.
-          @032  TAXID          $12.
-          @044  CONSENT        $1.
-          @045  CHANNEL        $8. ;
-  RETURN;
-  RUN;
+ DATA CLASS_DESC;          /* CLASS DESCRIPTION */
+      SET FIRST;
+      SET CLASS     KEY=CLASS_CODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ DATA NATURE_DESC;          /* NATURE DESCRIPTION */
+      SET CLASS_DESC;
+      SET NATURE    KEY=NATURE_CODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+
+ DATA DEPT_DESC;            /* DEPARTMENT DESCRIPTION */
+      SET NATURE_DESC;
+      SET DEPT      KEY=DEPT_CODE;
+      IF _IORC_ THEN DO;
+         _ERROR_ = 0;
+         _IORC_ = 0;
+         END;
+ RUN;
+ PROC SORT DATA=DEPT_DESC; BY CLASS_ID INDORG NAME; RUN;
+
+ /*-------------------------------------------------------*/
+ /*- FULL FILE DETAILS                                   -*/
+ /*-------------------------------------------------------*/
+ DATA OUT;
+ SET DEPT_DESC;
+     FILE OUTFILE;
+     PUT @001     INDORG                 $01.
+         @002     NAME                   $40.
+         @042     ID1                    $20.
+         @062     ID2                    $20.
+         @082     CLASS_ID               $10.
+         @092     PURGEDATE              $10.
+         @102     DTL_REMARK1            $40.
+         @142     DTL_REMARK2            $40.
+         @182     DTL_REMARK3            $40.
+         @222     DTL_REMARK4            $40.
+         @262     DTL_REMARK5            $40.
+         @302     DTL_CRT_DATE           $10.
+         @312     DTL_CRT_TIME           $08.
+         @320     DTL_LASTOPERATOR       $08.
+         @328     DTL_LASTMNT_DATE       $10.
+         @338     DTL_LASTMNT_TIME       $08.
+         @346     CLASS_CODE             $10.
+         @356     CLASS_DESC             $150.
+         @506     NATURE_CODE            $10.
+         @516     NATURE_DESC            $150.
+         @666     DEPT_CODE              $10.
+         @676     DEPT_DESC              $150.
+         @826     GUIDE_CODE             $10. ;
+ RUN;
