@@ -1,20 +1,86 @@
- 101                   8106 1                                                                                                   OPR00001  240101          10000000001                                                                                                                                                           07A         001                                                                                                                                                                                                                                                                                                                  
- 102                   8106 1                                                                                                   OPR00002  240102          10000000002                                                                                                                                                           07C         002                                                                                                                                                                                                                                                                                                                  
- 103                   8106 2                                                                                                   OPR00003  240103          10000000003                                                                                                                                                           07D         001                                                                                                                                                                                                                                                                                                                  
- 104                   8200 1                                                                                                   OPR00004  240104          10000000004                                                                                                                                                           07A         001                                                                                                                                                                                                                                                                                                                  
- 105                   8106 1                                                                                                   OPR00005  240105          10000000005                                                                                                                                                           07B         002                                                                                                                                                                                                                                                                                                                  
- 106                   8106 1                                                                                                   OPR00006  240106          10000000006                                                                                                                                                           07A         001                                                                                                                                                                                                                                                                                                                  
- 107                   8106 3                                                                                                   OPR00007  240107          10000000007                                                                                                                                                           07C         002                                                                                                                                                                                                                                                                                                                  
- 108                   8106 1                                                                                                   OPR00008  240108          10000000008                                                                                                                                                           07D         001                                                                                                                                                                                                                                                                                                                  
- 109                   8105 1                                                                                                   OPR00009  240109          10000000009                                                                                                                                                           07A         002                                                                                                                                                                                                                                                                                                                  
- 110                   8106 1                                                                                                   OPR00010  240110          10000000010                                                                                                                                                           07A         001                                                                                                                                                                                                                                                                                                                  
- 111                   8106 1                                                                                                   OPR00011  240111          10000000011                                                                                                                                                           07C         002                                                                                                                                                                                                                                                                                                                  
- 112                   8106 2                                                                                                   OPR00012  240112          10000000012                                                                                                                                                           07D         001                                                                                                                                                                                                                                                                                                                  
- 113                   8201 1                                                                                                   OPR00013  240113          10000000013                                                                                                                                                           07A         001                                                                                                                                                                                                                                                                                                                  
- 114                   8106 1                                                                                                   OPR00014  240114          10000000014                                                                                                                                                           07C         002                                                                                                                                                                                                                                                                                                                  
- 115                   8106 1                                                                                                   OPR00015  240115          10000000015                                                                                                                                                           07D         001                                                                                                                                                                                                                                                                                                                  
- 116                   8105 3                                                                                                   OPR00016  240116          10000000016                                                                                                                                                           07A         002                                                                                                                                                                                                                                                                                                                  
- 117                   8106 1                                                                                                   OPR00017  240117          10000000017                                                                                                                                                           07C         001                                                                                                                                                                                                                                                                                                                  
- 118                   8106 1                                                                                                   OPR00018  240118          10000000018                                                                                                                                                           07A         002                                                                                                                                                                                                                                                                                                                  
- 119                   8106 1                                                                                                   OPR00019  240119          10000000019                                                                                                                                                           07D         001                                                                                                                                                                                                                                                                                                                  
- 120                   8106 1                                                                                                   OPR00020  240120          10000000020                                                                                                                                                           07A         002                                                                                                                                                                                                                                                                                                                  
+# -------------------------------
+# ALLFILE
+# -------------------------------
+con.execute("""
+    CREATE OR REPLACE TABLE allfile AS
+    SELECT ACCTNOC, ALIASKEY, ALIAS, TAXID, CONSENT, CHANNEL
+    FROM merge_data
+    ORDER BY ACCTNOC
+""")
+
+# -------------------------------
+# DAILY FILE (DAY)
+# -------------------------------
+con.execute(f"""
+    CREATE OR REPLACE TABLE dailyfile AS
+    SELECT ACCTNOC, ALIASKEY, ALIAS, TAXID, CONSENT, CHANNEL
+    FROM merge_data
+    WHERE EFFDATE = '{DATE2}' AND CHANNEL != 'UNIBATCH'
+    ORDER BY ACCTNOC
+""")
+
+# ---------------------------------------------------------------------
+# OUTPUT PARQUET
+# ---------------------------------------------------------------------
+out1 = """
+    SELECT 
+        *,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM allfile
+""".format(year=year,month=month,day=day)
+
+out2 = """
+    SELECT 
+        *,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM dailyfile
+""".format(year=year,month=month,day=day)
+
+queries = {
+    "UNICARD_MAILFLAG_ALL"                      : out1,
+    "UNICARD_MAILFLAG_DLY"                      : out2
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+    COPY ({query})
+    TO '{parquet_path}'
+    (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE true);  
+     """)
+    
+    con.execute(f"""
+    COPY ({query})
+    TO '{csv_path}'
+    (FORMAT CSV, HEADER, DELIMITER ',', OVERWRITE_OR_IGNORE true);  
+     """)
+
+# ---------------------------------------------------------------------
+# OUTPUT FIXED-WIDTH TEXT
+# ---------------------------------------------------------------------
+txt_queries = {
+    "UNICARD_MAILFLAG_ALL"                      : out1,
+    "UNICARD_MAILFLAG_DLY"                      : out2
+}
+
+for txt_name, txt_query in txt_queries.items():
+    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
+    df_txt = con.execute(txt_query).fetchdf()
+
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row['ACCTNOC']).ljust(16)}"
+                f"{str(row['ALIASKEY']).ljust(3)}"
+                f"{str(row['ALIAS']).ljust(12)}"
+                f"{str(row['TAXID']).ljust(12)}"
+                f"{str(row['CONSENT']).ljust(1)}"
+                f"{str(row['CHANNEL']).ljust(8)}"
+            )
+            f.write(line + "\n")
