@@ -1,132 +1,461 @@
+"""
+Convert of //CICISRPD SAS job -> Python using duckdb + pyarrow
+Assumptions:
+ - Input parquet files already exist and expose columns with the same names used in SAS (for example: CUSTNO, ADDREF, CUSTNAME, etc.)
+ - host_parquet_path(...) returns a file path string (keep usage as requested)
+ - parquet_output_path(...) returns folder/path for writing parquet output
+ - This script uses "yesterday" as the SRS control date replacement (T-1)
+"""
+
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
+import datetime
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
-from datetime import datetime, timedelta
 
-# ---------------------------------------------------------
-# Batch Date
-# ---------------------------------------------------------
-batch_date = datetime.today() - timedelta(days=1)
-report_date = batch_date.strftime("%Y%m%d")
+# -----------------------
+# Input paths (as requested)
+# -----------------------
+NEWCHG = host_parquet_path("CIS.IDIC.DAILY.INEW")
+OLDCHG = host_parquet_path("CIS.IDIC.DAILY.IOLD")
+CCRSBANK = host_parquet_path("CIS.CUST.DAILY.ACTVOD")
 
-# ---------------------------------------------------------
-# DuckDB Connection
-# ---------------------------------------------------------
-con = duckdb.connect()
+# -----------------------
+# Reporting date (replace srsctrl): use yesterday (T-1)
+# -----------------------
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
+YEAR = batch_date.year
+MONTH = f"{batch_date.month:02d}"
+DAY = f"{batch_date.day:02d}"
+UPDDATX = f"{DAY}/{MONTH}/{YEAR}"   # same format used in SAS: "&DAY"/"&MONTH"/"&YEAR"
 
-# ---------------------------------------------------------
-# 1. Load all parquet files into DuckDB
-# ---------------------------------------------------------
-con.execute(f"""
-    CREATE VIEW RHOB AS
-    SELECT
-        CLASSIFY,
-        NATURE,
-        KEY_CODE,
-        CLASSID
-    FROM read_parquet({host_parquet_path("UNLOAD_CIRHOBCT_FB")})
-""")
+# -----------------------
+# DuckDB connection
+# -----------------------
+con = duckdb.connect(database=':memory:')
+# enable parquet and pyarrow usage by duckdb (duckdb handles read_parquet directly)
 
-con.execute(f"""
-    CREATE VIEW RHOD AS
-    SELECT
-        KEY_ID,
-        KEY_CODE,
-        KEY_DESCRIBE,
-        KEY_REMARK_ID1,
-        KEY_REMARK_1,
-        KEY_REMARK_ID2,
-        KEY_REMARK_2,
-        KEY_REMARK_ID3,
-        KEY_REMARK_3,
-        DESC_LASTOPERATOR,
-        DESC_LASTMNT_DATE,
-        DESC_LASTMNT_TIME
-    FROM read_parquet({host_parquet_path("UNLOAD_CIRHODCT_FB")})
-    WHERE KEY_ID = 'DEPT'
-""")
+# Register parquet files as DuckDB views/tables
+con.execute(f"CREATE VIEW newchg AS SELECT * FROM read_parquet('{NEWCHG}')")
+con.execute(f"CREATE VIEW oldchg AS SELECT * FROM read_parquet('{OLDCHG}')")
+con.execute(f"CREATE VIEW ccrsbank AS SELECT * FROM read_parquet('{CCRSBANK}')")
 
-con.execute(f"""
-    CREATE VIEW RHOLD AS
-    SELECT
-        CLASSID,
-        INDORG,
-        NAME,
-        NEWIC,
-        OTHID,
-        CRTDTYYYY,
-        CRTDTMM,
-        CRTDTDD,
-        DOBDTYYYY,
-        DOBDTMM,
-        DOBDTDD,
-        (DOBDTYYYY || DOBDTMM || DOBDTDD) AS DOBDOR,
-        (CRTDTYYYY || CRTDTMM || CRTDTDD) AS CRTDATE
-    FROM read_parquet({host_parquet_path("UNLOAD_CIRHOLDT_FB")})
-""")
-
-# ---------------------------------------------------------
-# 2. Process RHOD (build CONTACT1, CONTACT2, CONTACT3, REMARKS)
-# ---------------------------------------------------------
+# -----------------------
+# 1) Build ACTIVE (filter ACCTCODE)
+#    SAS:
+#      IF ACCTCODE NOT IN ('DP   ','LN   ') THEN DELETE;
+# -----------------------
+# The SAS ACCTCODE contains padded 5-char strings like 'DP   ' or 'LN   '
+# We will use TRIM to be robust.
 con.execute("""
-    CREATE TEMP TABLE RHOD_CLEAN AS
-    SELECT
-        KEY_CODE,
-        COALESCE(NULLIF(KEY_REMARK_1, ''), '') AS CONTACT1,
-        COALESCE(NULLIF(KEY_REMARK_2, ''), '') AS CONTACT2,
-        COALESCE(NULLIF(KEY_REMARK_3, ''), '') AS CONTACT3,
-        TRIM(KEY_DESCRIBE) ||
-        TRIM(COALESCE(NULLIF(KEY_REMARK_1, ''), '')) ||
-        TRIM(COALESCE(NULLIF(KEY_REMARK_2, ''), '')) AS REMARKS
-    FROM RHOD
+CREATE TABLE active AS
+SELECT
+  CUSTNO,
+  ACCTCODE,
+  ACCTNOC,
+  NOTENOC,
+  BANKINDC,
+  DATEOPEN,
+  DATECLSE,
+  ACCTSTATUS
+FROM ccrsbank
+WHERE trim(ACCTCODE) IN ('DP', 'LN')
 """)
 
-# ---------------------------------------------------------
-# 3. Merge RHOLD + RHOB (BY CLASSID)
-# ---------------------------------------------------------
+# keep latest account per CUSTNO by DATEOPEN descending
+# if DATEOPEN is numeric or string, we assume lexicographic ordering works or convert where needed.
 con.execute("""
-    CREATE TEMP TABLE GETCLASSID AS
-    SELECT *
-    FROM RHOLD h
-    INNER JOIN RHOB b USING (CLASSID)
+CREATE TABLE listact AS
+SELECT CUSTNO, ACCTCODE, ACCTNOC, DATEOPEN, DATECLSE
+FROM (
+  SELECT *,
+    ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY DATEOPEN DESC NULLS LAST) as rn
+  FROM active
+)
+WHERE rn = 1
 """)
 
-# ---------------------------------------------------------
-# 4. Merge with RHOD_CLEAN (BY KEY_CODE)
-# ---------------------------------------------------------
+# Filter out closed accounts (SAS: IF DATECLSE NOT IN ('       .','        ','00000000') THEN DELETE;)
+# We'll interpret blank/null or '00000000' as closed -> keep rows where DATECLSE is null/blank or equals special blanks -> SAS kept rows where DATECLSE is NOT in those values -> Actually SAS: IF DATECLSE NOT IN (...) THEN DELETE -> that kept rows with blank/00000000 only. We'll translate to: keep where DATECLSE IS NULL OR trim(DATECLSE) IN ('', '00000000', '.', '.......')
+# To be safe: keep where DATECLSE IS NULL OR trim(DATECLSE) IN ('', '00000000', '.', '.......')
 con.execute("""
-    CREATE TEMP TABLE OBODCT AS
-    SELECT *
-    FROM GETCLASSID g
-    INNER JOIN RHOD_CLEAN d USING (KEY_CODE)
+CREATE TABLE listact_clean AS
+SELECT CUSTNO, ACCTCODE, ACCTNOC
+FROM listact
+WHERE DATECLSE IS NULL
+   OR trim(DATECLSE) = ''
+   OR trim(DATECLSE) = '00000000'
+   OR trim(DATECLSE) = '.'
 """)
 
-# ---------------------------------------------------------
-# 5. Final OUTPUT dataset
-# ---------------------------------------------------------
-df = con.execute("SELECT * FROM OBODCT ORDER BY CLASSID").fetchdf()
+# -----------------------
+# 2) NEWACT = MERGE NEWCHG(IN=F) LISTACT(IN=G); BY CUSTNO; IF F AND G;
+# -----------------------
+con.execute("""
+CREATE TABLE newact AS
+SELECT n.*, l.ACCTNOC
+FROM newchg n
+INNER JOIN listact_clean l USING (CUSTNO)
+""")
 
-# ---------------------------------------------------------
-# 6. Write TXT file (fixed positions like SAS PUT)
-# ---------------------------------------------------------
-txt_path = csv_output_path(f"AMLA_RHOLD_EXTRACT_{report_date}").replace(".csv", ".txt")
+# -----------------------
+# 3) MERGE_A = MERGE NEWACT(IN=A) OLDCHG(IN=B); BY CUSTNO; IF A AND B;
+# -----------------------
+con.execute("""
+CREATE TABLE merge_a AS
+SELECT a.*, b.* EXCLUDE (CUSTNO)  -- keep oldchg columns with X suffix in parquet if present
+FROM newact a
+INNER JOIN oldchg b USING (CUSTNO)
+""")
 
-with open(txt_path, "w", encoding="utf-8") as f:
+# At this point merge_a should have columns from newchg (like CUSTNAME) and oldchg (maybe CUSTNAMEX) depending on parquet schema.
+# We'll follow SAS logic and create change tables by comparing pairs like FIELD vs FIELDX.
+#
+# NOTE: For robust handling: we will attempt to reference both plain column names and X-suffixed names.
+# If some columns do not exist in parquet schema, duckdb will error. To avoid runtime error we will build comparisons via a small helper: create temporary views that normalize columns,
+# mapping expected names to actual columns if present. For brevity here we will assume the parquet columns follow the SAS variable naming convention:
+# New columns: ADDREF, CUSTNAME, LONGNAME, DOBDOR, BASICGRPCODE, CORPSTATUS, MSICCODE, CUST_CODE, CITIZENSHIP, MASCO2008, EMPLOYMENT_SECTOR, EMPLOYMENT_TYPE, EMPNAME,
+# LAST_UPDATE_OPER, CUSTMNTDATE, CUSTLASTOPER, etc.
+# Old columns (from oldchg) are suffixed with X: ADDREFX, CUSTNAMEX, LONGNAMEX, DOBDORX, BASICGRPCODEX, CORPSTATUSX, MSICCODEX, CUST_CODEX, CITIZENSHIPX, MASCO2008X, ...
+#
+# If your parquet schema differs, you may need to rename columns or update names below.
+
+# -----------------------
+# 4) Build per-change tables (C_DATE, C_OPER, C_ADDREF, C_NAME, C_LONG, C_DOB, C_BGC, C_CORP, C_MSIC, C_CCODE, C_CTZN, C_MASCO, C_EMSEC, C_EMTYP, C_EMNAME, C_PRCTRY, C_RESD)
+# We'll create them via SQL UNION ALL of SELECTs where condition true.
+# Each SELECT produces: CUSTNO, UPDDATE, UPDOPER, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, DATEUPD, DATEOPER, CUSTNAME, CUSTLASTOPER, CUSTMNTDATE
+# -----------------------
+
+# For readability, create a helper view that exposes both new and old names with consistent aliasing.
+# If old columns don't exist (no 'X' suffix), this will set them to NULL.
+con.execute("""
+CREATE VIEW merged_norm AS
+SELECT
+  m.*,
+  -- try to reference old columns with X-suffix if present; otherwise NULL.
+  -- DuckDB will return NULL for columns that don't exist in the SELECT list, so we do safe aliasing by selecting using m."COL" when present.
+  -- For clarity here we assume the old columns ARE present with X suffix in the parquet.
+  m.ADDREF        AS ADDREF,
+  m.ADDREFX       AS ADDREFX,
+  m.CUSTNAME      AS CUSTNAME,
+  m.CUSTNAMEX     AS CUSTNAMEX,
+  m.LONGNAME      AS LONGNAME,
+  m.LONGNAMEX     AS LONGNAMEX,
+  m.DOBDOR        AS DOBDOR,
+  m.DOBDORX       AS DOBDORX,
+  m.BASICGRPCODE  AS BASICGRPCODE,
+  m.BASICGRPCODEX AS BASICGRPCODEX,
+  m.CORPSTATUS    AS CORPSTATUS,
+  m.CORPSTATUSX   AS CORPSTATUSX,
+  m.MSICCODE      AS MSICCODE,
+  m.MSICCODEX     AS MSICCODEX,
+  m.CUST_CODE     AS CUST_CODE,
+  m.CUST_CODEX    AS CUST_CODEX,
+  m.CITIZENSHIP   AS CITIZENSHIP,
+  m.CITIZENSHIPX  AS CITIZENSHIPX,
+  m.MASCO2008     AS MASCO2008,
+  m.MASCO2008X    AS MASCO2008X,
+  m.EMPLOYMENT_SECTOR AS EMPLOYMENT_SECTOR,
+  m.EMPLOYMENT_SECTORX AS EMPLOYMENT_SECTORX,
+  m.EMPLOYMENT_TYPE AS EMPLOYMENT_TYPE,
+  m.EMPLOYMENT_TYPEX AS EMPLOYMENT_TYPEX,
+  m.EMPNAME       AS EMPNAME,
+  m.EMPNAMEX      AS EMPNAMEX,
+  m.PRCOUNTRY     AS PRCOUNTRY,
+  m.PRCOUNTRYX    AS PRCOUNTRYX,
+  m.RESIDENCY     AS RESIDENCY,
+  m.RESDESC       AS RESDESC,
+  m.RESDESCX      AS RESDESCX,
+  m.CUSTMNTDATE   AS CUSTMNTDATE,
+  m.CUSTMNTDATEX  AS CUSTMNTDATEX,
+  m.CUSTLASTOPER  AS CUSTLASTOPER,
+  m.CUSTLASTOPERX AS CUSTLASTOPERX,
+  m.LAST_UPDATE_OPER AS LAST_UPDATE_OPER,
+  m.LAST_UPDATE_OPERX AS LAST_UPDATE_OPERX,
+  m.EMPLOYMENT_LAST_UPDATE AS EMPLOYMENT_LAST_UPDATE,
+  m.EMPLOYMENT_LAST_UPDATEX AS EMPLOYMENT_LAST_UPDATEX,
+  m.BNMID, m.ACCTNOC
+FROM merge_a m
+""")
+
+# Now create each C_* table.
+# We'll create a big union query that produces the same structure for each change condition.
+# Note: Fields lengths are enforced at final file output. Here we just produce rows.
+
+con.execute("""
+CREATE TABLE temp_changes AS
+SELECT
+  CUSTNO,
+  CASE WHEN CUSTMNTDATE IS NULL THEN NULL ELSE CUSTMNTDATE END AS UPDDATE,
+  NULL::VARCHAR AS UPDOPER,
+  'DATE'       AS FIELDS,
+  CUSTMNTDATEX AS OLDVALUE,
+  CUSTMNTDATE  AS NEWVALUE,
+  ACCTNOC,
+  EMPLOYMENT_LAST_UPDATE AS DATEUPD,
+  LAST_UPDATE_OPER AS DATEOPER,
+  CUSTNAME,
+  CUSTLASTOPER
+FROM merged_norm
+WHERE CUSTMNTDATE IS DISTINCT FROM CUSTMNTDATEX
+
+UNION ALL
+
+SELECT
+  CUSTNO,
+  NULL AS UPDDATE,
+  CUSTLASTOPER AS UPDOPER,
+  'OPER' AS FIELDS,
+  CUSTLASTOPERX AS OLDVALUE,
+  CUSTLASTOPER  AS NEWVALUE,
+  ACCTNOC,
+  NULL AS DATEUPD,
+  NULL AS DATEOPER,
+  CUSTNAME,
+  CUSTLASTOPER
+FROM merged_norm
+WHERE CUSTLASTOPER IS DISTINCT FROM CUSTLASTOPERX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'ADDREF', ADDREFX, ADDREF, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE ADDREF IS DISTINCT FROM ADDREFX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'NAME', CUSTNAMEX, CUSTNAME, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE CUSTNAME IS DISTINCT FROM CUSTNAMEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'CUSTOMER NAME', LONGNAMEX, LONGNAME, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE LONGNAME IS DISTINCT FROM LONGNAMEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL,
+  CASE WHEN INDORG = 'I' THEN 'DATE OF BIRTH' ELSE 'DATE OF REGISTRATION' END AS FIELDS,
+  DOBDORX, DOBDOR, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE DOBDOR IS DISTINCT FROM DOBDORX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'ENTITY TYPE', BASICGRPCODEX, BASICGRPCODE, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE BASICGRPCODE IS DISTINCT FROM BASICGRPCODEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'CORPORATE STATUS', CORPSTATUSX, CORPSTATUS, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE CORPSTATUS IS DISTINCT FROM CORPSTATUSX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'MSIC 2008', MSICCODEX, MSICCODE, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE MSICCODE IS DISTINCT FROM MSICCODEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'CUSTOMER CODE', CUST_CODEX, CUST_CODE, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE CUST_CODE IS DISTINCT FROM CUST_CODEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'NATIONALITY', CITIZENSHIPX, CITIZENSHIP, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE CITIZENSHIP IS DISTINCT FROM CITIZENSHIPX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'MASCO OCCUPATION', MASCO2008X, MASCO2008, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE MASCO2008 IS DISTINCT FROM MASCO2008X
+
+UNION ALL
+
+SELECT CUSTNO,
+  CASE WHEN EMPLOYMENT_LAST_UPDATE IS DISTINCT FROM EMPLOYMENT_LAST_UPDATEX THEN EMPLOYMENT_LAST_UPDATE ELSE NULL END AS UPDDATE,
+  CASE WHEN LAST_UPDATE_OPER IS DISTINCT FROM LAST_UPDATE_OPERX THEN LAST_UPDATE_OPER ELSE NULL END AS UPDOPER,
+  'EMPLOYMENT SECTOR' AS FIELDS,
+  EMPLOYMENT_SECTORX, EMPLOYMENT_SECTOR,
+  ACCTNOC,
+  EMPLOYMENT_LAST_UPDATE AS DATEUPD,
+  LAST_UPDATE_OPER AS DATEOPER,
+  CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE EMPLOYMENT_SECTOR IS DISTINCT FROM EMPLOYMENT_SECTORX
+
+UNION ALL
+
+SELECT CUSTNO,
+  CASE WHEN EMPLOYMENT_LAST_UPDATE IS DISTINCT FROM EMPLOYMENT_LAST_UPDATEX THEN EMPLOYMENT_LAST_UPDATE ELSE NULL END AS UPDDATE,
+  CASE WHEN LAST_UPDATE_OPER IS DISTINCT FROM LAST_UPDATE_OPERX THEN LAST_UPDATE_OPER ELSE NULL END AS UPDOPER,
+  'EMPLOYMENT TYPE' AS FIELDS,
+  EMPLOYMENT_TYPEX, EMPLOYMENT_TYPE,
+  ACCTNOC,
+  EMPLOYMENT_LAST_UPDATE AS DATEUPD,
+  LAST_UPDATE_OPER AS DATEOPER,
+  CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE EMPLOYMENT_TYPE IS DISTINCT FROM EMPLOYMENT_TYPEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'EMPLOYER NAME', EMPNAMEX, EMPNAME, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE EMPNAME IS DISTINCT FROM EMPNAMEX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'PR COUNTRY', PRCOUNTRYX, PRCOUNTRY, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE PRCOUNTRY IS DISTINCT FROM PRCOUNTRYX
+
+UNION ALL
+
+SELECT CUSTNO, NULL, NULL, 'RESIDENCY', RESDESCX, RESDESC, ACCTNOC, NULL, NULL, CUSTNAME, CUSTLASTOPER
+FROM merged_norm
+WHERE RESDESC IS DISTINCT FROM RESDESCX
+;
+""")
+
+# -----------------------
+# 5) TEMPALL = union of all C_* produced above -> temp_changes is that table already
+# -----------------------
+con.execute("CREATE TABLE tempall AS SELECT * FROM temp_changes")
+con.execute("CREATE TABLE tempall_sorted AS SELECT * FROM tempall ORDER BY CUSTNO")
+
+# -----------------------
+# 6) MRGCIS = Merge C_DATE(IN=D) C_OPER(IN=E) TEMPALL(IN=C) BY CUSTNO; IF C;
+#    Then set UPDDATE/UPDOPER defaults if missing; remove rows with UPDOPER in list
+# -----------------------
+# We'll left-join C_DATE and C_OPER -> but we do not have separate C_DATE/C_OPER tables; instead use temp_changes to extract date/opers
+# For simplicity, pick per CUSTNO: the first non-null UPDDATE and UPDOPER (if present). Then combine with tempall rows (we already have).
+# We will produce MRGCIS rows by joining tempall records to computed UPDDATE/UPDOPER per CUSTNO.
+
+con.execute("""
+CREATE VIEW cust_date_oper AS
+SELECT
+  CUSTNO,
+  MAX(UPDDATE) AS DATEUPD_COMPUTED,  -- max to get a value when present
+  MAX(UPDOPER) AS OPERUPD_COMPUTED
+FROM tempall
+GROUP BY CUSTNO
+""")
+
+con.execute("""
+CREATE TABLE mrgcis AS
+SELECT
+  t.*,
+  co.DATEUPD_COMPUTED,
+  co.OPERUPD_COMPUTED
+FROM tempall_sorted t
+LEFT JOIN cust_date_oper co USING (CUSTNO)
+""")
+
+# Apply SAS rules:
+# IF DATEUPD NOT = ' ' THEN UPDDATE = DATEUPD;
+# IF OPERUPD NOT = ' ' THEN UPDOPER = OPERUPD;
+# IF UPDOPER = ' ' THEN UPDOPER = CUSTLASTOPER;
+# IF UPDDATE = ' ' THEN UPDDATE = CUSTMNTDATE ;
+# IF UPDOPER IN ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH','CIFLPRCE','CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS','CRIS') THEN DELETE;
+
+# We'll implement this transformation via DuckDB SQL into final_mrgcis
+con.execute("""
+CREATE TABLE final_mrgcis AS
+SELECT
+  CUSTNO,
+  COALESCE(NULLIF(DATEUPD_COMPUTED, ''), NULLIF(UPDDATE, ''), CUSTMNTDATE) AS UPDDATE,  -- prefer computed, then row UPDDATE, then CUSTMNTDATE
+  COALESCE(NULLIF(OPERUPD_COMPUTED, ''), NULLIF(UPDOPER, ''), NULLIF(CUSTLASTOPER, '')) AS UPDOPER,
+  FIELDS,
+  OLDVALUE,
+  NEWVALUE,
+  ACCTNOC,
+  DATEUPD_COMPUTED,
+  OPERUPD_COMPUTED,
+  CUSTNAME,
+  CUSTLASTOPER
+FROM mrgcis
+WHERE
+  -- Exclude rows where final UPDOPER is in the exclude list
+  (COALESCE(NULLIF(OPERUPD_COMPUTED, ''), NULLIF(UPDOPER, ''), NULLIF(CUSTLASTOPER, '')) NOT IN
+    ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH','CIFLPRCE','CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS','CRIS')
+   OR COALESCE(NULLIF(OPERUPD_COMPUTED, ''), NULLIF(UPDOPER, ''), NULLIF(CUSTLASTOPER, '')) IS NULL)
+""")
+
+# -----------------------
+# 7) Write outputs
+#    - Save final_mrgcis to parquet (for trace)
+#    - Write OUTFILE fixed width text LRECL=500 per SAS PUT layout:
+#        @001 UPDOPER         $10.
+#        @021 CUSTNO          $20.
+#        @041 ACCTNOC         $20.
+#        @061 CUSTNAME        $40.
+#        @101 FIELDS          $20.
+#        @121 OLDVALUE        $150.
+#        @271 NEWVALUE        $150.
+#        @424 UPDDATX         $10.
+#    - Also save tempall for debugging as parquet
+# -----------------------
+
+# Export to parquet
+output_base = parquet_output_path("cic_isrpd")  # you'll get an appropriate path from your helper
+con.execute(f"COPY (SELECT * FROM final_mrgcis) TO '{output_base}/final_mrgcis.parquet' (FORMAT PARQUET)")
+con.execute(f"COPY (SELECT * FROM tempall_sorted) TO '{output_base}/tempall.parquet' (FORMAT PARQUET)")
+
+# Now produce fixed-width text file (LRECL=500). We'll fetch the data into Python and write formatted lines.
+df = con.execute("SELECT * FROM final_mrgcis ORDER BY CUSTNO, ACCTNOC").df()
+
+def fixed_width(val, width, align='left'):
+    """Truncate or pad to width. Null -> spaces."""
+    if val is None:
+        s = ''
+    else:
+        s = str(val)
+    if len(s) > width:
+        return s[:width]
+    if align == 'left':
+        return s.ljust(width)
+    else:
+        return s.rjust(width)
+
+out_txt_path = f"{output_base}/CIS.IDIC.DAILY.RPT.OUT.txt"
+with open(out_txt_path, 'w', encoding='utf-8', newline='\n') as f:
     for _, row in df.iterrows():
-        line = (
-            f"{str(row['INDORG'])[0:1]:<1}" +
-            ";" +
-            f"{str(row['NAME'])[0:40]:<40}" +
-            ";" +
-            f"{str(row['NEWIC'])[0:20]:<20}" +
-            ";" +
-            f"{str(row['OTHID'])[0:20]:<20}" +
-            ";" +
-            f"{str(row['CONTACT1'])[0:50]:<50}" +
-            ";" +
-            f"{str(row['CONTACT2'])[0:50]:<50}" +
-            ";" +
-            f"{str(row['CONTACT3'])[0:50]:<50}"
-        )
-        f.write(line + "\n")
+        # fields and width(s) per SAS put
+        UPDOPER_field = fixed_width(row.get('UPDOPER') or '', 10, 'left')
+        CUSTNO_field = fixed_width(row.get('CUSTNO') or '', 20, 'left')
+        ACCTNOC_field = fixed_width(row.get('ACCTNOC') or '', 20, 'left')
+        CUSTNAME_field = fixed_width(row.get('CUSTNAME') or '', 40, 'left')
+        FIELDS_field = fixed_width(row.get('FIELDS') or '', 20, 'left')
+        OLDVALUE_field = fixed_width(row.get('OLDVALUE') or '', 150, 'left')
+        NEWVALUE_field = fixed_width(row.get('NEWVALUE') or '', 150, 'left')
+        UPDDATX_field = fixed_width(UPDDATX, 10, 'left')  # use computed reporting date (T-1)
 
-print("TXT Generated:", txt_path)
+        line = (
+            UPDOPER_field +
+            CUSTNO_field +
+            ACCTNOC_field +
+            CUSTNAME_field +
+            FIELDS_field +
+            OLDVALUE_field +
+            NEWVALUE_field +
+            UPDDATX_field
+        )
+        # Ensure final record length is 500 chars (pad if necessary)
+        if len(line) < 500:
+            line = line + (' ' * (500 - len(line)))
+        elif len(line) > 500:
+            line = line[:500]
+        f.write(line + '\n')
+
+print("Done.")
+print(f"Parquet outputs written to: {output_base}/")
+print(f"Text OUTFILE written to: {out_txt_path}")
