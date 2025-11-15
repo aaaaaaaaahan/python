@@ -5,154 +5,158 @@ import datetime
 batch_date = datetime.date.today() - datetime.timedelta(days=1)
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
-PURGEDATE = batch_date.isoformat()
 
-# ----------------------------
-# Connection DUCKDB
-# ----------------------------
+# =========================================================
+# CONFIG
+# =========================================================
+#INPUT1 = "/host/input/WINDOW.SIGNATOR.CA0801.parquet"        # contains ACCTNO, C1, C2, C3, C4
+#SORT_OUT = "/host/output/WINDOW.SIGNATOR.CA0801.SORT.parquet"
+
+#BRANCH_FILE = "/host/input/PBB.BRANCH.parquet"               # fields: BRANCH, BRHABV
+#MERGED_TXT = "/host/output/WINDOW.SIGNATOR.MERGED.txt"
+#MERGED_PARQUET = "/host/output/WINDOW.SIGNATOR.MERGED.parquet"
+
 con = duckdb.connect()
 
-# ----------------------------
-# DESCRIPTION TABLES
-# ----------------------------
+
+# =========================================================
+# STEP 1 — READ INPUT (HORIZONTAL)
+# =========================================================
 con.execute(f"""
-    CREATE VIEW descr_trim AS
-    SELECT TRIM(KEY_ID) AS KEY_ID,
-           KEY_CODE,
-           KEY_DESCRIBE
-    FROM '{host_parquet_path("UNLOAD_CIRHODCT_FB.parquet")}'
+    CREATE TABLE ACCT AS
+    SELECT * FROM '{host_parquet_path("WINDOW_SIGNATOR_CA0801.parquet")}'
 """)
 
-# CLASS, NATURE, DEPT mapping
+
+# =========================================================
+# STEP 2 — TRANSPOSE (HORIZONTAL → VERTICAL)
+# =========================================================
 con.execute("""
-    CREATE VIEW class_map AS
-    SELECT KEY_CODE AS CLASS_CODE, KEY_DESCRIBE AS CLASS_DESC
-    FROM descr_trim
-    WHERE KEY_ID = 'CLASS'
-""")
-
-con.execute("""
-    CREATE VIEW nature_map AS
-    SELECT KEY_CODE AS NATURE_CODE, KEY_DESCRIBE AS NATURE_DESC
-    FROM descr_trim
-    WHERE KEY_ID = 'NATURE'
-""")
-
-con.execute("""
-    CREATE VIEW dept_map AS
-    SELECT KEY_CODE AS DEPT_CODE, KEY_DESCRIBE AS DEPT_DESC
-    FROM descr_trim
-    WHERE KEY_ID = 'DEPT'
-""")
-
-# ----------------------------
-# CONTROL TABLE
-# ----------------------------
-con.execute(f"""
-    CREATE VIEW control AS
-    SELECT *
-    FROM '{host_parquet_path("UNLOAD_CIRHOBCT_FB.parquet")}'
-    WHERE TRIM(CLASS_CODE) = 'CLS0000004'
-      AND TRIM(NATURE_CODE) = 'NAT0000044'
-""")
-
-# ----------------------------
-# DETAIL TABLE (with LASTMNT extraction)
-# ----------------------------
-con.execute(f"""
-    CREATE VIEW det AS
-    SELECT *,
-           SUBSTR(DTL_LASTMNT_DATE,1,4) AS LASTMNT_YYYY,
-           SUBSTR(DTL_LASTMNT_DATE,5,2) AS LASTMNT_MM,
-           SUBSTR(DTL_LASTMNT_DATE,7,2) AS LASTMNT_DD,
-           MAKE_DATE(CAST(SUBSTR(DTL_LASTMNT_DATE,1,4) AS INTEGER),
-                     CAST(SUBSTR(DTL_LASTMNT_DATE,5,2) AS INTEGER),
-                     CAST(SUBSTR(DTL_LASTMNT_DATE,7,2) AS INTEGER)) AS lastsas,
-           DATE_ADD(
-              MAKE_DATE(CAST(SUBSTR(DTL_LASTMNT_DATE,1,4) AS INTEGER),
-                        CAST(SUBSTR(DTL_LASTMNT_DATE,5,2) AS INTEGER),
-                        CAST(SUBSTR(DTL_LASTMNT_DATE,7,2) AS INTEGER)),
-              INTERVAL '732 DAY'
-           ) AS twoyr
-    FROM '{host_parquet_path("UNLOAD_CIRHOLDT_FB.parquet")}'
-    WHERE COALESCE(TRIM(ACTV_IND),'') <> 'Y'
-""")
-
-con.execute(f"""
-    CREATE VIEW detail AS
-    SELECT *
-    FROM det
-    WHERE twoyr < DATE '{PURGEDATE}'
-""")
-
-# ----------------------------
-# MERGE DETAIL + CONTROL
-# ----------------------------
-con.execute("""
-    CREATE VIEW first_merge AS
-    SELECT d.*,
-           c.CLASS_CODE,
-           c.NATURE_CODE,
-           c.DEPT_CODE,
-           c.GUIDE_CODE
-    FROM detail d
-    INNER JOIN control c
-      ON TRIM(d.CLASS_ID) = TRIM(c.CLASS_ID)
-""")
-
-# ----------------------------
-# ADD CLASS, NATURE, DEPT DESCRIPTIONS
-# ----------------------------
-con.execute("""
-    CREATE VIEW final_enriched AS
-    SELECT f.*,
-           cm.CLASS_DESC,
-           nm.NATURE_DESC,
-           dm.DEPT_DESC
-    FROM first_merge f
-    LEFT JOIN class_map cm  ON TRIM(f.CLASS_CODE)  = TRIM(cm.CLASS_CODE)
-    LEFT JOIN nature_map nm ON TRIM(f.NATURE_CODE) = TRIM(nm.NATURE_CODE)
-    LEFT JOIN dept_map dm   ON TRIM(f.DEPT_CODE)   = TRIM(dm.DEPT_CODE)
-""")
-
-# ----------------------------
-# OUTPUT TO PARQUET, CSV, TXT (looping style)
-# ----------------------------
-rhold_query = F"""
+    CREATE TABLE SORTED AS
     SELECT 
-        INDORG,
-        NAME,
-        ID1,
-        ID2,
-        CLASS_ID,
-        {PURGEDATE},
-        DTL_REMARK1,     
-        DTL_REMARK2,     
-        DTL_REMARK3,     
-        DTL_REMARK4,     
-        DTL_REMARK5,     
-        DTL_CRT_DATE,    
-        DTL_CRT_TIME,    
-        DTL_LASTOPERATOR,
-        DTL_LASTMNT_DATE,
-        DTL_LASTMNT_TIME,
-        CLASS_CODE,  
-        CLASS_DESC,  
-        NATURE_CODE, 
-        NATURE_DESC, 
-        DEPT_CODE,   
-        DEPT_DESC,   
-        GUIDE_CODE,  
+        ACCTNO,
+        UNNEST([C1, C2, C3, C4]) AS NOMINEE
+    FROM ACCT
+""")
+
+# =========================================================
+# STEP 3 — READ STATUS + BRANCH INFO (FROM CA0801 AGAIN)
+# =========================================================
+# Your CA0801 input does NOT include STATUS/BRANCH fields.
+# You MUST confirm field names. I assume your parquet contains:
+
+# ACCTNO, STATUS, BRANCH
+
+con.execute(f"""
+    CREATE TABLE NOMIIN AS
+    SELECT 
+        ACCTNO,
+        STATUS,
+        BRANCH
+    FROM '{host_parquet_path("WINDOW_SIGNATOR_CA0801.parquet")}'
+""")
+
+
+# =========================================================
+# STEP 4 — READ BRANCH FILE
+# =========================================================
+# Branch parquet contains: BRANCH, BRHABV
+
+con.execute(f"""
+    CREATE TABLE BRHTABLE AS
+    SELECT 
+        BRANCHNO AS BRANCH,
+        ACCTBRABBR AS BRHABV
+    FROM '{host_parquet_path("PBBBRCH.parquet")}'
+""")
+
+
+# =========================================================
+# STEP 5 — MERGE NOMIIN + BRANCH FILE
+# =========================================================
+con.execute("""
+    CREATE TABLE NOM_BRANCH AS
+    SELECT A.ACCTNO, A.STATUS, A.BRANCH, B.BRHABV
+    FROM NOMIIN A 
+    LEFT JOIN BRHTABLE B USING (BRANCH)
+""")
+
+
+# =========================================================
+# STEP 6 — READ SORTED (VERTICAL) AND SPLIT OUTPUT
+# =========================================================
+# OUTPUT contains: "NAME + space + IC"
+# Example: "ALI BIN AHMAD 900101015555A"
+
+con.execute("""
+    CREATE TABLE NOMIIN2 AS
+    SELECT
+        ACCTNO,
+        LEFT(NOMINEE, 40) AS NAME,
+        SUBSTR(NOMINEE, 41, 30) AS IC_NUMBER
+    FROM SORTED
+    WHERE TRIM(NOMINEE) <> ''
+""")
+
+# Remove missing data
+con.execute("""
+    DELETE FROM NOMIIN2
+    WHERE TRIM(NAME)='' OR TRIM(IC_NUMBER)=''
+""")
+
+
+# =========================================================
+# STEP 7 — MATCH TO PRODUCE FINAL MERGED TABLE
+# =========================================================
+con.execute("""
+    CREATE TABLE NOM_FOUND AS
+    SELECT 
+        A.ACCTNO,
+        A.IC_NUMBER,
+        A.NAME,
+        'Y' AS IND,
+        B.STATUS,
+        B.BRHABV,
+        B.BRANCH
+    FROM NOMIIN2 A
+    LEFT JOIN NOM_BRANCH B USING (ACCTNO)
+    WHERE B.ACCTNO IS NOT NULL
+    ORDER BY A.ACCTNO
+""")
+
+# (Optional) unmatched but not required for output
+con.execute("""
+    CREATE TABLE NOM_XFOUND AS
+    SELECT *
+    FROM NOMIIN2 A
+    WHERE NOT EXISTS (SELECT 1 FROM NOM_BRANCH B WHERE A.ACCTNO=B.ACCTNO)
+""")
+
+# ----------------------------
+# OUTPUT TO PARQUET, CSV, TXT
+# ----------------------------
+sorted = f"""
+    SELECT 
+        *,  
         {year} AS year,
         {month} AS month,
         {day} AS day
-    FROM final_enriched
-    ORDER BY CLASS_ID, INDORG, NAME
+    FROM SORTED
+""".format(year=year,month=month,day=day)
+
+merged = f"""
+    SELECT 
+        *,  
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM NOM_FOUND
 """.format(year=year,month=month,day=day)
 
 # Dictionary of outputs for parquet & CSV
 queries = {
-    "RHOLD_LIST_TOSET":              rhold_query
+    "WINDOW_SIGNATOR_CA0801_SORT":              sorted,
+    "WINDOW_SIGNATOR_CA0801_MERGED":            merged
     }
 
 for name, query in queries.items():
@@ -175,7 +179,7 @@ for name, query in queries.items():
 
 # Dictionary for fixed-width TXT
 txt_queries = {
-        "RHOLD_LIST_TOSET":              rhold_query
+        "WINDOW_SIGNATOR_CA0801_MERGED":              merged
     }
 
 for txt_name, txt_query in txt_queries.items():
@@ -185,30 +189,12 @@ for txt_name, txt_query in txt_queries.items():
     with open(txt_path, "w", encoding="utf-8") as f:
         for _, row in df_txt.iterrows():
             line = (
-                f"{str(row['INDORG']).ljust(1)}"
-                f"{str(row['NAME']).ljust(40)}"
-                f"{str(row['ID1']).ljust(20)}"
-                f"{str(row['ID2']).ljust(20)}"
-                f"{str(row['CLASS_ID']).ljust(10)}"
-                f"{str(row['PURGEDATE']).ljust(10)}"
-                f"{str(row['DTL_REMARK1']).ljust(40)}"
-                f"{str(row['DTL_REMARK2']).ljust(40)}"
-                f"{str(row['DTL_REMARK3']).ljust(40)}"
-                f"{str(row['DTL_REMARK4']).ljust(40)}"
-                f"{str(row['DTL_REMARK5']).ljust(40)}"
-                f"{str(row['DTL_CRT_DATE']).ljust(10)}"
-                f"{str(row['DTL_CRT_TIME']).ljust(8)}"
-                f"{str(row['DTL_LASTOPERATOR']).ljust(8)}"
-                f"{str(row['DTL_LASTMNT_DATE']).ljust(10)}"
-                f"{str(row['DTL_LASTMNT_TIME']).ljust(8)}"
-                f"{str(row['CTRL_CLASS_CODE']).ljust(10)}"
-                f"{str(row['CLASS_DESC']).ljust(150)}"
-                f"{str(row['CTRL_NATURE_CODE']).ljust(10)}"
-                f"{str(row['NATURE_DESC']).ljust(150)}"
-                f"{str(row['CTRL_DEPT_CODE']).ljust(10)}"
-                f"{str(row['DEPT_DESC']).ljust(150)}"
-                f"{str(row['CTRL_GUIDE_CODE']).ljust(10)}"
+                f"{str(row['ACCTNO']).rjust(32)}"
+                f"{str(row['IC_NUMBER']).rjust(42)}"
+                f"{str(row['NAME']).rjust(42)}"
+                f"{str(row['IND']).rjust(1)}"
+                f"{str(row['STATUS']).rjust(1)}"
+                f"{str(row['BRHABV']).rjust(3)}"
+                f"{str(row['BRANCH']).rjust(3)}"
             )
             f.write(line + "\n")
-
-print("Generated parquet, CSV, and fixed-width TXT for RHOLD_LIST_TOSET")
