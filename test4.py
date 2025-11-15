@@ -1,26 +1,27 @@
-txt_queries = {
-    "WINDOW_SIGNATOR_CA0801_MERGED": merged
-}
-
-for txt_name, txt_query in txt_queries.items():
-
-    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
-    df_txt = con.execute(txt_query).fetchdf()
-
-    with open(txt_path, "w", encoding="utf-8") as f:
-        for _, row in df_txt.iterrows():
-
-            line = (
-                " " * 20 +                                                 # positions 1–20 blank
-                str(row["ACCTNO"]).ljust(11) +                             # 21–31  ACCTNO  ($11.)
-                " " * (54 - 32) +                                          # pad to position 54
-                str(row["IC_NUMBER"]).ljust(20) +                          # 54–73 IC_NUMBER ($20.)
-                " " * (76 - 74) +                                          # pad to position 76
-                str(row["NAME"]).ljust(40) +                               # 76–115 NAME ($40.)
-                "Y" +                                                      # 116 constant
-                str(row["STATUS"])[:1] +                                   # 117 STATUS ($1.)
-                str(row["BRHABV"]).ljust(3) +                              # 118–120 BRHABV ($3.)
-                str(row["BRANCH"]).zfill(3)                                # 121–123 BRANCH (Z03.)
-            )
-
-            f.write(line + "\n")
+U_BC_CLASS_ID                  CHAR(10) NOT NULL,
+U_RHOLD_INDORG                 CHAR(1) NOT NULL, 
+U_RHOLD_NAME                   CHAR(40) NOT NULL,
+U_RHOLD_ID1                    CHAR(20) NOT NULL,
+U_RHOLD_ID2                    CHAR(20) NOT NULL,
+U_RHOLD_REMARK1                CHAR(40) NOT NULL,
+U_RHOLD_REMARK2                CHAR(40) NOT NULL,
+U_RHOLD_REMARK3                CHAR(40) NOT NULL,
+U_RHOLD_REMARK4                CHAR(40) NOT NULL,
+U_RHOLD_REMARK5                CHAR(40) NOT NULL,
+U_RHOLD_CREATE_DATE            DATE NOT NULL,    
+U_RHOLD_CREATE_TIME            TIME NOT NULL,    
+U_RHOLD_LASTOPERATOR           CHAR(8) NOT NULL, 
+U_RHOLD_LASTMNT_DATE           DATE NOT NULL,    
+U_RHOLD_LASTMNT_TIME           TIME NOT NULL,    
+U_RHOLD_DOB                    CHAR(10) NOT NULL,
+U_RHOLD_SKIP_MAKER             CHAR(10) NOT NULL,
+U_RHOLD_SKIP_MDATE             DATE NOT NULL,    
+U_RHOLD_SKIP_MTIME             TIME NOT NULL,    
+U_RHOLD_SKIP_MREMARKS          CHAR(50) NOT NULL,
+U_RHOLD_SKIP_CHECKER           CHAR(10) NOT NULL,
+U_RHOLD_SKIP_CDATE             DATE NOT NULL,    
+U_RHOLD_SKIP_CTIME             TIME NOT NULL,    
+U_RHOLD_SKIP_CREMARKS          CHAR(50) NOT NULL,
+U_RHOLD_SKIP_EFFDATE           DATE NOT NULL,    
+U_RHOLD_SKIP_REQBRCH           CHAR(7) NOT NULL, 
+U_RHOLD_ACTV_IND               CHAR(1) NOT NULL  
