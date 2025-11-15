@@ -1,5 +1,4 @@
-          lrecl = 800
-
+NEWCHG:
 INPUT @01   RUNTIMESTAMP           $EBCDIC20.
       @21   CUSTNOX                $EBCDIC20.
       @41   ADDREFX                $EBCDIC11.
