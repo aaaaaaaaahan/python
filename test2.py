@@ -1,123 +1,80 @@
 import duckdb
-from datetime import datetime
+import pyarrow as pa
+import pyarrow.parquet as pq
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
-# -----------------------------
-# File paths
-# -----------------------------
-parquet_eodrpt = "/host/cis/parquet/eodrpt.parquet"
-parquet_name = "/host/cis/parquet/name.parquet"
-parquet_active = "/host/cis/parquet/active.parquet"
-parquet_ctrldate = "/host/cis/parquet/srsctrl.parquet"
-
-output_parquet = "/host/cis/output/alias_change.parquet"
-output_txt = "/host/cis/output/alias_change.txt"
-
-# -----------------------------
-# Connect DuckDB
-# -----------------------------
+# ---------------------------------------------------------
+# 1. Load CIHRCRVT parquet (already converted AS400 FB file)
+# ---------------------------------------------------------
 con = duckdb.connect()
 
-# -----------------------------
-# Reporting Date
-# -----------------------------
-con.execute(f"""
-    CREATE VIEW ctrl_date AS
-    SELECT 
-        SRSYY AS year,
-        SRSMM AS month,
-        SRSDD AS day,
-        DATEFROMPARTS(SRSYY, SRSMM, SRSDD) AS today
-    FROM parquet_scan('{parquet_ctrldate}')
-""")
+df = con.execute(f"""
+    SELECT
+        HRV_MONTH,
+        HRV_BRCH_CODE,
+        HRV_ACCT_TYPE,
+        HRV_ACCT_NO,
+        HRV_CUSTNO,
+        HRV_CUSTID,
+        HRV_CUST_NAME,
+        HRV_NATIONALITY,
+        HRV_ACCT_OPENDATE,
+        HRV_OVERRIDING_INDC,
+        HRV_OVERRIDING_OFFCR,
+        HRV_OVERRIDING_REASON,
+        HRV_DOWJONES_INDC,
+        HRV_FUZZY_INDC,
+        HRV_FUZZY_SCORE,
+        HRV_NOTED_BY,
+        HRV_RETURNED_BY,
+        HRV_ASSIGNED_TO,
+        HRV_NOTED_DATE,
+        HRV_RETURNED_DATE,
+        HRV_ASSIGNED_DATE,
+        HRV_COMMENT_BY,
+        HRV_COMMENT_DATE,
+        HRV_SAMPLING_INDC,
+        HRV_RETURN_STATUS,
+        HRV_RECORD_STATUS,
+        HRV_FUZZY_SCREEN_DATE
+    FROM read_parquet({host_parquet_path("UNLOAD_CIHRCRVT_FB")})
+    ORDER BY
+        HRV_MONTH,
+        HRV_BRCH_CODE,
+        HRV_ACCT_TYPE,
+        HRV_ACCT_NO,
+        HRV_CUSTNO
+""").arrow()
 
-row = con.execute("SELECT * FROM ctrl_date").fetchone()
-report_date = row[3].strftime("%d/%m/%Y")
+# ---------------------------------------------------------
+# 2. Save sorted output to Parquet
+# ---------------------------------------------------------
+output_parquet = parquet_output_path("UNLOAD_CIHRCRVT_EXCEL.parquet")
+pq.write_table(df, output_parquet)
 
-# -----------------------------
-# Process EODRPT
-# -----------------------------
-exclude_keys = ['CH','CV','EN','NM','VE','BR','CI','PC','SA','GB',
-                'LP','RE','AI','AO','IC','SI','BI','PP','ML','PL','BC']
+# ---------------------------------------------------------
+# 3. Write TXT output (with header + | delimiter)
+# ---------------------------------------------------------
+output_txt = csv_output_path("UNLOAD_CIHRCRVT_EXCEL.txt")
 
-con.execute(f"""
-    CREATE VIEW eodrpt_proc AS
-    SELECT 
-        CUSTNOX::BIGINT AS CUSTNO,
-        OPERID AS UPDOPER,
-        ALIAS,
-        SUBSTRING(ALIAS,1,2) AS ALIASKEY,
-        INDFUNCT,
-        CASE WHEN SUBSTRING(ALIAS,1,2) IN ('AI','AO') THEN 'BNM ASSIGNED ID'
-             ELSE 'ID NUMBER'
-        END AS FIELDS,
-        CASE WHEN INDFUNCT='D' THEN ALIAS ELSE '' END AS OLDVALUE,
-        CASE WHEN INDFUNCT='A' THEN ALIAS ELSE '' END AS NEWVALUE
-    FROM parquet_scan('{parquet_eodrpt}')
-    WHERE OPERID IS NOT NULL
-      AND INDALS = 230
-      AND SUBSTRING(ALIAS,1,2) NOT IN ({','.join([f"'{k}'" for k in exclude_keys])})
-""")
+header = [
+    "DETAIL LISTING FOR CIHRCRVT",
+    "MONTH|BRCH_CODE|ACCT_TYPE|ACCT_NO|CUSTNO|CUSTID|CUST_NAME|"
+    "NATIONALITY|ACCT_OPENDATE|OVERRIDING_INDC|OVERRIDING_OFFCR|"
+    "OVERRIDING_REASON|DOWJONES_INDC|FUZZY_INDC|FUZZY_SCORE|"
+    "NOTED_BY|RETURNED_BY|ASSIGNED_TO|NOTED_DATE|RETURNED_DATE|"
+    "ASSIGNED_DATE|COMMENT_BY|COMMENT_DATE|SAMPLING_INDC|RETURN_STATUS|"
+    "RECORD_STATUS|FUZZY_SCREEN_DATE"
+]
 
-# Remove duplicates like PROC SORT NODUPKEY
-con.execute("""
-    CREATE VIEW eodrpt_final AS
-    SELECT DISTINCT * FROM eodrpt_proc
-""")
+with open(output_txt, "w", encoding="utf-8") as f:
+    for line in header:
+        f.write(line + "\n")
 
-# -----------------------------
-# Process NAME
-# -----------------------------
-con.execute(f"""
-    CREATE VIEW name_final AS
-    SELECT CUSTNO, CUSTNAME
-    FROM parquet_scan('{parquet_name}')
-""")
+    for batch in df.to_batches():
+        arr = batch.to_pylist()
+        for row in arr:
+            row_values = [str(row[col] or "") for col in df.schema.names]
+            f.write("|".join(row_values) + "\n")
 
-# -----------------------------
-# Process ACTIVE accounts
-# -----------------------------
-con.execute(f"""
-    CREATE VIEW active_proc AS
-    SELECT CUSTNO, ACCTNOC
-    FROM parquet_scan('{parquet_active}')
-    WHERE ACCTCODE IN ('DP   ','LN   ')
-      AND DATECLSE NOT IN ('       .','        ','00000000')
-""")
-
-# -----------------------------
-# Merge all
-# -----------------------------
-con.execute("""
-    CREATE VIEW merged AS
-    SELECT e.UPDOPER, e.CUSTNO, a.ACCTNOC, n.CUSTNAME,
-           e.FIELDS, e.OLDVALUE, e.NEWVALUE
-    FROM eodrpt_final e
-    JOIN name_final n USING (CUSTNO)
-    JOIN active_proc a USING (CUSTNO)
-""")
-
-# -----------------------------
-# Write Parquet output
-# -----------------------------
-con.execute(f"""
-    COPY merged TO '{output_parquet}' (FORMAT PARQUET)
-""")
-
-# -----------------------------
-# Write TXT output (fixed-width)
-# -----------------------------
-# DuckDB can use SQL to format fixed-width string
-con.execute(f"""
-    COPY (
-        SELECT 
-            LPAD(UPDOPER,10,' ') AS UPDOPER,
-            LPAD(CAST(CUSTNO AS VARCHAR),20,' ') AS CUSTNO,
-            LPAD(ACCTNOC,20,' ') AS ACCTNOC,
-            LPAD(CUSTNAME,40,' ') AS CUSTNAME,
-            LPAD(FIELDS,20,' ') AS FIELDS,
-            LPAD(OLDVALUE,150,' ') AS OLDVALUE,
-            LPAD(NEWVALUE,150,' ') AS NEWVALUE,
-            '{report_date}' AS UPDDATX
-        FROM merged
-    ) TO '{output_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
-""")
+print("Completed: Parquet + TXT generated.")
