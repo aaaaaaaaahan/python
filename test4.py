@@ -1,62 +1,63 @@
-# ---------------------------------------------------------
-# 3. Write TXT output (with header + | delimiter)
-# ---------------------------------------------------------
-txt_queries = {
-    "UNLOAD_CIHRCRVT_EXCEL": out
-}
+          lrecl = 800
 
-header = [
-    "DETAIL LISTING FOR CIHRCRVT",
-    "MONTH|BRCH_CODE|ACCT_TYPE|ACCT_NO|CUSTNO|CUSTID|CUST_NAME|"
-    "NATIONALITY|ACCT_OPENDATE|OVERRIDING_INDC|OVERRIDING_OFFCR|"
-    "OVERRIDING_REASON|DOWJONES_INDC|FUZZY_INDC|FUZZY_SCORE|"
-    "NOTED_BY|RETURNED_BY|ASSIGNED_TO|NOTED_DATE|RETURNED_DATE|"
-    "ASSIGNED_DATE|COMMENT_BY|COMMENT_DATE|SAMPLING_INDC|RETURN_STATUS|"
-    "RECORD_STATUS|FUZZY_SCREEN_DATE"
-]
-
-for txt_name, txt_query in txt_queries.items():
-    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
-    df_txt = con.execute(txt_query).fetchdf()
-
-    with open(txt_path, "w", encoding="utf-8") as f:
-
-        # write header
-        for h in header:
-            f.write(h + "\n")
-
-        # write rows
-        for _, row in df_txt.iterrows():
-            fields = [
-                row["HRV_MONTH"],
-                row["HRV_BRCH_CODE"],
-                row["HRV_ACCT_TYPE"],
-                row["HRV_ACCT_NO"],
-                row["HRV_CUSTNO"],
-                row["HRV_CUSTID"],
-                row["HRV_CUST_NAME"],
-                row["HRV_NATIONALITY"],
-                row["HRV_ACCT_OPENDATE"],
-                row["HRV_OVERRIDING_INDC"],
-                row["HRV_OVERRIDING_OFFCR"],
-                row["HRV_OVERRIDING_REASON"],
-                row["HRV_DOWJONES_INDC"],
-                row["HRV_FUZZY_INDC"],
-                row["HRV_FUZZY_SCORE"],
-                row["HRV_NOTED_BY"],
-                row["HRV_RETURNED_BY"],
-                row["HRV_ASSIGNED_TO"],
-                row["HRV_NOTED_DATE"],
-                row["HRV_RETURNED_DATE"],
-                row["HRV_ASSIGNED_DATE"],
-                row["HRV_COMMENT_BY"],
-                row["HRV_COMMENT_DATE"],
-                row["HRV_SAMPLING_INDC"],
-                row["HRV_RETURN_STATUS"],
-                row["HRV_RECORD_STATUS"],
-                row["HRV_FUZZY_SCREEN_DATE"]
-            ]
-
-            # Write "|" delimited line (null → blank)
-            line = "|".join("" if v is None else str(v) for v in fields)
-            f.write(line + "\n")
+INPUT @01   RUNTIMESTAMP           $EBCDIC20.
+      @21   CUSTNOX                $EBCDIC20.
+      @41   ADDREFX                $EBCDIC11.
+      @52   CUSTNAME               $EBCDIC40.
+      @92   PRIPHONEX              $EBCDIC11.
+      @103  SECPHONEX              $EBCDIC11.
+      @114  MOBILEPHX              $EBCDIC11.
+      @125  FAXX                   $EBCDIC11.
+      @136  ALIASKEY               $EBCDIC3. 
+      @139  ALIAS                  $EBCDIC20.
+      @159  PROCESSTIME            $EBCDIC8. 
+      @167  CUSTSTAT               $EBCDIC1. 
+      @168  TAXCODE                $EBCDIC1. 
+      @169  TAXID                  $EBCDIC9. 
+      @178  CUSTBRCH               $EBCDIC5. 
+      @183  COSTCTR                $EBCDIC5. 
+      @188  CUSTMNTDATE            $EBCDIC08.
+      @196  CUSTLASTOPER           $EBCDIC8. 
+      @204  PRIM_OFF               $EBCDIC5.
+      @209  SEC_OFF                $EBCDIC5.
+      @214  PRIM_LN_OFF            $EBCDIC5.
+      @219  SEC_LN_OFF             $EBCDIC5.
+      @224  RACE                   $EBCDIC1. 
+      @225  RESIDENCY              $EBCDIC3. 
+      @228  CITIZENSHIP            $EBCDIC2. 
+      @230  OPENDT                 $EBCDIC08.
+      @241  HRCALL                 $EBCDIC60.
+      @301  EXPERIENCE             $EBCDIC3. 
+      @304  HOBBIES                $EBCDIC3. 
+      @307  RELIGION               $EBCDIC3. 
+      @310  LANGUAGE               $EBCDIC3. 
+      @313  INST_SEC               $EBCDIC3. 
+      @316  CUST_CODE              $EBCDIC3. 
+      @319  CUSTCONSENT            $EBCDIC3. 
+      @322  BASICGRPCODE           $EBCDIC3. 
+      @327  MSICCODE               $EBCDIC5. 
+      @332  MASCO2008              $EBCDIC5. 
+      @337  INCOME                 $EBCDIC3. 
+      @340  EDUCATION              $EBCDIC3.  
+      @343  OCCUP                  $EBCDIC3.  
+      @346  MARITALSTAT            $EBCDIC1.  
+      @347  OWNRENT                $EBCDIC1.  
+      @348  EMPNAME                $EBCDIC40. 
+      @388  DOBDOR                 $EBCDIC08. 
+      @396  SICCODE                $EBCDIC05. 
+      @401  CORPSTATUS             $EBCDIC3.  
+      @404  NETWORTH               $EBCDIC3.  
+      @407  LAST_UPDATE_DATE       $EBCDIC10. 
+      @417  LAST_UPDATE_TIME       $EBCDIC10. 
+      @427  LAST_UPDATE_OPER       $EBCDIC10. 
+      @437  PRCOUNTRY              $EBCDIC02. 
+      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
+      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
+      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
+      @469  BNMID                  $EBCDIC20. 
+      @489  LONGNAME               $EBCDIC150.
+      @639  INDORG                 $EBCDIC1.  
+      @640  RESDESC                $EBCDIC20. 
+      @660  SALDESC                $EBCDIC20. 
+      @680  CTZDESC                $EBCDIC20.
+      ;
