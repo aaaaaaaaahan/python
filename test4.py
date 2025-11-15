@@ -1,27 +1,48 @@
-U_BC_CLASS_ID                  CHAR(10) NOT NULL,
-U_RHOLD_INDORG                 CHAR(1) NOT NULL, 
-U_RHOLD_NAME                   CHAR(40) NOT NULL,
-U_RHOLD_ID1                    CHAR(20) NOT NULL,
-U_RHOLD_ID2                    CHAR(20) NOT NULL,
-U_RHOLD_REMARK1                CHAR(40) NOT NULL,
-U_RHOLD_REMARK2                CHAR(40) NOT NULL,
-U_RHOLD_REMARK3                CHAR(40) NOT NULL,
-U_RHOLD_REMARK4                CHAR(40) NOT NULL,
-U_RHOLD_REMARK5                CHAR(40) NOT NULL,
-U_RHOLD_CREATE_DATE            DATE NOT NULL,    
-U_RHOLD_CREATE_TIME            TIME NOT NULL,    
-U_RHOLD_LASTOPERATOR           CHAR(8) NOT NULL, 
-U_RHOLD_LASTMNT_DATE           DATE NOT NULL,    
-U_RHOLD_LASTMNT_TIME           TIME NOT NULL,    
-U_RHOLD_DOB                    CHAR(10) NOT NULL,
-U_RHOLD_SKIP_MAKER             CHAR(10) NOT NULL,
-U_RHOLD_SKIP_MDATE             DATE NOT NULL,    
-U_RHOLD_SKIP_MTIME             TIME NOT NULL,    
-U_RHOLD_SKIP_MREMARKS          CHAR(50) NOT NULL,
-U_RHOLD_SKIP_CHECKER           CHAR(10) NOT NULL,
-U_RHOLD_SKIP_CDATE             DATE NOT NULL,    
-U_RHOLD_SKIP_CTIME             TIME NOT NULL,    
-U_RHOLD_SKIP_CREMARKS          CHAR(50) NOT NULL,
-U_RHOLD_SKIP_EFFDATE           DATE NOT NULL,    
-U_RHOLD_SKIP_REQBRCH           CHAR(7) NOT NULL, 
-U_RHOLD_ACTV_IND               CHAR(1) NOT NULL  
+# -----------------------------
+# Align columns for DATA_DEL
+# -----------------------------
+con.execute("""
+CREATE TABLE data_del_aligned AS
+SELECT
+    NAME,
+    '' AS DT_ALIAS,
+    ID2,
+    ID1,
+    '' AS DT_BANKRUPT_NO,
+    'SN' AS SN,
+    'L1' AS L1,
+    'DEL' AS DEL,
+    ' ' AS SPACE,
+    DEPT_CODE
+FROM data_del
+""")
+
+# -----------------------------
+# Align columns for DATA_PURGED
+# -----------------------------
+con.execute("""
+CREATE TABLE data_purged_aligned AS
+SELECT
+    NAME,
+    '' AS DT_ALIAS,
+    ID2,
+    ID1,
+    '' AS DT_BANKRUPT_NO,
+    'SN' AS SN,
+    'L1' AS L1,
+    'DEL' AS DEL,
+    ' ' AS SPACE,
+    DEPT_CODE
+FROM data_purged
+""")
+
+# -----------------------------
+# Now UNION ALL works
+# -----------------------------
+con.execute("""
+CREATE TABLE data_deleted AS
+SELECT * FROM data_purged_aligned
+UNION ALL
+SELECT * FROM data_del_aligned
+ORDER BY DEPT_CODE
+""")
