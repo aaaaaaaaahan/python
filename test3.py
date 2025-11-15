@@ -1,67 +1,109 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
-import datetime
-
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date.strftime("%d-%m-%Y")
+from datetime import datetime
 
 # -----------------------------
-# DuckDB connection
+# File paths
+# -----------------------------
+parquet_eodrpt = "/host/cis/parquet/eodrpt.parquet"
+parquet_name = "/host/cis/parquet/name.parquet"
+parquet_active = "/host/cis/parquet/active.parquet"
+
+output_parquet = "/host/cis/output/alias_change.parquet"
+output_txt = "/host/cis/output/alias_change.txt"
+
+# -----------------------------
+# Connect DuckDB
 # -----------------------------
 con = duckdb.connect()
 
 # -----------------------------
-# Process DATA_DEL: deleted only & drop unwanted DEPT_CODE
+# Reporting Date (replace SRSCTRL)
+# -----------------------------
+today = datetime.today()
+report_date = today.strftime("%d/%m/%Y")
+year = today.year
+month = today.month
+day = today.day
+
+# -----------------------------
+# Process EODRPT
+# -----------------------------
+exclude_keys = ['CH','CV','EN','NM','VE','BR','CI','PC','SA','GB',
+                'LP','RE','AI','AO','IC','SI','BI','PP','ML','PL','BC']
+
+con.execute(f"""
+    CREATE VIEW eodrpt_proc AS
+    SELECT 
+        CUSTNOX::BIGINT AS CUSTNO,
+        OPERID AS UPDOPER,
+        ALIAS,
+        SUBSTRING(ALIAS,1,2) AS ALIASKEY,
+        INDFUNCT,
+        CASE WHEN SUBSTRING(ALIAS,1,2) IN ('AI','AO') THEN 'BNM ASSIGNED ID'
+             ELSE 'ID NUMBER'
+        END AS FIELDS,
+        CASE WHEN INDFUNCT='D' THEN ALIAS ELSE '' END AS OLDVALUE,
+        CASE WHEN INDFUNCT='A' THEN ALIAS ELSE '' END AS NEWVALUE
+    FROM parquet_scan('{parquet_eodrpt}')
+    WHERE OPERID IS NOT NULL
+      AND INDALS = 230
+      AND SUBSTRING(ALIAS,1,2) NOT IN ({','.join([f"'{k}'" for k in exclude_keys])})
+""")
+
+# Remove duplicates like PROC SORT NODUPKEY
+con.execute("CREATE VIEW eodrpt_final AS SELECT DISTINCT * FROM eodrpt_proc")
+
+# -----------------------------
+# Process NAME
 # -----------------------------
 con.execute(f"""
-CREATE TABLE data_del AS
-SELECT *
-FROM '{host_parquet_path("RHOLD_LOGRHOL_EOD.parquet")}'
-WHERE FUNCTION = 'D'
-  AND DEPT_CODE NOT IN ('PBCSS', '     ')
-ORDER BY DEPT_CODE
+    CREATE VIEW name_final AS
+    SELECT CUSTNO, CUSTNAME
+    FROM parquet_scan('{parquet_name}')
 """)
 
 # -----------------------------
-# Sort DATA_PURGED by DEPT_CODE
+# Process ACTIVE accounts
 # -----------------------------
 con.execute(f"""
-CREATE TABLE data_purged AS
-SELECT *
-FROM '{host_parquet_path("RHOLD_LIST_PURGE_SUC.parquet")}'
-ORDER BY DEPT_CODE
+    CREATE VIEW active_proc AS
+    SELECT CUSTNO, ACCTNOC
+    FROM parquet_scan('{parquet_active}')
+    WHERE ACCTCODE IN ('DP   ','LN   ')
+      AND DATECLSE NOT IN ('       .','        ','00000000')
 """)
 
 # -----------------------------
-# Combine both datasets
+# Merge all
 # -----------------------------
 con.execute("""
-CREATE TABLE data_deleted AS
-SELECT * FROM data_purged
-UNION ALL
-SELECT * FROM data_del
-ORDER BY DEPT_CODE
+    CREATE VIEW merged AS
+    SELECT e.UPDOPER, e.CUSTNO, a.ACCTNOC, n.CUSTNAME,
+           e.FIELDS, e.OLDVALUE, e.NEWVALUE
+    FROM eodrpt_final e
+    JOIN name_final n USING (CUSTNO)
+    JOIN active_proc a USING (CUSTNO)
 """)
 
 # -----------------------------
-# Prepare final output columns
+# Write Parquet output
 # -----------------------------
-# Replace 'A' (hex 41) in NAME, ID1, ID2
-con.execute("""
-CREATE TABLE data_final AS
-SELECT
-    REPLACE(NAME, 'A', '') AS NAME,
-    '' AS DT_ALIAS,
-    REPLACE(ID2, 'A', '') AS ID2,
-    REPLACE(ID1, 'A', '') AS ID1,
-    '' AS DT_BANKRUPT_NO,
-    'SN' AS SN,
-    'L1' AS L1,
-    'DEL' AS DEL,
-    ' ' AS SPACE,
-    DEPT_CODE
-FROM data_deleted
-""")
+con.execute(f"COPY merged TO '{output_parquet}' (FORMAT PARQUET)")
 
-print("✅ DuckDB processing complete! Parquet and TXT generated.")
+# -----------------------------
+# Write TXT output (fixed-width)
+# -----------------------------
+con.execute(f"""
+    COPY (
+        SELECT 
+            LPAD(UPDOPER,10,' ') AS UPDOPER,
+            LPAD(CAST(CUSTNO AS VARCHAR),20,' ') AS CUSTNO,
+            LPAD(ACCTNOC,20,' ') AS ACCTNOC,
+            LPAD(CUSTNAME,40,' ') AS CUSTNAME,
+            LPAD(FIELDS,20,' ') AS FIELDS,
+            LPAD(OLDVALUE,150,' ') AS OLDVALUE,
+            LPAD(NEWVALUE,150,' ') AS NEWVALUE,
+            '{report_date}' AS UPDDATX
+        FROM merged
+    ) TO '{output_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
+""")
