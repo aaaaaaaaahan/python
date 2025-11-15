@@ -2,166 +2,134 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CINOMEX1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB92207
-//*--------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=WINDOW.SIGNATOR.CA0801.SORT,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL2     DD DSN=WINDOW.SIGNATOR.MERGED,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//* RESHAPED NOMINEES INPUT FILE FROM HORIZONTAL TO VERTICAL
-//*--------------------------------------------------------------------
-//STEP#001 EXEC SAS609
-//SASLIST  DD SYSOUT=X
-//NOMINEES  DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0801
-//OUTFILE   DD DSN=WINDOW.SIGNATOR.CA0801.SORT,
+//CIRHUNID JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB58034
+//*---------------------------------------------------------------------
+//DATA#ADD EXEC SAS609
+//IEFRDER   DD DUMMY
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(200,150))
+//INFILE    DD DISP=SHR,DSN=RHOLD.LOG#RHOL.EOD(0)
+//* FROM JOB CIRHPRG2
+//INPURGE   DD DISP=SHR,DSN=RHOLD.LIST.PURGE.SUC
+//OUTFILE   DD DSN=RHOLD.PBCS.DAILY.DEL(+1),
 //             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
 //             DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SYSIN    DD *
-OPTIONS NOCENTER;
-DATA ACCT;
-  INFILE NOMINEES;
-  DROP BANKNO;
-  INPUT  @003  BANKNO           $03.
-         @004  ACCTNO           $11.
-         @015  C1               $70.    /* NOMINEE NAME_ID 1     */
-         @085  C2               $70.    /* NOMINEE NAME_ID 2     */
-         @155  C3               $70.    /* NOMINEE NAME_ID 3     */
-         @225  C4               $70.    /* NOMINEE NAME_ID 4     */
-               ;
-RUN;
-PROC SORT  DATA=ACCT; BY ACCTNO ;RUN;
-PROC PRINT DATA=ACCT(OBS=10);TITLE 'NOMINEE_ACCT';RUN;
-
-  /* RESHAPE DATA WIDE TO LONG USING PROC TRANSPOSE           */
-  /* RESHAPE DATA HORIZONTAL TO VERTICAL USING PROC TRANSPOSE */
-
- /*PROC TRANSPOSE DATA=ACCT OUT=OUTPUT; */
- PROC TRANSPOSE DATA=ACCT OUT=OUTPUT (RENAME=(COL1=OUTPUT));
-   BY ACCTNO;
-     VAR C1 C2 C3 C4;
-
-RUN;
-PROC PRINT DATA=OUTPUT(OBS=10);TITLE 'CUST CODE TRANSPOSE';RUN;
-
-  DATA _NULL_;
-  SET OUTPUT;
-     AA = ACCTNO || ' ' ||OUTPUT;
-  FILE OUTFILE;
-    PUT @1   AA           $150.;
-
-  RUN;
-//*--------------------------------------------------------------------
-//GETCHG   EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//INPUTF1  DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0801
-//INPUTF2  DD DISP=SHR,DSN=WINDOW.SIGNATOR.CA0801.SORT
-//PBBBRH   DD DSN=PBB.BRANCH,DISP=SHR
-//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
-//NOMFILE  DD DSN=WINDOW.SIGNATOR.MERGED,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTION NOCENTER;
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
  /*----------------------------------------------------------------*/
- /* ORIGINAL NOMINEES FILE - USED TO GET STATUS AND BRANCH ID      */
+ /*    DESCRIPTION                                                 */
  /*----------------------------------------------------------------*/
-DATA NOMIIN;
-  INFILE INPUTF1;
-  INPUT  @001  BANKNO           $03.
-         @004  ACCTNO           $11.
-         @295  STATUS           $01.    /* STATUS                */
-         @298  BRANCH            03.    /* BRANCH ID             */
-               ;
+   DATA DATA_DEL;
+   INFILE INFILE;
+   INPUT @001  CURRDATE        $10.  /*YYYY-MM-DD*/
+         @001  CURRDATE_YY     $ 4.
+         @006  CURRDATE_MM     $ 2.
+         @009  CURRDATE_DD     $ 2.
+         @011  CURRTIME        $ 8.  /*HH.MM.SS  */
+         @019  TABLENAME       $10.
+         @029  FUNCTION        $ 1.
+         @030  LASTMNTDATE     $10.  /*YYYY-MM-DD*/
+         @030  LASTMNTDATE_YY  $ 4.
+         @035  LASTMNTDATE_MM  $ 2.
+         @038  LASTMNTDATE_DD  $ 2.
+         @040  LASTMNTTIME     $ 8.  /*HH.MM.SS  */
+         @048  OPERATOR        $ 8.
+         @056  NAME            $40.
+         @096  ID1             $15.
+         @111  ID2             $15.
+         @126  INDORG          $ 1.
+         @127  CRTDATE         $10.  /*YYYY-MM-DD*/
+         @127  CRTDATE_YY      $ 4.
+         @132  CRTDATE_MM      $ 2.
+         @135  CRTDATE_DD      $ 2.
+         @137  CRTTIME         $ 8.  /*HH.MM.SS  */
+         @145  RMRK01          $50.
+         @195  RMRK02          $50.
+         @245  RMRK03          $50.
+         @295  RMRK04          $50.
+         @345  RMRK05          $50.
+         @395  RMRK06          $50. /* UNUSED */
+         @445  CLASS_ID        $10.
+         @455  CLASS_CODE      $10.
+         @465  NATURE_CODE     $10.
+         @475  DEPT_CODE       $10.
+         ;
+         /*----------------------------*/
+         /* TAKE DELETED RECORDS ONLY  */
+         /*----------------------------*/
+         IF FUNCTION = 'D';
 
-RUN;
-
-PROC SORT  DATA=NOMIIN; BY BRANCH;RUN;
-PROC PRINT DATA=NOMIIN (OBS=5);TITLE 'NOMINEE_ACCT';RUN;
-
-
- /*=============================================================*/
- /* READ IN PBB.BRANCH - BRANCH FILE
- /*=============================================================*/
-   DATA BRHTABLE;
-     INFILE PBBBRH;
-     INPUT @002 BRANCH     3.
-           @006 BRHABV    $3.;
-   RUN;
-
-   PROC SORT DATA = BRHTABLE; BY BRANCH;
-
-
- DATA NOM_BRANCH;
-     MERGE NOMIIN (IN=A)  BRHTABLE(IN=B); BY BRANCH;
-     IF A;
+         /*-------------------*/
+         /* DROP PBCS RECORDS */
+         /*-------------------*/
+         IF DEPT_CODE = 'PBCSS' THEN DELETE;
+         IF DEPT_CODE = '     ' THEN DELETE;
 
    RUN;
 
- PROC SORT DATA  = NOM_BRANCH ; BY ACCTNO;RUN;
- PROC PRINT DATA = NOM_BRANCH (OBS=10);TITLE 'NOMINEE_BRCH';RUN;
+ PROC SORT DATA=DATA_DEL; BY DEPT_CODE; RUN;
+ PROC PRINT DATA=DATA_DEL;RUN;
 
+   DATA DATA_PURGED;
+   INFILE INPURGE;
+   INPUT @001     INDORG                 $01.
+         @002     NAME                   $40.
+         @042     ID1                    $20.
+         @062     ID2                    $20.
+         @082     CLASS_ID               $10.
+         @092     PURGEDATE              $10.
+         @102     DTL_REMARK1            $40.
+         @142     DTL_REMARK2            $40.
+         @182     DTL_REMARK3            $40.
+         @222     DTL_REMARK4            $40.
+         @262     DTL_REMARK5            $40.
+         @302     DTL_CRT_DATE           $10.
+         @312     DTL_CRT_TIME           $08.
+         @320     DTL_LASTOPERATOR       $08.
+         @328     DTL_LASTMNT_DATE       $10.
+         @338     DTL_LASTMNT_TIME       $08.
+         @346     CLASS_CODE             $10.
+         @356     CLASS_DESC             $150.
+         @506     NATURE_CODE            $10.
+         @516     NATURE_DESC            $150.
+         @666     DEPT_CODE              $10.
+         @676     DEPT_DESC              $150.
+         @826     GUIDE_CODE             $10. ;
+ PROC SORT DATA=DATA_PURGED; BY DEPT_CODE; RUN;
+ PROC PRINT DATA=DATA_PURGED(OBS=5);RUN;
 
- /*----------------------------------------------------------------*/
- /* NOMINEES FILE AFTER RESHAPED FROM HORIZANTAL TO VERTICAL       */
- /*----------------------------------------------------------------*/
-DATA NOMIIN2;
-  INFILE INPUTF2;
-  INPUT  @001  ACCTNO           $11.
-         @013  NAME             $40.
-         @053  IC_NUMBER        $30.
-               ;
+ /*-------------------------------------------------------*/
+ /*- GET TWO FILES (PURGED BY SYSTEM AND USERS)          -*/
+ /*-------------------------------------------------------*/
+ DATA DATADELETED;
+      SET DATA_PURGED DATA_DEL;
+ RUN;
+ PROC SORT DATA=DATADELETED; BY DEPT_CODE; RUN;
+ PROC PRINT DATA=DATADELETED(OBS=5);RUN;
 
-         IF NAME       = ' ' THEN DELETE;
-         IF IC_NUMBER  = ' ' THEN DELETE;
-
-RUN;
-
-PROC SORT  DATA=NOMIIN2; BY ACCTNO ;RUN;
-PROC PRINT DATA=NOMIIN2 (OBS=5);TITLE 'NOMINEE_ACCT_RESHAPED';RUN;
-
- /*----------------------------------------------------------------*/
- /* MATCHING TO GET ADDITIONAL INFO                                */
- /*----------------------------------------------------------------*/
-    DATA NOM_XFOUND  NOM_FOUND;
-
-      MERGE NOMIIN2(IN=A) NOM_BRANCH(IN=B); BY ACCTNO;
-
-      IF A AND NOT B THEN DO;
-         OUTPUT NOM_XFOUND;
-      END;
-      ELSE;
-         IF A AND B THEN DO;
-         OUTPUT NOM_FOUND;
-      END;
-
-    RUN;
-
-PROC SORT  DATA=NOM_XFOUND; BY ACCTNO ;RUN;
-PROC PRINT DATA=NOM_XFOUND(OBS=5);TITLE 'NOMINEE_XMATCH';RUN;
-PROC SORT  DATA=NOM_FOUND; BY ACCTNO ;RUN;
-PROC PRINT DATA=NOM_FOUND(OBS=5);TITLE 'NOMINEE_MATCHED';RUN;
-
- /*----------------------------------------------------------------*/
- /* WRITE OUTPUT FILE TO BE INSERTED INTO DB2 CISNGLVT             */
- /*----------------------------------------------------------------*/
- DATA _NULL_;
-   FILE NOMFILE;
-   SET NOM_FOUND;
-
-       PUT @21  ACCTNO           $11.
-           @54  IC_NUMBER        $20.
-           @76  NAME             $40.
-           @116 'Y'
-           @117 STATUS           $01.
-           @118 BRHABV           $03.
-           @121 BRANCH           Z03.      /*BRANCH-CODE*/
-           ;
-
+ /*-------------------------------------------------------*/
+ /*- FULL FILE DETAILS                                   -*/
+ /*-------------------------------------------------------*/
+ DATA OUT;
+ SET DATADELETED;
+   FILE OUTFILE;
+     DT_ALIAS='' ;
+     DT_BANKRUPT_NO='';
+     DELIM = '41'X;
+     NAME        =COMPRESS(NAME,DELIM);
+     ID1         =COMPRESS(ID1,DELIM);
+     ID2         =COMPRESS(ID2,DELIM);
+     PUT @001     NAME                   $50.
+         @051     DT_ALIAS               $30.
+         @081     ID2                    $12.
+         @093     ID1                    $12.
+         @105     DT_BANKRUPT_NO         $18.
+         @123     'SN'
+         @125     'L1'
+         @127     'DEL'
+         @130     ' '
+         @131     DEPT_CODE              $ 8. ;
  RUN;
