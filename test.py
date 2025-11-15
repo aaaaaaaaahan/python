@@ -2,114 +2,135 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIULHRCR JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB47799
-//JOBLIB   DD  DSN=DSNR.SDSNEXIT,DISP=SHR
-//         DD  DSN=DSN.SDSNLOAD,DISP=SHR
-//*--------------------------------------------------------------------
-//XCELFILE EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//CIHRCRVT DD DISP=SHR,DSN=UNLOAD_CIHRCRVT_FB
-//OUTFILE  DD DSN=UNLOAD_CIHRCRVT_EXCEL,
+//CISRHLD1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB69047
+//**************************************************************        00040000
+//*  DELETE OLD  DATA FILE                                     *        00050000
+//**************************************************************        00060000
+//*DELETE   EXEC PGM=IEFBR14                                            00070000
+//*DD1      DD DSN=AMLA.RHOLD.EXTRACT,                        00080007
+//*            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,0)
+//*
+//MATCH#1  EXEC SAS609
+//RHOLD    DD DISP=SHR,DSN=UNLOAD.CIRHOLDT.FB
+//RHOBFILE DD DISP=SHR,DSN=UNLOAD.CIRHOBCT.FB
+//RHODFILE DD DISP=SHR,DSN=UNLOAD.CIRHODCT.FB
+//OUTPUT   DD DSN=AMLA.RHOLD.EXTRACT(+1),
 //            DISP=(NEW,CATLG,DELETE),
-//            UNIT=SYSDA,SPACE=(CYL,(300,300),RLSE),
-//            DCB=(LRECL=1500,BLKSIZE=0,RECFM=FB)
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=300,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
+//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(100,100))
 //SYSIN    DD *
-     DATA CIHRCRVT;
-     INFILE CIHRCRVT;
-        INPUT  @  1  HRV_MONTH               $6.
-               @  7  HRV_BRCH_CODE           $7.
-               @ 14  HRV_ACCT_TYPE           $5.
-               @ 19  HRV_ACCT_NO             $20.
-               @ 39  HRV_CUSTNO              $20.
-               @ 59  HRV_CUSTID              $40.
-               @ 99  HRV_CUST_NAME           $120.
-               @219  HRV_NATIONALITY         $2.
-               @221  HRV_ACCT_OPENDATE       $10.
-               @231  HRV_OVERRIDING_INDC     $1.
-               @232  HRV_OVERRIDING_OFFCR    $10.
-               @242  HRV_OVERRIDING_REASON   $100.
-               @342  HRV_DOWJONES_INDC       $1.
-               @343  HRV_FUZZY_INDC          $1.
-               @344  HRV_FUZZY_SCORE         3.2
-               @347  HRV_NOTED_BY            $10.
-               @357  HRV_RETURNED_BY         $10.
-               @367  HRV_ASSIGNED_TO         $10.
-               @377  HRV_NOTED_DATE          $26.
-               @403  HRV_RETURNED_DATE       $26.
-               @429  HRV_ASSIGNED_DATE       $26.
-               @455  HRV_COMMENT_BY          $10.
-               @465  HRV_COMMENT_DATE        $26.
-               @491  HRV_SAMPLING_INDC       $1.
-               @492  HRV_RETURN_STATUS       $1.
-               @493  HRV_RECORD_STATUS       $1.
-               @494  HRV_FUZZY_SCREEN_DATE   $10.
-               ;
-     RUN;
-     PROC SORT  DATA=CIHRCRVT; BY HRV_MONTH
-                                  HRV_BRCH_CODE
-                                  HRV_ACCT_TYPE
-                                  HRV_ACCT_NO
-                                  HRV_CUSTNO ;  RUN;
+DATA RHOB;
+   INFILE RHOBFILE;
+        INPUT @01   CLASSIFY       $10.
+              @11   NATURE         $10.
+              @21   KEY_CODE       $10.    /* U-BC-DEPT */
+              @41   CLASSID        $10.;
 
-  DATA OUT1 ;
-   FILE OUTFILE;
-   SET CIHRCRVT;
-      DELIM = '|';
-      IF _N_ = 1 THEN DO;
-        PUT      'DETAIL LISTING FOR CIHRCRVT          ';
-        PUT      'MONTH '                 +(-1)DELIM+(-1)
-                 'BRCH_CODE '             +(-1)DELIM+(-1)
-                 'ACCT_TYPE '             +(-1)DELIM+(-1)
-                 'ACCT_NO '               +(-1)DELIM+(-1)
-                 'CUSTNO '                +(-1)DELIM+(-1)
-                 'CUSTID '                +(-1)DELIM+(-1)
-                 'CUST_NAME '             +(-1)DELIM+(-1)
-                 'NATIONALITY '           +(-1)DELIM+(-1)
-                 'ACCT_OPENDATE '         +(-1)DELIM+(-1)
-                 'OVERRIDING_INDC '       +(-1)DELIM+(-1)
-                 'OVERRIDING_OFFCR '      +(-1)DELIM+(-1)
-                 'OVERRIDING_REASON '     +(-1)DELIM+(-1)
-                 'DOWJONES_INDC '         +(-1)DELIM+(-1)
-                 'FUZZY_INDC '            +(-1)DELIM+(-1)
-                 'FUZZY_SCORE '           +(-1)DELIM+(-1)
-                 'NOTED_BY '              +(-1)DELIM+(-1)
-                 'RETURNED_BY '           +(-1)DELIM+(-1)
-                 'ASSIGNED_TO '           +(-1)DELIM+(-1)
-                 'NOTED_DATE '            +(-1)DELIM+(-1)
-                 'RETURNED_DATE '         +(-1)DELIM+(-1)
-                 'ASSIGNED_DATE '         +(-1)DELIM+(-1)
-                 'SAMPLING_INDC '         +(-1)DELIM+(-1)
-                 'RETURN_STATUS '         +(-1)DELIM+(-1)
-                 'RECORD_STATUS '         +(-1)DELIM+(-1)
-                 'FUZZY_SCREEN_DATE '     +(-1)DELIM+(-1)
-            ;
-       END;
-         PUT   HRV_MONTH                   +(-1)DELIM+(-1)
-               HRV_BRCH_CODE               +(-1)DELIM+(-1)
-               HRV_ACCT_TYPE               +(-1)DELIM+(-1)
-               HRV_ACCT_NO                 +(-1)DELIM+(-1)
-               HRV_CUSTNO                  +(-1)DELIM+(-1)
-               HRV_CUSTID                  +(-1)DELIM+(-1)
-               HRV_CUST_NAME               +(-1)DELIM+(-1)
-               HRV_NATIONALITY             +(-1)DELIM+(-1)
-               HRV_ACCT_OPENDATE           +(-1)DELIM+(-1)
-               HRV_OVERRIDING_INDC         +(-1)DELIM+(-1)
-               HRV_OVERRIDING_OFFCR        +(-1)DELIM+(-1)
-               HRV_OVERRIDING_REASON       +(-1)DELIM+(-1)
-               HRV_DOWJONES_INDC           +(-1)DELIM+(-1)
-               HRV_FUZZY_SCORE             +(-1)DELIM+(-1)
-               HRV_NOTED_BY                +(-1)DELIM+(-1)
-               HRV_RETURNED_BY             +(-1)DELIM+(-1)
-               HRV_ASSIGNED_TO             +(-1)DELIM+(-1)
-               HRV_NOTED_DATE              +(-1)DELIM+(-1)
-               HRV_RETURNED_DATE           +(-1)DELIM+(-1)
-               HRV_ASSIGNED_DATE           +(-1)DELIM+(-1)
-               HRV_SAMPLING_INDC           +(-1)DELIM+(-1)
-               HRV_RETURN_STATUS           +(-1)DELIM+(-1)
-               HRV_RECORD_STATUS           +(-1)DELIM+(-1)
-               HRV_FUZZY_SCREEN_DATE       +(-1)DELIM+(-1)
-               ;
+RUN;
+PROC SORT DATA=RHOB NODUPKEY; BY CLASSID ;RUN;
+
+DATA RHOD;
+   INFILE RHODFILE;
+         FORMAT CONTACT1 $50. CONTACT2 $50. CONTACT3 $50.
+               REMARKS $150.;
+         INPUT @001 KEY_ID                  $10.
+               @011 KEY_CODE                $10.
+               @021 KEY_DESCRIBE            $150.
+               @171 KEY_REMARK_ID1          $10.
+               @181 KEY_REMARK_1            $50.
+               @231 KEY_REMARK_ID2          $10.
+               @241 KEY_REMARK_2            $50.
+               @291 KEY_REMARK_ID3          $10.
+               @301 KEY_REMARK_3            $50.
+               @351 DESC_LASTOPERATOR       $8.
+               @359 DESC_LASTMNT_DATE       $10.
+               @369 DESC_LASTMNT_TIME       $8.  ;
+         IF KEY_ID = 'DEPT  ' ;
+         IF KEY_REMARK_1 NE ' ' THEN CONTACT1 = KEY_REMARK_1;
+         IF KEY_REMARK_2 NE ' ' THEN CONTACT2 = KEY_REMARK_2;
+         IF KEY_REMARK_3 NE ' ' THEN CONTACT3 = KEY_REMARK_3;
+         REMARKS = TRIM(KEY_DESCRIBE)||''||TRIM(CONTACT1)||''||
+                   TRIM(CONTACT2);
+RUN;
+PROC SORT DATA=RHOD NODUPKEY; BY KEY_CODE  ;RUN;
+PROC PRINT DATA=RHOD(OBS=15);TITLE 'RHOD LIST';
+
+
+DATA RHOLD;
+   FORMAT DOBDOR $8. CRTDATE $8.;
+   INFILE RHOLD;
+        INPUT @01   CLASSID        $10.
+              @11   INDORG         $1.
+              @12   NAME           $40.
+              @52   NEWIC          $20.
+              @72   OTHID          $20.
+              @292  CRTDTYYYY      $4.
+              @297  CRTDTMM        $2.
+              @300  CRTDTDD        $2.
+              @336  DOBDTYYYY      $4.
+              @341  DOBDTMM        $2.
+              @344  DOBDTDD        $2.;
+              DOBDOR=DOBDTYYYY||DOBDTMM||DOBDTDD;
+              CRTDATE=CRTDTYYYY||CRTDTMM||CRTDTDD;
+              REPTDATE=PUT(TODAY()-7,YYMMDDN8.);
+      /*   IF CRTDATE >= REPTDATE;               TLC TEMP OFF  */
+RUN;
+PROC SORT DATA=RHOLD; BY CLASSID ; RUN;
+
+ /* RHOLD = CIRHOLDT */
+ /* RHOB  = CIRHOBCT */
+ /* RHOD  = CIRHODCT */
+
+DATA GETCLASSID;
+   MERGE RHOLD(IN=A) RHOB(IN=B); BY CLASSID;
+   IF (A AND B) THEN OUTPUT;
+RUN;
+
+PROC SORT DATA=GETCLASSID; BY KEY_CODE ;RUN;
+PROC PRINT DATA=GETCLASSID(OBS=5);TITLE 'GETCLASSID';
+
+
+DATA OBODCT;
+   MERGE GETCLASSID(IN=C) RHOD(IN=D); BY KEY_CODE;
+   IF (C AND D) THEN OUTPUT;
+RUN;
+
+PROC SORT DATA=OBODCT; BY CLASSID; RUN;
+
+
+  DATA OUTPUT;
+   SET OBODCT;
+   FILE OUTPUT;
+   BY CLASSID;
+        PUT @001   INDORG       $01.
+            @002   ';'
+            @003   NAME         $40.
+            @043   ';'
+            @044   NEWIC        $20.
+            @064   ';'
+            @065   OTHID        $20.
+            @075   ';'
+            @076   CONTACT1     $50.
+            @136   ';'
+            @137   CONTACT2     $50.
+            @187   ';'
+            @188   CONTACT3     $50.;
+
+    /*  PUT @001   CLASSID      $10.    FOR TRAKING PURPOSE ONLY */
+    /*      @011   KEY_ID       $10.
+            @021   KEY_CODE     $10.
+            @031   INDORG       $1.
+            @032   NAME         $40.
+            @072   NEWIC        $20.
+            @092   OTHID        $20.
+            @112   CONTACT1     $50.
+            @162   CONTACT2     $50.
+            @212   CONTACT3     $50.; */
   RUN;
+
+  PROC PRINT DATA=OUTPUT(OBS=5);TITLE 'OUTPUT';
