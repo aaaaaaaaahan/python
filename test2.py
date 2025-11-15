@@ -1,80 +1,132 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+from datetime import datetime, timedelta
 
 # ---------------------------------------------------------
-# 1. Load CIHRCRVT parquet (already converted AS400 FB file)
+# Batch Date
+# ---------------------------------------------------------
+batch_date = datetime.today() - timedelta(days=1)
+report_date = batch_date.strftime("%Y%m%d")
+
+# ---------------------------------------------------------
+# DuckDB Connection
 # ---------------------------------------------------------
 con = duckdb.connect()
 
-df = con.execute(f"""
+# ---------------------------------------------------------
+# 1. Load all parquet files into DuckDB
+# ---------------------------------------------------------
+con.execute(f"""
+    CREATE VIEW RHOB AS
     SELECT
-        HRV_MONTH,
-        HRV_BRCH_CODE,
-        HRV_ACCT_TYPE,
-        HRV_ACCT_NO,
-        HRV_CUSTNO,
-        HRV_CUSTID,
-        HRV_CUST_NAME,
-        HRV_NATIONALITY,
-        HRV_ACCT_OPENDATE,
-        HRV_OVERRIDING_INDC,
-        HRV_OVERRIDING_OFFCR,
-        HRV_OVERRIDING_REASON,
-        HRV_DOWJONES_INDC,
-        HRV_FUZZY_INDC,
-        HRV_FUZZY_SCORE,
-        HRV_NOTED_BY,
-        HRV_RETURNED_BY,
-        HRV_ASSIGNED_TO,
-        HRV_NOTED_DATE,
-        HRV_RETURNED_DATE,
-        HRV_ASSIGNED_DATE,
-        HRV_COMMENT_BY,
-        HRV_COMMENT_DATE,
-        HRV_SAMPLING_INDC,
-        HRV_RETURN_STATUS,
-        HRV_RECORD_STATUS,
-        HRV_FUZZY_SCREEN_DATE
-    FROM read_parquet({host_parquet_path("UNLOAD_CIHRCRVT_FB")})
-    ORDER BY
-        HRV_MONTH,
-        HRV_BRCH_CODE,
-        HRV_ACCT_TYPE,
-        HRV_ACCT_NO,
-        HRV_CUSTNO
-""").arrow()
+        CLASSIFY,
+        NATURE,
+        KEY_CODE,
+        CLASSID
+    FROM read_parquet({host_parquet_path("UNLOAD_CIRHOBCT_FB")})
+""")
+
+con.execute(f"""
+    CREATE VIEW RHOD AS
+    SELECT
+        KEY_ID,
+        KEY_CODE,
+        KEY_DESCRIBE,
+        KEY_REMARK_ID1,
+        KEY_REMARK_1,
+        KEY_REMARK_ID2,
+        KEY_REMARK_2,
+        KEY_REMARK_ID3,
+        KEY_REMARK_3,
+        DESC_LASTOPERATOR,
+        DESC_LASTMNT_DATE,
+        DESC_LASTMNT_TIME
+    FROM read_parquet({host_parquet_path("UNLOAD_CIRHODCT_FB")})
+    WHERE KEY_ID = 'DEPT'
+""")
+
+con.execute(f"""
+    CREATE VIEW RHOLD AS
+    SELECT
+        CLASSID,
+        INDORG,
+        NAME,
+        NEWIC,
+        OTHID,
+        CRTDTYYYY,
+        CRTDTMM,
+        CRTDTDD,
+        DOBDTYYYY,
+        DOBDTMM,
+        DOBDTDD,
+        (DOBDTYYYY || DOBDTMM || DOBDTDD) AS DOBDOR,
+        (CRTDTYYYY || CRTDTMM || CRTDTDD) AS CRTDATE
+    FROM read_parquet({host_parquet_path("UNLOAD_CIRHOLDT_FB")})
+""")
 
 # ---------------------------------------------------------
-# 2. Save sorted output to Parquet
+# 2. Process RHOD (build CONTACT1, CONTACT2, CONTACT3, REMARKS)
 # ---------------------------------------------------------
-output_parquet = parquet_output_path("UNLOAD_CIHRCRVT_EXCEL.parquet")
-pq.write_table(df, output_parquet)
+con.execute("""
+    CREATE TEMP TABLE RHOD_CLEAN AS
+    SELECT
+        KEY_CODE,
+        COALESCE(NULLIF(KEY_REMARK_1, ''), '') AS CONTACT1,
+        COALESCE(NULLIF(KEY_REMARK_2, ''), '') AS CONTACT2,
+        COALESCE(NULLIF(KEY_REMARK_3, ''), '') AS CONTACT3,
+        TRIM(KEY_DESCRIBE) ||
+        TRIM(COALESCE(NULLIF(KEY_REMARK_1, ''), '')) ||
+        TRIM(COALESCE(NULLIF(KEY_REMARK_2, ''), '')) AS REMARKS
+    FROM RHOD
+""")
 
 # ---------------------------------------------------------
-# 3. Write TXT output (with header + | delimiter)
+# 3. Merge RHOLD + RHOB (BY CLASSID)
 # ---------------------------------------------------------
-output_txt = csv_output_path("UNLOAD_CIHRCRVT_EXCEL.txt")
+con.execute("""
+    CREATE TEMP TABLE GETCLASSID AS
+    SELECT *
+    FROM RHOLD h
+    INNER JOIN RHOB b USING (CLASSID)
+""")
 
-header = [
-    "DETAIL LISTING FOR CIHRCRVT",
-    "MONTH|BRCH_CODE|ACCT_TYPE|ACCT_NO|CUSTNO|CUSTID|CUST_NAME|"
-    "NATIONALITY|ACCT_OPENDATE|OVERRIDING_INDC|OVERRIDING_OFFCR|"
-    "OVERRIDING_REASON|DOWJONES_INDC|FUZZY_INDC|FUZZY_SCORE|"
-    "NOTED_BY|RETURNED_BY|ASSIGNED_TO|NOTED_DATE|RETURNED_DATE|"
-    "ASSIGNED_DATE|COMMENT_BY|COMMENT_DATE|SAMPLING_INDC|RETURN_STATUS|"
-    "RECORD_STATUS|FUZZY_SCREEN_DATE"
-]
+# ---------------------------------------------------------
+# 4. Merge with RHOD_CLEAN (BY KEY_CODE)
+# ---------------------------------------------------------
+con.execute("""
+    CREATE TEMP TABLE OBODCT AS
+    SELECT *
+    FROM GETCLASSID g
+    INNER JOIN RHOD_CLEAN d USING (KEY_CODE)
+""")
 
-with open(output_txt, "w", encoding="utf-8") as f:
-    for line in header:
+# ---------------------------------------------------------
+# 5. Final OUTPUT dataset
+# ---------------------------------------------------------
+df = con.execute("SELECT * FROM OBODCT ORDER BY CLASSID").fetchdf()
+
+# ---------------------------------------------------------
+# 6. Write TXT file (fixed positions like SAS PUT)
+# ---------------------------------------------------------
+txt_path = csv_output_path(f"AMLA_RHOLD_EXTRACT_{report_date}").replace(".csv", ".txt")
+
+with open(txt_path, "w", encoding="utf-8") as f:
+    for _, row in df.iterrows():
+        line = (
+            f"{str(row['INDORG'])[0:1]:<1}" +
+            ";" +
+            f"{str(row['NAME'])[0:40]:<40}" +
+            ";" +
+            f"{str(row['NEWIC'])[0:20]:<20}" +
+            ";" +
+            f"{str(row['OTHID'])[0:20]:<20}" +
+            ";" +
+            f"{str(row['CONTACT1'])[0:50]:<50}" +
+            ";" +
+            f"{str(row['CONTACT2'])[0:50]:<50}" +
+            ";" +
+            f"{str(row['CONTACT3'])[0:50]:<50}"
+        )
         f.write(line + "\n")
 
-    for batch in df.to_batches():
-        arr = batch.to_pylist()
-        for row in arr:
-            row_values = [str(row[col] or "") for col in df.schema.names]
-            f.write("|".join(row_values) + "\n")
-
-print("Completed: Parquet + TXT generated.")
+print("TXT Generated:", txt_path)
