@@ -1,165 +1,103 @@
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
-from datetime import datetime
 
-# =========================================================
-# CONFIG
-# =========================================================
-INPUT1 = "/host/input/WINDOW.SIGNATOR.CA0801.parquet"        # contains ACCTNO, C1, C2, C3, C4
-SORT_OUT = "/host/output/WINDOW.SIGNATOR.CA0801.SORT.parquet"
+# -----------------------------
+# File paths (update as needed)
+# -----------------------------
+data_del_parquet = "RHOLD_LOG_RHOL_EOD.parquet"
+data_purge_parquet = "RHOLD_LIST_PURGE_SUC.parquet"
+output_parquet = "RHOLD_PBCS_DAILY_DEL.parquet"
+output_txt = "RHOLD_PBCS_DAILY_DEL.txt"
 
-BRANCH_FILE = "/host/input/PBB.BRANCH.parquet"               # fields: BRANCH, BRHABV
-MERGED_TXT = "/host/output/WINDOW.SIGNATOR.MERGED.txt"
-MERGED_PARQUET = "/host/output/WINDOW.SIGNATOR.MERGED.parquet"
+# -----------------------------
+# DuckDB connection
+# -----------------------------
+con = duckdb.connect(database=':memory:')
 
-con = duckdb.connect()
+# -----------------------------
+# Load parquet files into DuckDB tables
+# -----------------------------
+con.execute(f"CREATE TABLE data_del AS SELECT * FROM parquet_scan('{data_del_parquet}')")
+con.execute(f"CREATE TABLE data_purged AS SELECT * FROM parquet_scan('{data_purge_parquet}')")
 
+# -----------------------------
+# Process DATA_DEL: deleted only & drop unwanted DEPT_CODE
+# -----------------------------
+con.execute("""
+CREATE TABLE data_del_filtered AS
+SELECT *
+FROM data_del
+WHERE FUNCTION = 'D'
+  AND DEPT_CODE NOT IN ('PBCSS', '     ')
+ORDER BY DEPT_CODE
+""")
 
-# =========================================================
-# STEP 1 — READ INPUT (HORIZONTAL)
-# =========================================================
+# -----------------------------
+# Sort DATA_PURGED by DEPT_CODE
+# -----------------------------
+con.execute("""
+CREATE TABLE data_purged_sorted AS
+SELECT *
+FROM data_purged
+ORDER BY DEPT_CODE
+""")
+
+# -----------------------------
+# Combine both datasets
+# -----------------------------
+con.execute("""
+CREATE TABLE data_deleted AS
+SELECT * FROM data_purged_sorted
+UNION ALL
+SELECT * FROM data_del_filtered
+ORDER BY DEPT_CODE
+""")
+
+# -----------------------------
+# Prepare final output columns
+# -----------------------------
+# Replace 'A' (hex 41) in NAME, ID1, ID2
+con.execute("""
+CREATE TABLE data_final AS
+SELECT
+    REPLACE(NAME, 'A', '') AS NAME,
+    '' AS DT_ALIAS,
+    REPLACE(ID2, 'A', '') AS ID2,
+    REPLACE(ID1, 'A', '') AS ID1,
+    '' AS DT_BANKRUPT_NO,
+    'SN' AS SN,
+    'L1' AS L1,
+    'DEL' AS DEL,
+    ' ' AS SPACE,
+    DEPT_CODE
+FROM data_deleted
+""")
+
+# -----------------------------
+# Export to Parquet
+# -----------------------------
+con.execute(f"COPY data_final TO '{output_parquet}' (FORMAT PARQUET)")
+
+# -----------------------------
+# Export to fixed-width TXT
+# -----------------------------
+# Create the formatted fixed-width string directly in DuckDB
 con.execute(f"""
-    CREATE TABLE ACCT AS
-    SELECT * FROM read_parquet('{INPUT1}');
-""")
-
-
-# =========================================================
-# STEP 2 — TRANSPOSE (HORIZONTAL → VERTICAL)
-# =========================================================
-con.execute("""
-    CREATE TABLE SORTED AS
-    SELECT 
-        ACCTNO,
-        UNNEST([C1, C2, C3, C4]) AS OUTPUT
-    FROM ACCT;
-""")
-
-# Remove empty nominee slots
-con.execute("""
-    DELETE FROM SORTED WHERE TRIM(OUTPUT) = '';
-""")
-
-# Write SORT as parquet only
-pq.write_table(con.execute("SELECT * FROM SORTED").arrow(), SORT_OUT)
-
-
-# =========================================================
-# STEP 3 — READ STATUS + BRANCH INFO (FROM CA0801 AGAIN)
-# =========================================================
-# Your CA0801 input does NOT include STATUS/BRANCH fields.
-# You MUST confirm field names. I assume your parquet contains:
-
-# ACCTNO, STATUS, BRANCH
-
-con.execute(f"""
-    CREATE TABLE NOMIIN AS
-    SELECT 
-        ACCTNO,
-        STATUS,
-        BRANCH
-    FROM read_parquet('{INPUT1}');
-""")
-
-
-# =========================================================
-# STEP 4 — READ BRANCH FILE
-# =========================================================
-# Branch parquet contains: BRANCH, BRHABV
-
-con.execute(f"""
-    CREATE TABLE BRHTABLE AS
-    SELECT * FROM read_parquet('{BRANCH_FILE}');
-""")
-
-
-# =========================================================
-# STEP 5 — MERGE NOMIIN + BRANCH FILE
-# =========================================================
-con.execute("""
-    CREATE TABLE NOM_BRANCH AS
-    SELECT A.ACCTNO, A.STATUS, A.BRANCH, B.BRHABV
-    FROM NOMIIN A 
-    LEFT JOIN BRHTABLE B USING (BRANCH);
-""")
-
-
-# =========================================================
-# STEP 6 — READ SORTED (VERTICAL) AND SPLIT OUTPUT
-# =========================================================
-# OUTPUT contains: "NAME + space + IC"
-# Example: "ALI BIN AHMAD 900101015555A"
-
-con.execute("""
-    CREATE TABLE NOMIIN2 AS
+COPY (
     SELECT
-        ACCTNO,
-        LEFT(OUTPUT, 40) AS NAME,
-        SUBSTR(OUTPUT, 41, 30) AS IC_NUMBER
-    FROM SORTED
-    WHERE TRIM(OUTPUT) <> '';
+        LPAD(NAME,50,' ') ||
+        LPAD(DT_ALIAS,30,' ') ||
+        LPAD(ID2,12,' ') ||
+        LPAD(ID1,12,' ') ||
+        LPAD(DT_BANKRUPT_NO,18,' ') ||
+        SN ||
+        L1 ||
+        DEL ||
+        SPACE ||
+        LPAD(DEPT_CODE,8,' ') AS line
+    FROM data_final
+) TO '{output_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE, QUOTE '')
 """)
 
-# Remove missing data
-con.execute("""
-    DELETE FROM NOMIIN2
-    WHERE TRIM(NAME)='' OR TRIM(IC_NUMBER)='';
-""")
-
-
-# =========================================================
-# STEP 7 — MATCH TO PRODUCE FINAL MERGED TABLE
-# =========================================================
-con.execute("""
-    CREATE TABLE NOM_FOUND AS
-    SELECT 
-        A.ACCTNO,
-        A.IC_NUMBER,
-        A.NAME,
-        B.STATUS,
-        B.BRHABV,
-        B.BRANCH
-    FROM NOMIIN2 A
-    LEFT JOIN NOM_BRANCH B USING (ACCTNO)
-    WHERE B.ACCTNO IS NOT NULL;
-""")
-
-# (Optional) unmatched but not required for output
-con.execute("""
-    CREATE TABLE NOM_XFOUND AS
-    SELECT *
-    FROM NOMIIN2 A
-    WHERE NOT EXISTS (SELECT 1 FROM NOM_BRANCH B WHERE A.ACCTNO=B.ACCTNO);
-""")
-
-
-# =========================================================
-# STEP 8 — WRITE MERGED OUTPUT (TXT + PARQUET)
-# =========================================================
-rows = con.execute("""
-    SELECT ACCTNO, IC_NUMBER, NAME, STATUS, BRHABV, BRANCH
-    FROM NOM_FOUND
-""").fetchall()
-
-# Write TXT output for DB2
-with open(MERGED_TXT, "w", encoding="utf-8") as fp:
-    for acctno, ic, name, status, brhabv, branch in rows:
-
-        line = (
-            f"{acctno:<11}"              # ACCTNO @21 (left-aligned)
-            f"{ic:<20}"                  # IC @54
-            f"{name:<40}"                # NAME @76
-            f"Y"                          # Constant 'Y'
-            f"{status}"                   # STATUS @117
-            f"{brhabv:<3}"                # BRHABV @118
-            f"{branch:03d}"               # BRANCH Z03. @121
-        )
-
-        fp.write(line + "\n")
-
-# Write parquet version
-pq.write_table(con.execute("SELECT * FROM NOM_FOUND").arrow(), MERGED_PARQUET)
-
-
-print("CINOMEX1 COMPLETED — SORT to parquet only, MERGED to parquet & txt.")
+print("✅ DuckDB processing complete! Parquet and TXT generated.")
