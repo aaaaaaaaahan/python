@@ -2,55 +2,37 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CICONMAI JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB68724
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=UNICARD.MAILFLAG.LIST,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL2     DD DSN=UNICARD.MAILFLAG.UPDCUST,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL3     DD DSN=UNICARD.MAILFLAG.UPDCON1,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL4     DD DSN=UNICARD.MAILFLAG.UNQ,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//*- SORT UNIQUE BY IC AND ID
-//*--------------------------------------------------------------------
-//UNQCUST  EXEC PGM=ICETOOL
-//TOOLMSG  DD SYSOUT=*
-//DFSMSG   DD SYSOUT=*
-//INDD01   DD DISP=SHR,DSN=UNICARD.MAILFLAG
-//OUTDD01  DD DSN=UNICARD.MAILFLAG.UNQ,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=50,BLKSIZE=0,RECFM=FB)
-//TOOLIN   DD *
-   SELECT FROM(INDD01) TO(OUTDD01) ON(1,27,CH) FIRST
-//*--------------------------------------------------------------------
-//STATS#01 EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
-//MAILFLAG DD DISP=SHR,DSN=UNICARD.MAILFLAG.UNQ
+//CICISALS JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB59669
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS.ALIAS.CHANGE.RPT,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* LIST OF BNMID AND ALIAS ONLY - CHANGES ONLY
+//*---------------------------------------------------------------------
+//SET1B1   EXEC SAS609
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//EODRPT   DD DISP=SHR,DSN=CIDARPGS
+//CCRSBANK DD DISP=SHR,DSN=CIS.CUST.DAILY.ACTVOD
+//NAMEFILE DD DISP=SHR,DSN=UNLOAD.PRIMNAME.OUT
 //CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
-//ALSFILE  DD DISP=SHR,DSN=UNLOAD.ALLALIAS.FB
-//CUSTFILE DD DISP=SHR,DSN=CIS.CUST.DAILY
-//OUTFILE  DD DSN=UNICARD.MAILFLAG.LIST,
+//OUTFILE  DD DSN=CIS.ALIAS.CHANGE.RPT,
 //            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//UPDCUST  DD DSN=UNICARD.MAILFLAG.UPDCUST,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//UPDCON1  DD DSN=UNICARD.MAILFLAG.UPDCON1,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=120,BLKSIZE=0,RECFM=FB)
-//EXCEPT   DD DSN=UNICARD.MAILFLAG.RPT(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-OPTIONS NOSORTBLKMODE;
+OPTION NOCENTER;
+
+DATA GETDATE;
+     FORMAT XX Z6.;
+     TM=TIME();
+     XX=COMPRESS(PUT (TM,TIME8.),':');
+     CALL SYMPUT('TIMEX', PUT(XX,Z6.));
+RUN;
+PROC PRINT;RUN;
  /*----------------------------------------------------------------*/
  /*    SET DATES                                                   */
  /*----------------------------------------------------------------*/
@@ -62,247 +44,98 @@ OPTIONS NOSORTBLKMODE;
 
           /* DISPLAY TODAY REPORTING DATE*/
           TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-          CALL SYMPUT('DATE1',PUT(TODAYSAS,YYMMDDD10.));
-          CALL SYMPUT('DATE2',PUT(TODAYSAS,DATE9.));
+          CALL SYMPUT('DATE1',PUT(TODAYSAS,8.));
+          CALL SYMPUT('YEAR' ,PUT(SRSYY,Z4.));
+          CALL SYMPUT('MONTH',PUT(SRSMM,Z2.));
+          CALL SYMPUT('DAY'  ,PUT(SRSDD,Z2.));
     RUN;
    PROC PRINT;RUN;
- /*----------------------------------------------------------------*/
- /*    PROCESSING                                                  */
- /*----------------------------------------------------------------*/
-DATA CIS;
-   FORMAT OLDIC $12. CISOLDIC  $12.;
-   SET CUSTFILE.CUSTDLY;
-   KEEP CUSTNO CISCONSENT TAXID OLDIC INDORG CISOLDIC;
-   OLDIC = TAXID;
-   CISOLDIC = TAXID;
-   IF CUSTCONSENT = '001' THEN CISCONSENT = 'Y';
-   ELSE IF CUSTCONSENT = '002' THEN CISCONSENT = 'N';
-   ELSE CISCONSENT = ' ';
-RUN;
-PROC SORT  DATA=CIS NODUPKEY; BY CUSTNO;RUN;
-
-DATA ALS;
-   INFILE ALSFILE;
-   DROP ALIAS ALIASKEY;
-   FORMAT NEWIC $15. CISNEWIC $15.;
-   INPUT @5     CUSTNO      $11.
-         @89    ALIASKEY    $3.
-         @91    ALIAS       $15.;
-    IF ALIAS = '' THEN DELETE;
-    IF ALIASKEY IN ('IC ','ML ','PL ','PP');
-    IF LENGTH(ALIASKEY) LE 12;
-    NEWIC=ALIASKEY||ALIAS;
-    CISNEWIC=NEWIC;
-RUN;
-PROC SORT  DATA=ALS NODUPKEY; BY NEWIC;RUN;
-
-DATA MAILFLAG;
-   INFILE MAILFLAG;
-   INPUT @1     NEWIC       $15.
-         @16    OLDIC       $12.
-         @28    CONSENTCARD $1.;
-    CARDNEWIC = NEWIC;
-    CARDOLDIC = OLDIC;
-    IF CONSENTCARD IN ('Y','N');
-RUN;
-PROC SORT  DATA=MAILFLAG ;BY NEWIC ;RUN;
-
-DATA MATCHMAIL;
-   MERGE MAILFLAG(IN=A) ALS(IN=B); BY NEWIC;
-   IF A;
-RUN;
-PROC SORT  DATA=MATCHMAIL; BY CUSTNO;RUN;
-
- DATA REMATCH GOTOLDIC NOMATCH;
-   MERGE MATCHMAIL(IN=C) CIS(IN=D); BY CUSTNO;
-   IF C;
-   IF CUSTNO NE   '' THEN DO ;OUTPUT REMATCH;END;
-   ELSE DO;
-       IF OLDIC NOT = '' AND CUSTNO = '' THEN OUTPUT GOTOLDIC;
-       IF OLDIC     = '' AND CUSTNO = '' THEN OUTPUT NOMATCH;
-   END;
- RUN;
-PROC SORT  DATA=REMATCH ; BY CUSTNO;RUN;
-
- DATA MATCHNEWIC;
-   MERGE REMATCH(IN=E) CIS(IN=F); BY CUSTNO;
-   IF E;
- RUN;
-PROC SORT  DATA=MATCHNEWIC ; BY CUSTNO;RUN;
-
-PROC SORT  DATA=CIS        ; BY OLDIC;RUN;
-PROC SORT  DATA=GOTOLDIC   ; BY OLDIC;RUN;
-
- DATA MATCHOLDIC;
-   MERGE GOTOLDIC(IN=G) CIS(IN=H); BY OLDIC;
-   IF G;
- RUN;
-
- DATA ALLREC;
-   SET MATCHOLDIC MATCHNEWIC NOMATCH;
-    IF CUSTNO = ''
-      THEN REASON = 'NO MATCHING CIS                                 ';
-    IF ( CONSENTCARD = 'Y' AND CISCONSENT = 'Y')
-    OR ( CONSENTCARD = 'N' AND CISCONSENT = 'N')
-      THEN REASON = 'SAME CONSENT                                    ';
-    IF (( CONSENTCARD = 'Y' AND CISCONSENT = 'N' AND CUSTNO NE '')
-    OR ( CONSENTCARD = 'N' AND CISCONSENT = 'Y' AND CUSTNO NE ''))
-    THEN DO;
-        IF  CISNEWIC = CARDNEWIC AND CISOLDIC = CARDOLDIC
-           THEN REASON = 'UPDATE CONSENT TO CIS                      ';
-           ELSE
-                REASON = 'EXCEPTION. CONSENT / ID DIFFERENCE         ';
-    END;
-    IF ( CONSENTCARD = 'Y' AND CISCONSENT = ' ' AND CUSTNO NE '')
-    OR ( CONSENTCARD = 'N' AND CISCONSENT = ' ' AND CUSTNO NE '')
-      THEN REASON = 'UPDATE CONSENT TO CIS                           ';
-
-    BRANCH = '001';
- RUN;
- PROC PRINT DATA=ALLREC(OBS=50);TITLE 'ALL REC';RUN;
-
-PROC SORT  DATA=ALLREC; BY REASON NEWIC OLDIC;RUN;
-DATA OUTPUTALL; /* LISTING FOR CHECKING */
-    SET ALLREC;
-    FILE OUTFILE;
-    IF _N_ = 1 THEN DO;
-    PUT @001 'DAILY    UPDATE';
-    PUT @001 'CARDNEWIC'
-        @018 'CARDOLDIC'
-        @035 'CISNEWIC'
-        @052 'CISOLDIC'
-        @069 'M'
-        @072 'C'
-        @075 'CUSTNO'
-        @088 'REASON'              ;
-        END;
-    PUT @001 CARDNEWIC      $15.
-        @018 CARDOLDIC      $15.
-        @035 CISNEWIC       $15.
-        @052 CISOLDIC       $15.
-        @069 CONSENTCARD    $1.
-        @072 CISCONSENT     $1.
-        @075 CUSTNO         $11.
-        @088 REASON         $48. ;
+DATA EODRPT;
+  INFILE EODRPT;
+   FORMAT CUSTNO $11. UPDOPER $10. OLDVALUE $150. NEWVALUE $150.
+          ALIASKEY $3.;
+   INPUT @39   OPERID                 $08.
+         @106  INDALS                 PD2.
+         @132  INDFUNCT               $01.
+         @133  CUSTNOX                PD6.
+         @181  ALIAS                  $23.
+         ;
+         IF OPERID = ' ' THEN DELETE;
+         IF INDALS = '230';
+         ALIASKEY  = SUBSTR(ALIAS,1,3);
+         IF ALIASKEY IN ('CH ','CV ','EN ','NM ','VE ') THEN DELETE;
+         IF ALIASKEY IN ('BR ','CI ','PC ','SA ','GB '
+                        ,'LP ', 'RE ','AI ','AO ',
+                        'IC ','SI ','BI ','PP ','ML ','PL ','BC ');
+         IF ALIASKEY IN ('AI ','AO ')
+            THEN FIELDS = 'BNM ASSIGNED ID';
+         IF ALIASKEY NOT IN ('AI','AO')
+            THEN FIELDS = 'ID NUMBER';
+         CUSTNO = PUT(CUSTNOX,Z11.) ;
+         UPDOPER  = OPERID;
+         IF INDFUNCT = 'D' THEN DO;
+            OLDVALUE = ALIAS;
+            NEWVALUE = ' ';
+         END;
+         IF INDFUNCT = 'A' THEN DO;
+            OLDVALUE = ' ';
+            NEWVALUE = ALIAS;
+         END;
+PROC SORT  DATA=EODRPT NODUPKEY; BY CUSTNO INDFUNCT ALIAS;
+PROC PRINT DATA=EODRPT(OBS=20);TITLE 'EODRPT';
 RUN;
 
-DATA UPDATE_CUST;  /* FILE TO PERFORM UPDATE CUSTOMER MSCODE 7*/
-    SET ALLREC;
-    FILE UPDCUST;
-    IF REASON = 'UPDATE CONSENT TO CIS';
-    IF CONSENTCARD = 'Y' THEN MISCDEMO7 = '001';
-    IF CONSENTCARD = 'N' THEN MISCDEMO7 = '002';
-    PUT @001 '033'
-        @004 CUSTNO         $20.
-        @024 INDORG         $1.
-        @025 MISCDEMO7      $10. ;
+DATA NAME;
+  INFILE NAMEFILE;
+  INPUT  @005  CUSTNO           $11.
+         @089  CUSTNAME         $40.;
 RUN;
+PROC SORT  DATA=NAME; BY CUSTNO ;RUN;
+PROC PRINT DATA=NAME(OBS=5);TITLE 'NAME';RUN;
 
-DATA UPDATE_CON1;  /* FILE TO PERFORM UPDATE CICON1ST*/
-    SET ALLREC;
-    FILE UPDCON1;
-    IF REASON = 'UPDATE CONSENT TO CIS';
-    PUT @001 '033'                       /* BANKNO         */
-        @004 'CUST'                      /* APPLCODE       */
-        @009 CUSTNO               $20.   /* APPLNO         */
-        @029 CONSENTCARD          $01.   /* CONSENT        */
-        @030 INDORG               $01.   /* CUST-TYPE      */
-        @031 "&DATE1"                    /* FIRST-DATE     */
-        @041 '0'                         /* NO-OF-PROMPT   */
-        @042 'UNI'                       /* PROMPTSOURCE   */
-        @047 "&DATE1"                    /* PROMPTDATE     */
-        @057 '01.01.01'                  /* PROMPTTIME     */
-        @065 'UNI'                       /* UPDATESOURCE   */
-        @070 "&DATE1"                    /* UPDATEDATE     */
-        @080 '01.01.01'                  /* UPDATETIME     */
-        @088 'UNIBATCH'                  /* UPDATEOPERATOR */
-        @096 ' '                         /* TRXAPPLCODE    */
-        @101 ' '                      ;  /* TRXAPPLNO      */
-
+DATA ACTIVE;
+  INFILE CCRSBANK;
+   INPUT  @001   CUSTNO          $11.
+          @021   ACCTCODE        $5.
+          @026   ACCTNOC         $20.
+          @055   DATEOPEN        $10.
+          @065   DATECLSE        $10.
+          ;
+          IF ACCTCODE NOT IN ('DP   ','LN   ') THEN DELETE;
 RUN;
+PROC SORT  DATA=ACTIVE; BY CUSTNO DESCENDING DATEOPEN;RUN;
+PROC PRINT DATA=ACTIVE(OBS=5);TITLE 'ACTIVE';RUN;
 
-PROC SORT  DATA=ALLREC; BY BRANCH REASON NEWIC OLDIC;RUN;
- /*----------------------------------------------------------------*/
- /*   OUTPUT DETAIL REPORT                                         */
- /*----------------------------------------------------------------*/
-DATA _NULL_;
-  IF TRN=0 THEN DO;
-     BRANCH = '001';
-     FILE EXCEPT  PRINT HEADER=NEWPAGE;
-     PUT _PAGE_;
-     PUT  /@044   '**********************************';
-     PUT  /@044   '*                                *';
-     PUT  /@044   '*       NO ERROR RECORDS         *';
-     PUT  /@044   '*                                *';
-     PUT  /@044   '**********************************';
-  END;
+DATA LISTACT;
+  SET ACTIVE;
+  KEEP CUSTNO ACCTCODE ACCTNOC;
+  IF DATECLSE NOT IN ('       .','        ','00000000') THEN DELETE;
+RUN;
+PROC SORT  DATA=LISTACT NODUPKEY; BY CUSTNO;RUN;
+PROC PRINT DATA=LISTACT(OBS=5);TITLE 'ACCOUNT';RUN;
 
-  RETAIN TRN;
+   DATA MERGE_A;
+        MERGE  EODRPT(IN=A) NAME(IN=B) LISTACT(IN=C);
+        BY CUSTNO;
+        IF (A AND C) AND B;
+   RUN;
+   PROC SORT  DATA=MERGE_A NODUPKEY;BY CUSTNO ALIAS;RUN;
+   PROC PRINT DATA=MERGE_A(OBS=15);TITLE 'MERGE';RUN;
 
-  SET ALLREC   NOBS=TRN END=EOF;BY BRANCH ;
-  FILE EXCEPT  PRINT HEADER=NEWPAGE NOTITLE;
-  LINECNT = 0;
-  FORMAT BANKNAME $45.;
-
-  IF LINECNT >= 40 OR LAST.BRANCH THEN DO;
-     PUT _PAGE_;
-  END;
-
-    LINECNT + 5;
-
-  IF BRANCH NE SPACES THEN DO;
-     LINECNT + 1;
-     BRCUST   + 1;
-     PUT @1    'UNICARD   '
-         @12   ' '                 /* FILLER */
-         @25   NEWIC          $15.
-         @42   OLDIC          $15.
-         @62   CONSENTCARD    $1.
-         @82   REASON         $48. ;
-     PUT @1    'CIS       '
-         @12   CUSTNO         $11.
-         @25   CISNEWIC       $15.
-         @42   TAXID          $15.
-         @62   CISCONSENT     $1. ;
-     END;
-
-  IF LAST.BRANCH THEN DO;
-     PUT  @1  'TOTAL RECORDS = '
-          @23  BRCUST      7.;
-
-          BRCUST  = 0;
-          PAGECNT = 0;
-  END;
-
-  RETURN;
-
-  NEWPAGE :
-    PAGECNT+1;
-    LINECNT = 0;
-
-    BANKNAME = 'PUBLIC BANK BERHAD';
-    PUT @1   'REP:    MAILFLAGC         '
-        @55   BANKNAME
-        @79  'REPORT DATE : ' "&DATE2"
-       /@1   'PROGRAM ID  : CICONMAI'
-        @79  'PAGE        : ' PAGECNT   4.
-       /@1   'BRANCH      : '  BRANCH    $7.
-        @43  'CUSTOMER DATA CONSENT DAILY EXCEPTION (UNICARD TO CIS)'
-       /@43  '======================================================';
-
-    PUT   /@1    'SOURCE'
-           @12   'CUSTNO'
-           @25   'NEWIC'
-           @42   'OLDIC'
-           @62   'CONSENT'
-           @82   'REASON' ;
-    PUT    @1    '======'
-           @12   '==========='
-           @25   '==============='
-           @42   '==============='
-           @62   '======='
-           @82   '======'    ;
-
+   DATA RECORDS;
+     SET MERGE_A;
+     FILE OUTFILE;
+     UPDDATX = "&DAY"||"/"||"&MONTH"||"/"||"&YEAR";
+     PUT  @001   UPDOPER         $10.
+          @021   CUSTNO          $20.
+          @041   ACCTNOC         $20.
+          @061   CUSTNAME        $40.
+          @101   FIELDS          $20.
+          @121   OLDVALUE        $150.
+          @271   NEWVALUE        $150.
+          @424   UPDDATX         $10.
+          ;
+     RUN;
     LINECNT = 9;
   RETURN;
 RUN;
