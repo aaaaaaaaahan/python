@@ -1,5 +1,11 @@
 import duckdb
-from datetime import datetime
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+import datetime
+
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+report_date = batch_date.strftime("%d-%m-%Y")
+UPDDATX = batch_date.strftime("%d/%m/%Y")
 
 # -----------------------------
 # File paths
@@ -15,15 +21,6 @@ output_txt = "/host/cis/output/alias_change.txt"
 # Connect DuckDB
 # -----------------------------
 con = duckdb.connect()
-
-# -----------------------------
-# Reporting Date (replace SRSCTRL)
-# -----------------------------
-today = datetime.today()
-report_date = today.strftime("%d/%m/%Y")
-year = today.year
-month = today.month
-day = today.day
 
 # -----------------------------
 # Process EODRPT
@@ -44,7 +41,7 @@ con.execute(f"""
         END AS FIELDS,
         CASE WHEN INDFUNCT='D' THEN ALIAS ELSE '' END AS OLDVALUE,
         CASE WHEN INDFUNCT='A' THEN ALIAS ELSE '' END AS NEWVALUE
-    FROM parquet_scan('{parquet_eodrpt}')
+    FROM '{host_parquet_path("CIDARPGS.parquet")}'
     WHERE OPERID IS NOT NULL
       AND INDALS = 230
       AND SUBSTRING(ALIAS,1,2) NOT IN ({','.join([f"'{k}'" for k in exclude_keys])})
@@ -59,7 +56,7 @@ con.execute("CREATE VIEW eodrpt_final AS SELECT DISTINCT * FROM eodrpt_proc")
 con.execute(f"""
     CREATE VIEW name_final AS
     SELECT CUSTNO, CUSTNAME
-    FROM parquet_scan('{parquet_name}')
+    FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}'
 """)
 
 # -----------------------------
@@ -68,7 +65,7 @@ con.execute(f"""
 con.execute(f"""
     CREATE VIEW active_proc AS
     SELECT CUSTNO, ACCTNOC
-    FROM parquet_scan('{parquet_active}')
+    FROM '{host_parquet_path("CIS_CUST_DAILY_ACTVOD.parquet")}'
     WHERE ACCTCODE IN ('DP   ','LN   ')
       AND DATECLSE NOT IN ('       .','        ','00000000')
 """)
@@ -103,7 +100,7 @@ con.execute(f"""
             LPAD(FIELDS,20,' ') AS FIELDS,
             LPAD(OLDVALUE,150,' ') AS OLDVALUE,
             LPAD(NEWVALUE,150,' ') AS NEWVALUE,
-            '{report_date}' AS UPDDATX
+            '{UPDDATX}' AS UPDDATX
         FROM merged
     ) TO '{output_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
 """)
