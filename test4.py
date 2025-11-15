@@ -1,107 +1,62 @@
-import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
-import datetime
+# ---------------------------------------------------------
+# 3. Write TXT output (with header + | delimiter)
+# ---------------------------------------------------------
+txt_queries = {
+    "UNLOAD_CIHRCRVT_EXCEL": out
+}
 
-# -----------------------------
-# Batch / report date
-# -----------------------------
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date.strftime("%d-%m-%Y")
-UPDDATX = batch_date.strftime("%d/%m/%Y")
+header = [
+    "DETAIL LISTING FOR CIHRCRVT",
+    "MONTH|BRCH_CODE|ACCT_TYPE|ACCT_NO|CUSTNO|CUSTID|CUST_NAME|"
+    "NATIONALITY|ACCT_OPENDATE|OVERRIDING_INDC|OVERRIDING_OFFCR|"
+    "OVERRIDING_REASON|DOWJONES_INDC|FUZZY_INDC|FUZZY_SCORE|"
+    "NOTED_BY|RETURNED_BY|ASSIGNED_TO|NOTED_DATE|RETURNED_DATE|"
+    "ASSIGNED_DATE|COMMENT_BY|COMMENT_DATE|SAMPLING_INDC|RETURN_STATUS|"
+    "RECORD_STATUS|FUZZY_SCREEN_DATE"
+]
 
-# -----------------------------
-# Output paths
-# -----------------------------
-output_parquet = "/host/cis/output/alias_change.parquet"
-output_txt = "/host/cis/output/alias_change.txt"
+for txt_name, txt_query in txt_queries.items():
+    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
+    df_txt = con.execute(txt_query).fetchdf()
 
-# -----------------------------
-# Connect DuckDB
-# -----------------------------
-con = duckdb.connect()
+    with open(txt_path, "w", encoding="utf-8") as f:
 
-# -----------------------------
-# Process EODRPT
-# -----------------------------
-exclude_keys_delete = ['CH ','CV ','EN ','NM ','VE ']
+        # write header
+        for h in header:
+            f.write(h + "\n")
 
-con.execute(f"""
-    CREATE VIEW eodrpt_proc AS
-    SELECT 
-        CUSTNOX::BIGINT AS CUSTNOX,
-        LPAD(CAST(CUSTNOX AS VARCHAR),11,'0') AS CUSTNO,
-        OPERID AS UPDOPER,
-        ALIAS,
-        SUBSTRING(ALIAS,1,3) AS ALIASKEY,
-        INDFUNCT,
-        CASE 
-            WHEN SUBSTRING(ALIAS,1,3) IN ('AI ','AO ') THEN 'BNM ASSIGNED ID'
-            ELSE 'ID NUMBER'
-        END AS FIELDS,
-        CASE WHEN INDFUNCT='D' THEN ALIAS ELSE ' ' END AS OLDVALUE,
-        CASE WHEN INDFUNCT='A' THEN ALIAS ELSE ' ' END AS NEWVALUE
-    FROM '{host_parquet_path("CIDARPGS.parquet")}'
-    WHERE OPERID IS NOT NULL
-      AND INDALS = 230
-      AND SUBSTRING(ALIAS,1,3) NOT IN ({','.join([f"'{k}'" for k in exclude_keys_delete])})
-""")
+        # write rows
+        for _, row in df_txt.iterrows():
+            fields = [
+                row["HRV_MONTH"],
+                row["HRV_BRCH_CODE"],
+                row["HRV_ACCT_TYPE"],
+                row["HRV_ACCT_NO"],
+                row["HRV_CUSTNO"],
+                row["HRV_CUSTID"],
+                row["HRV_CUST_NAME"],
+                row["HRV_NATIONALITY"],
+                row["HRV_ACCT_OPENDATE"],
+                row["HRV_OVERRIDING_INDC"],
+                row["HRV_OVERRIDING_OFFCR"],
+                row["HRV_OVERRIDING_REASON"],
+                row["HRV_DOWJONES_INDC"],
+                row["HRV_FUZZY_INDC"],
+                row["HRV_FUZZY_SCORE"],
+                row["HRV_NOTED_BY"],
+                row["HRV_RETURNED_BY"],
+                row["HRV_ASSIGNED_TO"],
+                row["HRV_NOTED_DATE"],
+                row["HRV_RETURNED_DATE"],
+                row["HRV_ASSIGNED_DATE"],
+                row["HRV_COMMENT_BY"],
+                row["HRV_COMMENT_DATE"],
+                row["HRV_SAMPLING_INDC"],
+                row["HRV_RETURN_STATUS"],
+                row["HRV_RECORD_STATUS"],
+                row["HRV_FUZZY_SCREEN_DATE"]
+            ]
 
-# Remove duplicates like PROC SORT NODUPKEY
-con.execute("CREATE VIEW eodrpt_final AS SELECT DISTINCT * FROM eodrpt_proc ORDER BY CUSTNO, INDFUNCT, ALIAS")
-
-# -----------------------------
-# Process NAME
-# -----------------------------
-con.execute(f"""
-    CREATE VIEW name_final AS
-    SELECT CUSTNO, CUSTNAME
-    FROM '{host_parquet_path("PRIMNAME_OUT.parquet")}'
-""")
-
-# -----------------------------
-# Process ACTIVE accounts
-# -----------------------------
-con.execute(f"""
-    CREATE VIEW active_proc AS
-    SELECT CUSTNO, ACCTNOC
-    FROM '{host_parquet_path("CIS_CUST_DAILY_ACTVOD.parquet")}'
-    WHERE ACCTCODE IN ('DP   ','LN   ')
-      AND DATECLSE IN ('       .','        ','00000000')
-""")
-
-# -----------------------------
-# Merge all
-# -----------------------------
-con.execute("""
-    CREATE VIEW merged AS
-    SELECT e.UPDOPER, e.CUSTNO, a.ACCTNOC, n.CUSTNAME,
-           e.FIELDS, e.OLDVALUE, e.NEWVALUE
-    FROM eodrpt_final e
-    JOIN name_final n USING (CUSTNO)
-    JOIN active_proc a USING (CUSTNO)
-""")
-
-# -----------------------------
-# Write Parquet output
-# -----------------------------
-con.execute(f"COPY merged TO '{output_parquet}' (FORMAT PARQUET)")
-
-# -----------------------------
-# Write TXT output (fixed-width)
-# -----------------------------
-con.execute(f"""
-    COPY (
-        SELECT 
-            LPAD(UPDOPER,10,' ') AS UPDOPER,
-            LPAD(CUSTNO,20,' ') AS CUSTNO,
-            LPAD(ACCTNOC,20,' ') AS ACCTNOC,
-            LPAD(CUSTNAME,40,' ') AS CUSTNAME,
-            LPAD(FIELDS,20,' ') AS FIELDS,
-            LPAD(OLDVALUE,150,' ') AS OLDVALUE,
-            LPAD(NEWVALUE,150,' ') AS NEWVALUE,
-            '{UPDDATX}' AS UPDDATX
-        FROM merged
-        ORDER BY CUSTNO, ALIASKEY
-    ) TO '{output_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
-""")
+            # Write "|" delimited line (null → blank)
+            line = "|".join("" if v is None else str(v) for v in fields)
+            f.write(line + "\n")
