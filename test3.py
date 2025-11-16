@@ -1,3 +1,21 @@
+i need the python output same with as output.
+
+sas output:
+SET MRGCIS;                                    
+FILE OUTFILE;                                  
+UPDDATX = "&DAY"||"/"||"&MONTH"||"/"||"&YEAR"; 
+PUT  @001   UPDOPER         $10.               
+     @021   CUSTNO          $20.               
+     @041   ACCTNOC         $20.               
+     @061   CUSTNAME        $40.               
+     @101   FIELDS          $20.               
+     @121   OLDVALUE        $150.              
+     @271   NEWVALUE        $150.              
+     @424   UPDDATX         $10.               
+     ;                                         
+RUN;                                           
+
+python program:
 import duckdb
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 import datetime
@@ -5,6 +23,7 @@ import datetime
 batch_date = datetime.date.today() - datetime.timedelta(days=1)
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
+UPDDATX = batch_date.strftime("%d/%m/%Y")
 
 con = duckdb.connect()
 
@@ -510,10 +529,8 @@ SELECT
     t.OLDVALUE,
     t.NEWVALUE,
     t.ACCTNOC,
-    -- DATEUPD from TEMPALL (for employment records) or C_DATE
-    COALESCE(t.DATEUPD, d.DATEUPD) AS DATEUPD,
-    -- OPERUPD from TEMPALL (DATEOPER) or C_OPER
-    COALESCE(t.DATEOPER, o.OPERUPD) AS OPERUPD,
+    ' ' AS DATEUPD,
+    ' ' AS OPERUPD,
     -- source MERGE_A columns we need to default from
     m.CUSTLASTOPER,
     m.CUSTMNTDATE
