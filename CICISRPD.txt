@@ -1,827 +1,158 @@
-//CICISRPD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB59501
-//*---------------------------------------------------------------------
-//* ESMR2019-1394 - REPORT DAILY
-//*-CUSTOMER DELTA FILE - TO GET CHANGES OF THE DAY
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.CIS.IDIC.DAILY.RPT.OUT,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DEL2     DD DSN=RBP2.B033.CIS.IDIC.DAILY.RPT,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* NODUPS (GET ALL RECORD WITH CHANGES/NEW COMPARE ALL FIELDS)
-//*---------------------------------------------------------------------
-//GETCHG   EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//NEWCHG   DD DISP=SHR,DSN=RBP2.B033.CIS.IDIC.DAILY.INEW
-//OLDCHG   DD DISP=SHR,DSN=RBP2.B033.CIS.IDIC.DAILY.IOLD
-//*CRSBANK  DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY.ACTIVE
-//CCRSBANK  DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY.ACTVOD
-//CTRLDATE DD DISP=SHR,DSN=RBP2.B033.SRSCTRL1(0)
-//OUTFILE  DD DSN=RBP2.B033.CIS.IDIC.DAILY.RPT.OUT,
+//CICUSDPR JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB19340
+//*--------------------------------------------------------------------
+//*ESMR 2018 - 3419
+//*EXTRACT ALL CIS CUSTOMERS WITH FOLLOWING CRITERIA:
+//*(1)INDIVIDUAL CUST WITHOUT ALIAS TYPE 'IC'
+//*(2)HOLDING 'MY' CITIZENSHIP
+//*(3)RELATED ALL DEPOSIT ACCOUNTS
+//*--------------------------------------------------------------------
+//*ESMR 2020-541 INCLUDE EXTRACTION CUSTOMER WITHOUT ANY IDS
+//*--------------------------------------------------------------------
+//* INITIALIZE DATASETS
+//*--------------------------------------------------------------------
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CIS.RELDP.CUSTS,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL2     DD DSN=RBP2.B033.CIS.RELDP.CUSNOID.WTHACCT,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//* PROCESSING STARTS HERE
+//*--------------------------------------------------------------------
+//MERGE#01 EXEC SAS609
+//RLEN#CA  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.RLEN#CA
+//CUSTFILE DD DISP=SHR,DSN=RBP2.B033.UNLOAD.ALLCUST.FB
+//IDFILE   DD DISP=SHR,DSN=RBP2.B033.UNLOAD.ALLALIAS.FB
+//OUTFILE  DD DSN=RBP2.B033.CIS.RELDP.CUSTS,
 //            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
+//            DCB=(RECFM=FB,LRECL=100,BLKSIZE=0),
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA
+//OUTFILE2 DD DSN=RBP2.B033.CIS.RELDP.CUSNOID.WTHACCT,
+//            DISP=(NEW,CATLG,DELETE),
+//            DCB=(RECFM=FB,LRECL=100,BLKSIZE=0),
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA
 //SASLIST  DD SYSOUT=X
 //SYSIN    DD *
-OPTION NOCENTER;
+OPTIONS NOCENTER;
+TITLE;
+DATA RLEN;
+  INFILE RLEN#CA;
+  INPUT  @003  BANKNO            PD2.
+         @005  ACCTNOC           $20.
+         @005  ACCTNO            20.
+         @025  ACCTCODE          $5.
+         @046  CUSTNO            $11.
+         @066  RLENCODE          PD2.
+         @068  PRISEC            PD2.;
+       IF ACCTCODE = 'DP   ' THEN OUTPUT;
+PROC SORT  DATA=RLEN; BY CUSTNO ; RUN;
 
-DATA GETDATE;
-     FORMAT XX Z6.;
-     TM=TIME();
-     XX=COMPRESS(PUT (TM,TIME8.),':');
-     CALL SYMPUT('TIMEX', PUT(XX,Z6.));
+DATA CUST;
+  INFILE CUSTFILE;
+  INPUT  @005  CUSTNO           $11.
+         @033  GENDER            $1.
+         @034  CUSTSTAT          $1.
+         @035  TAXCODE           $1.
+         @036  TAXID             $9.
+         @045  CUSTBRCH         PD4.
+         @049  COSTCTR          PD4.
+         @053  CUSTLASTDATECC   $2.
+         @055  CUSTLASTDATEYY   $2.
+         @058  CUSTLASTDATEMM   $2.
+         @061  CUSTLASTDATEDD   $2.
+         @063  CUSTLASTOPER     $8.
+         @108  RACE             $1.
+         @109  CITIZENSHIP      $2.
+         @119  CUSTOPENDATE     PD6.
+         @232  CUSTCONSENT      $3.;
+         IF GENDER='O' THEN INDORG='O';
+         ELSE INDORG = 'I';
+         IF CITIZENSHIP EQ 'MY' AND INDORG = 'I' THEN OUTPUT;
+PROC SORT  DATA=CUST; BY CUSTNO ;RUN;
+
+DATA ICID;
+  INFILE IDFILE;
+  INPUT  @005  CUSTNO             $11.
+         @089  ALIASKEY           $3.
+         @092  ALIAS              $20.;
+PROC SORT  DATA=ICID NODUPKEY; BY CUSTNO ;RUN;
+*;
+ PROC SQL;
+     CREATE TABLE MERGE1 AS
+     SELECT RLEN.BANKNO
+           ,RLEN.ACCTNOC
+           ,RLEN.ACCTNO
+           ,RLEN.ACCTCODE
+           ,RLEN.RLENCODE
+           ,RLEN.PRISEC
+           ,ICID.CUSTNO
+           ,ICID.ALIASKEY
+           ,ICID.ALIAS
+     FROM RLEN,ICID
+     WHERE RLEN.CUSTNO = ICID.CUSTNO
+     AND   ICID.ALIASKEY NOT = 'IC';
+ QUIT;
+
+ PROC SORT  DATA=MERGE1; BY CUSTNO; RUN;
+ PROC PRINT DATA=MERGE1(OBS=10);TITLE 'CUST WITH NO IC';RUN;
+
+DATA ALLDP;
+   MERGE CUST(IN=A) MERGE1(IN=B); BY CUSTNO;
+   IF A AND B THEN DO;
+      OUTPUT ALLDP;
+   END;
 RUN;
-PROC PRINT;RUN;
+PROC SORT  DATA=ALLDP; BY CUSTNO;RUN;
+PROC PRINT DATA=ALLDP(OBS=10);TITLE 'ALL DP CUSTOMERS';RUN;
+
+ /*---------------------------------------------------------*/
+ /* PROCESSING FOR CUSTOMER WITHOUT ANY IDS  *SMR 2020-541  */
+ /*---------------------------------------------------------*/
+DATA NOID;
+   MERGE CUST(IN=C) ICID(IN=D); BY CUSTNO;
+   IF C AND NOT D THEN DO;
+      OUTPUT NOID;
+   END;
+RUN;
+PROC SORT  DATA=NOID; BY CUSTNO;RUN;
+PROC PRINT DATA=NOID(OBS=10);TITLE 'CUST NO ID';RUN;
+
+DATA NOIDREL;
+   MERGE NOID(IN=E) RLEN(IN=F); BY CUSTNO;
+   IF E AND F THEN DO;
+      OUTPUT NOIDREL;
+   END;
+RUN;
+PROC SORT  DATA=NOIDREL; BY CUSTNO;RUN;
+PROC PRINT DATA=NOIDREL(OBS=10);TITLE 'CUST NO ID WITH REL';RUN;
+
  /*----------------------------------------------------------------*/
- /*    SET DATES                                                   */
+ /*   OUTPUT CUST WITH DP ACCTS WITH NO IDS                         */
  /*----------------------------------------------------------------*/
-    DATA SRSDATE;
-          INFILE CTRLDATE;
-            INPUT @001  SRSYY    4.
-                  @005  SRSMM    2.
-                  @007  SRSDD    2.;
+DATA OUTNOID;
+SET NOIDREL;
+FILE OUTFILE2;
+     PUT @01   CUSTBRCH            Z7.
+         @08   CUSTNO              $11.
+         @19   ACCTCODE            $5.
+         @24   ACCTNO              20.
+         @44   RACE                $1.
+         @45   ALIASKEY            $3.
+         @48   ALIAS               $20.
+         @68   CITIZENSHIP         $2.;
+  RUN;
 
-          /* DISPLAY TODAY REPORTING DATE*/
-          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-          CALL SYMPUT('DATE1',PUT(TODAYSAS,8.));
-          CALL SYMPUT('YEAR' ,PUT(SRSYY,Z4.));
-          CALL SYMPUT('MONTH',PUT(SRSMM,Z2.));
-          CALL SYMPUT('DAY'  ,PUT(SRSDD,Z2.));
-    RUN;
-   PROC PRINT;RUN;
-  /*TO CHANGE STATUS*/
-DATA NEWCHG;
-  INFILE NEWCHG;
-   INPUT @21   CUSTNO                 $20.
-         @41   ADDREF                 $11./*  PD6.*/
-         @52   CUSTNAME               $40.
-         @92   PRIPHONE               $11./*PD6.*/
-         @103  SECPHONE               $11./*PD6.*/
-         @114  MOBILEPH               $11./*PD6.*/
-         @125  FAX                    $11./*PD6.*/
-         @136  ALIASKEY               $3.
-         @139  ALIAS                  $20.
-         @159  PROCESSTIME            $8.
-         @167  CUSTSTAT               $1.
-         @168  TAXCODE                $1.
-         @169  TAXID                  $9.
-         @178  CUSTBRCH               $5.
-         @183  COSTCTR                $5. /*PD4.*/
-         @188  CUSTMNTDATE            $08.
-         @196  CUSTLASTOPER           $8.
-         @204  PRIM_OFF               $5./*PD3.*/
-         @209  SEC_OFF                $5./*PD3.*/
-         @214  PRIM_LN_OFF            $5./*PD3.*/
-         @219  SEC_LN_OFF             $5./*PD3.*/
-         @224  RACE                   $1.
-         @225  RESIDENCY              $3.
-         @228  CITIZENSHIP            $2.
-         @230  OPENDT                 $08. /*  PD6.*/
-         @241  HRCALL                 $60.
-         @301  EXPERIENCE             $3.
-         @304  HOBBIES                $3.
-         @307  RELIGION               $3.
-         @310  LANGUAGE               $3.
-         @313  INST_SEC               $3.
-         @316  CUST_CODE              $3.
-         @319  CUSTCONSENT            $3.
-         @322  BASICGRPCODE           $3.
-         @327  MSICCODE               $5.
-         @332  MASCO2008              $5.
-         @337  INCOME                 $3.
-         @340  EDUCATION              $3.
-         @343  OCCUP                  $3.
-         @346  MARITALSTAT            $1.
-         @347  OWNRENT                $1.
-         @348  EMPNAME                $40.
-         @388  DOBDOR                 $08.
-         @396  SICCODE                $05.
-         @401  CORPSTATUS             $3.
-         @404  NETWORTH               $3.
-         @407  LAST_UPDATE_DATE       $10.
-         @417  LAST_UPDATE_TIME       $10.
-         @427  LAST_UPDATE_OPER       $10.
-         @437  PRCOUNTRY              $02.
-         @439  EMPLOYMENT_TYPE        $10.
-         @449  EMPLOYMENT_SECTOR      $10.
-         @459  EMPLOYMENT_LAST_UPDATE $10.
-         @469  BNMID                  $20.
-         @489  LONGNAME               $150.
-         @639  INDORG                 $1.
-         @640  RESDESC                $20.
-         @660  SALDESC                $20.
-         @680  CTZDESC                $20.;
-PROC SORT  DATA=NEWCHG; BY CUSTNO;
-PROC PRINT DATA=NEWCHG(OBS=5);TITLE 'NEW CHG';
-RUN;
-
-DATA OLDCHG;
-  INFILE OLDCHG;
-   INPUT @21   CUSTNO                 $20.
-         @41   ADDREFX                $11.
-         @52   CUSTNAMEX              $40.
-         @92   PRIPHONEX              $11.
-         @103  SECPHONEX              $11.
-         @114  MOBILEPHX              $11.
-         @125  FAXX                   $11.
-         @136  ALIASKEYX              $3.
-         @139  ALIASX                 $20.
-         @159  PROCESSTIMEX           $8.
-         @167  CUSTSTATX              $1.
-         @168  TAXCODEX               $1.
-         @169  TAXIDX                 $9.
-         @178  CUSTBRCHX              $5.
-         @183  COSTCTRX               $5. /*PD4.*/
-         @188  CUSTMNTDATEX           $08.
-         @196  CUSTLASTOPERX          $8.
-         @204  PRIM_OFFX              $5./*PD3.*/
-         @209  SEC_OFFX               $5./*PD3.*/
-         @214  PRIM_LN_OFFX           $5./*PD3.*/
-         @219  SEC_LN_OFFX            $5./*PD3.*/
-         @224  RACEX                  $1.
-         @225  RESIDENCYX             $3.
-         @228  CITIZENSHIPX           $2.
-         @230  OPENDTX                $08. /*  PD6.*/
-         @241  HRCALLX                $60.
-         @301  EXPERIENCEX            $3.
-         @304  HOBBIESX               $3.
-         @307  RELIGIONX              $3.
-         @310  LANGUAGEX              $3.
-         @313  INST_SECX              $3.
-         @316  CUST_CODEX             $3.
-         @319  CUSTCONSENTX           $3.
-         @322  BASICGRPCODEX          $3.
-         @327  MSICCODEX              $5.
-         @332  MASCO2008X             $5.
-         @337  INCOMEX                $3.
-         @340  EDUCATIONX             $3.
-         @343  OCCUPX                 $3.
-         @346  MARITALSTATX           $1.
-         @347  OWNRENTX               $1.
-         @348  EMPNAMEX               $40.
-         @388  DOBDORX                $08.
-         @396  SICCODEX               $05.
-         @401  CORPSTATUSX            $3.
-         @404  NETWORTHX              $3.
-         @407  LAST_UPDATE_DATEX      $10.
-         @417  LAST_UPDATE_TIMEX      $10.
-         @427  LAST_UPDATE_OPERX      $10.
-         @437  PRCOUNTRYX             $02.
-         @439  EMPLOYMENT_TYPEX       $10.
-         @449  EMPLOYMENT_SECTORX     $10.
-         @459  EMPLOYMENT_LAST_UPDATX $10.
-         @469  BNMIDX                 $20.
-         @489  LONGNAMEX              $150.
-         @639  INDORG                 $1.
-         @640  RESDESCX               $20.
-         @660  SALDESCX               $20.
-         @680  CTZDESCX               $20.;
-PROC SORT  DATA=OLDCHG; BY CUSTNO;
-PROC PRINT DATA=OLDCHG(OBS=5);TITLE 'OLD CHG';
-RUN;
-
-DATA ACTIVE;
-  INFILE CCRSBANK;
-   INPUT  @001   CUSTNO          $20.
-          @021   ACCTCODE        $5.
-          @026   ACCTNOC         $20.
-          @047   NOTENOC         $5.
-          @052   BANKINDC        $1.
-          @055   DATEOPEN        $10.
-          @065   DATECLSE        $10.
-          @075   ACCTSTATUS      $1.;
-          IF ACCTCODE NOT IN ('DP   ','LN   ') THEN DELETE;
-RUN;
-PROC SORT  DATA=ACTIVE; BY CUSTNO DESCENDING DATEOPEN;RUN;
-PROC PRINT DATA=ACTIVE(OBS=5);TITLE 'ACTIVE';RUN;
-
-DATA LISTACT;
-  SET ACTIVE;
-  KEEP CUSTNO ACCTCODE ACCTNOC;
-  IF DATECLSE NOT IN ('       .','        ','00000000') THEN DELETE;
-RUN;
-PROC SORT  DATA=LISTACT NODUPKEY; BY CUSTNO;RUN;
-PROC PRINT DATA=LISTACT(OBS=5);TITLE 'ACCOUNT';RUN;
-
-   DATA NEWACT;
-        MERGE NEWCHG(IN=F) LISTACT(IN=G);
-        BY CUSTNO;
-        IF F AND G;
-   RUN;
-   PROC SORT  DATA=NEWACT;BY CUSTNO;RUN;
-   PROC PRINT DATA=NEWACT(OBS=10);TITLE 'NEWACT';RUN;
-
-   DATA MERGE_A;
-        MERGE NEWACT(IN=A) OLDCHG(IN=B);
-        BY CUSTNO;
-        IF A AND B;
-   RUN;
-   PROC SORT  DATA=MERGE_A;BY CUSTNO;RUN;
-   PROC PRINT DATA=MERGE_A(OBS=15);TITLE 'COM CIS';RUN;
-
-   DATA C_PRCTRY C_EMNAME C_EMTYP C_EMSEC C_MASCO
-        C_CTZN C_CCODE C_MSIC C_CORP C_BGC C_DOB C_LONG
-        C_NAME  C_ADDREF C_DATE C_OPER C_RESD;
-     KEEP CUSTNO UPDDATE UPDOPER FIELDS OLDVALUE NEWVALUE ACCTNOC
-          DATEUPD DATEOPER CUSTNAME CUSTLASTOPER CUSTMNTDATE;
-     FORMAT FIELDS $30. OLDVALUE $150. NEWVALUE $150.;
-     SET MERGE_A;
-     IF CUSTMNTDATE NOT = CUSTMNTDATEX THEN DO;
-        UPDDATE = CUSTMNTDATE;
-        OUTPUT C_DATE;
-     END;
-     IF CUSTLASTOPER NOT = CUSTLASTOPERX THEN DO;
-        UPDOPER = CUSTLASTOPER;
-        OUTPUT C_OPER;
-     END;
-     IF ADDREF NOT = ADDREFX THEN DO;
-        FIELDS ='ADDREF';
-        OLDVALUE = ADDREFX;
-        NEWVALUE = ADDREF;
-        OUTPUT C_ADDREF;
-     END;
-     IF CUSTNAME NOT = CUSTNAMEX THEN DO;
-        FIELDS ='NAME';
-        OLDVALUE = CUSTNAMEX;
-        NEWVALUE = CUSTNAME;
-        OUTPUT C_NAME;
-     END;
-     IF LONGNAME NOT = LONGNAMEX THEN DO;
-        FIELDS ='CUSTOMER NAME';
-        OLDVALUE = LONGNAMEX;
-        NEWVALUE = LONGNAME;
-        OUTPUT C_LONG;
-     END;
-     IF DOBDOR  NOT = DOBDORX   THEN DO;
-        OLDVALUE = DOBDORX;
-        NEWVALUE = DOBDOR;
-        IF INDORG = 'I' THEN FIELDS ='DATE OF BIRTH';
-        ELSE FIELDS ='DATE OF REGISTRATION';
-        OUTPUT C_DOB;
-     END;
-     IF BASICGRPCODE NOT = BASICGRPCODEX  THEN DO;
-        FIELDS ='ENTITY TYPE';
-        OLDVALUE = BASICGRPCODEX;
-        NEWVALUE = BASICGRPCODE;
-        OUTPUT C_BGC;
-     END;
-     IF CORPSTATUS NOT = CORPSTATUSX  THEN DO;
-        FIELDS ='CORPORATE STATUS';
-        OLDVALUE = CORPSTATUSX;
-        NEWVALUE = CORPSTATUS;
-        OUTPUT C_CORP;
-     END;
-     IF MSICCODE NOT = MSICCODEX  THEN DO;
-        FIELDS ='MSIC 2008';
-        OLDVALUE = MSICCODEX;
-        NEWVALUE = MSICCODE;
-        OUTPUT C_MSIC;
-     END;
-     IF CUST_CODE NOT = CUST_CODEX  THEN DO;
-        FIELDS ='CUSTOMER CODE';
-        OLDVALUE = CUST_CODEX;
-        NEWVALUE = CUST_CODE;
-        OUTPUT C_CCODE;
-     END;
-     IF CITIZENSHIP NOT = CITIZENSHIPX THEN DO;
-        FIELDS ='NATIONALITY';
-        OLDVALUE = CITIZENSHIPX;
-        NEWVALUE = CITIZENSHIP;
-        OUTPUT C_CTZN;
-     END;
-     IF MASCO2008 NOT = MASCO2008X THEN DO;
-        FIELDS ='MASCO OCCUPATION';
-        OLDVALUE = MASCO2008X;
-        NEWVALUE = MASCO2008;
-        OUTPUT C_MASCO;
-     END;
-     IF EMPLOYMENT_SECTOR NOT = EMPLOYMENT_SECTORX THEN DO;
-        /*CHK OPER AND DATE*/
-        IF EMPLOYMENT_LAST_UPDATE NOT = EMPLOYMENT_LAST_UPDATEX
-        THEN DATEUPD  = EMPLOYMENT_LAST_UPDATE;
-        IF LAST_UPDATE_OPER NOT = LAST_UPDATE_OPERX
-        THEN DATEOPER = LAST_UPDATE_OPER;
-        FIELDS ='EMPLOYMENT SECTOR';
-        OLDVALUE = EMPLOYMENT_SECTORX;
-        NEWVALUE = EMPLOYMENT_SECTOR;
-        OUTPUT C_EMSEC;
-     END;
-     IF EMPLOYMENT_TYPE NOT = EMPLOYMENT_TYPEX THEN DO;
-        /*CHK OPER AND DATE*/
-        IF EMPLOYMENT_LAST_UPDATE NOT = EMPLOYMENT_LAST_UPDATEX
-        THEN DATEUPD = EMPLOYMENT_LAST_UPDATE;
-        IF LAST_UPDATE_OPER NOT = LAST_UPDATE_OPERX
-        THEN DATEOPER= LAST_UPDATE_OPER;
-
-        FIELDS ='EMPLOYMENT TYPE';
-        OLDVALUE = EMPLOYMENT_TYPEX;
-        NEWVALUE = EMPLOYMENT_TYPE;
-        OUTPUT C_EMTYP;
-     END;
-     IF EMPNAME NOT = EMPNAMEX THEN DO;
-        FIELDS ='EMPLOYER NAME';
-        OLDVALUE = EMPNAMEX;
-        NEWVALUE = EMPNAME;
-        OUTPUT C_EMNAME;
-     END;
-     IF PRCOUNTRY NOT = PRCOUNTRYX THEN DO;
-        FIELDS ='PR COUNTRY';
-        OLDVALUE = PRCOUNTRYX;
-        NEWVALUE = PRCOUNTRY;
-        OUTPUT C_PRCTRY;
-     END;
-     IF RESIDENCY NOT = RESIDENCYX THEN DO;
-        FIELDS ='RESIDENCY';
-        OLDVALUE = RESIDENCYX;
-        NEWVALUE = RESIDENCY;
-        OUTPUT C_RESD;
-     END;
-   RUN;
-   PROC SORT  DATA=C_DATE;BY CUSTNO;RUN;
-   PROC SORT  DATA=C_OPER;BY CUSTNO;RUN;
-   PROC PRINT DATA=C_LONG(OBS=10);TITLE 'C_LONG';
-   PROC PRINT DATA=C_DOB (OBS=10);TITLE 'C_DOB ';
-   PROC PRINT DATA=C_BGC (OBS=10);TITLE 'C_BGC ';
-   PROC PRINT DATA=C_CORP(OBS=10);TITLE 'C_CORP';
-   PROC PRINT DATA=C_MSIC(OBS=10);TITLE 'C_MSIC';
-   PROC PRINT DATA=C_CCODE(OBS=10);TITLE 'C_CCODE';
-   PROC PRINT DATA=C_CTZN (OBS=10);TITLE 'C_CTZN ';
-   PROC PRINT DATA=C_MASCO(OBS=10);TITLE 'C_MASCO';
-   PROC PRINT DATA=C_EMNAME(OBS=10);TITLE 'C_EMNAME';
-   PROC PRINT DATA=C_PRCTRY(OBS=10);TITLE 'C_PRCTRY';
-   PROC PRINT DATA=C_EMSEC (OBS=10);TITLE 'C_EMSEC';
-
-   DATA TEMPALL;
-     SET C_LONG C_DOB C_BGC C_CORP C_MSIC C_CCODE C_CTZN C_MASCO
-         C_EMNAME C_PRCTRY C_EMSEC C_RESD C_EMTYP;
-   RUN;
-   PROC SORT  DATA=TEMPALL;BY CUSTNO;RUN;
-   PROC PRINT DATA=TEMPALL(OBS=15);TITLE 'ALL TEMP';RUN;
-
-   DATA MRGCIS;
-        MERGE C_DATE(IN=D) C_OPER(IN=E) TEMPALL(IN=C);
-        BY CUSTNO;
-        IF C;
-        IF DATEUPD NOT = ' ' THEN UPDDATE = DATEUPD;
-        IF OPERUPD NOT = ' ' THEN UPDOPER = OPERUPD;
-        IF UPDOPER = ' ' THEN UPDOPER =  CUSTLASTOPER;
-        IF UPDDATE = ' ' THEN UPDDATE =  CUSTMNTDATE ;
-        IF UPDOPER IN ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH',
-           'CIFLPRCE','CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS',
-           'CRIS') THEN DELETE;
-   RUN;
-   PROC SORT  DATA=MRGCIS;BY CUSTNO;RUN;
-   PROC PRINT DATA=MRGCIS(OBS=30);TITLE 'RESULT CUSTNO';RUN;
-
-   DATA RECORDS;
-     SET MRGCIS;
-     FILE OUTFILE;
-     UPDDATX = "&DAY"||"/"||"&MONTH"||"/"||"&YEAR";
-     PUT  @001   UPDOPER         $10.
-          @021   CUSTNO          $20.
-          @041   ACCTNOC         $20.
-          @061   CUSTNAME        $40.
-          @101   FIELDS          $20.
-          @121   OLDVALUE        $150.
-          @271   NEWVALUE        $150.
-          @424   UPDDATX         $10.
-          ;
-     RUN;
-//*---------------------------------------------------------------------
-//* GET DESCRIPTION
-//*---------------------------------------------------------------------
-//CHGDESC  EXEC SAS609
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
-//RPTALL   DD DISP=SHR,DSN=RBP2.B033.CIS.IDIC.DAILY.RPT.OUT
-//RECCTZ   DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.CITZN
-//RECRES   DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.RESTR
-//RECSAL   DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.SALES
-//CCODE    DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.MISC6
-//BGCFL    DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.MISC8
-//MSICFL   DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.MISC9
-//MASCOFL  DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.MISC10
-//EMPSEC   DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.EMPSEC
-//EMPTYPE  DD DISP=SHR,DSN=RBP2.B033.CIS.BANKCTRL.EMPTYPE
-//OUTFILE  DD DSN=RBP2.B033.CIS.IDIC.DAILY.RPT,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=500,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTION NOCENTER;
-
-DATA RECCTZ;
-  INFILE RECCTZ;
-   INPUT @10   CITIZEN                $02.
-         @40   DESC                   $40.;
-PROC SORT  DATA=RECCTZ; BY CITIZEN;
-PROC PRINT DATA=RECCTZ(OBS=5);TITLE 'RECCTZ ';
-RUN;
-
-DATA RECPRC;
-  INFILE RECCTZ;
-   INPUT @10   PRCOUNTRY              $02.
-         @40   DESC                   $40.;
-PROC SORT  DATA=RECPRC; BY PRCOUNTRY;
-PROC PRINT DATA=RECPRC(OBS=5);TITLE 'RECPRC ';
-RUN;
-
-DATA RECRES;
-  INFILE RECRES;
-   INPUT @10   RESIDEN                $03.
-         @40   DESC                   $40.;
-PROC SORT  DATA=RECRES; BY RESIDEN;
-PROC PRINT DATA=RECRES(OBS=5);TITLE 'RECRES ';
-RUN;
-
-DATA RECSAL;
-  INFILE RECSAL;
-   INPUT @10   SALES                  $03.
-         @40   DESC                   $40.;
-PROC SORT  DATA=RECSAL; BY SALES;
-PROC PRINT DATA=RECSAL(OBS=5);TITLE 'RECSAL ';
-RUN;
-
-DATA CCODE;
-  INFILE CCODE;
-   INPUT @08   CUSTCODE               $03.
-         @43   DESC                   $25.;
-PROC SORT  DATA=CCODE; BY CUSTCODE;
-PROC PRINT DATA=CCODE(OBS=5);TITLE 'MISC6  ';
-RUN;
-
-DATA BGCFL;
-  INFILE BGCFL;
-   INPUT @08   BGCCODE                $03.
-         @43   DESC                   $25.;
-PROC SORT  DATA=BGCFL; BY BGCCODE;
-PROC PRINT DATA=BGCFL(OBS=5);TITLE 'BGC    ';
-RUN;
-
-DATA MSICFL;
-  INFILE MSICFL;
-   INPUT @08   MSICCODE               $05.
-         @43   DESC                   $25.;
-PROC SORT  DATA=MSICFL;BY MSICCODE;
-PROC PRINT DATA=MSICFL (OBS=5);TITLE 'MSIC   ';
-RUN;
-
-DATA MASCOFL;
-  INFILE MASCOFL;
-   INPUT @08   MASCOCODE              $05.
-         @43   DESC                   $25.;
-PROC SORT  DATA=MASCOFL;BY MASCOCODE;
-PROC PRINT DATA=MASCOFL (OBS=5);TITLE 'MASCO   ';
-RUN;
-
-DATA EMPSEC;
-  INFILE EMPSEC;
-   INPUT @21   EMPSEC                 $05.
-         @55   DESC                   $80.;
-PROC SORT  DATA=EMPSEC;BY EMPSEC;
-PROC PRINT DATA=EMPSEC  (OBS=5);TITLE 'EMPSEC  ';
-RUN;
-
-DATA EMPTYPE;
-  INFILE EMPTYPE;
-   INPUT @21   EMPTYPE                $05.
-         @55   DESC                   $80.;
-PROC SORT  DATA=EMPTYPE;BY EMPTYPE;
-PROC PRINT DATA=EMPTYPE  (OBS=5);TITLE 'EMPTYPE ';
-RUN;
-
-DATA CK_CTZN CK_RSDN CK_SALE CK_CCODE CK_BGC CK_MSIC CK_MASCO
-     CK_EMPSEC CK_EMPTYPE OUTOTH CK_PRCTRY;
-  INFILE RPTALL;
-   INPUT @001   UPDOPER         $10.
-         @021   CUSTNO          $20.
-         @041   ACCTNOC         $20.
-         @061   CUSTNAME        $40.
-         @101   FIELDS          $20.
-         @121   OLDVALUE        $150.
-         @271   NEWVALUE        $150.
-         @424   UPDDATE         $10.
-         ;
-         IF FIELDS = 'NATIONALITY' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            CITIZEN = SUBSTR(OLDVALUE,1,2);
-            OUTPUT CK_CTZN;
-         END;
-         IF FIELDS = 'RESIDENCY' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            RESIDEN = SUBSTR(OLDVALUE,1,3);
-            OUTPUT CK_RSDN;
-         END;
-         IF FIELDS = 'CORPORATE STATUS' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            SALES = SUBSTR(OLDVALUE,1,3);
-            OUTPUT CK_SALE;
-         END;
-         IF FIELDS = 'CUSTOMER CODE' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            CUSTCODE = SUBSTR(OLDVALUE,1,3);
-            OUTPUT CK_CCODE;
-         END;
-         IF FIELDS ='ENTITY TYPE' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            BGCCODE = SUBSTR(OLDVALUE,1,3);
-            OUTPUT CK_BGC;
-         END;
-         IF FIELDS ='MSIC 2008' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            MSICCODE = SUBSTR(OLDVALUE,1,5);
-            OUTPUT CK_MSIC;
-         END;
-         IF FIELDS ='MASCO OCCUPATION' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            MASCOCODE = SUBSTR(OLDVALUE,1,5);
-            OUTPUT CK_MASCO;
-         END;
-         IF FIELDS ='EMPLOYMENT SECTOR' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            EMPSEC = SUBSTR(OLDVALUE,1,5);
-            OUTPUT CK_EMPSEC;
-         END;
-         IF FIELDS ='EMPLOYMENT TYPE' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            EMPTYPE = SUBSTR(OLDVALUE,1,5);
-            OUTPUT CK_EMPTYPE;
-         END;
-         IF FIELDS ='PR COUNTRY' AND OLDVALUE NOT = ' ' THEN DO;
-            INDX = 'Y';
-            PRCOUNTRY = SUBSTR(OLDVALUE,1,2);
-            OUTPUT CK_PRCTRY;
-         END;
-         IF INDX NOT = 'Y' THEN OUTPUT OUTOTH;
-PROC SORT  DATA=CK_CTZN; BY CITIZEN;
-PROC PRINT DATA=CK_CTZN(OBS=5);TITLE 'CK_CTZN';
-PROC SORT  DATA=CK_RSDN; BY RESIDEN;
-PROC PRINT DATA=CK_RSDN(OBS=5);TITLE 'CK_RSDN';
-PROC SORT  DATA=CK_SALE; BY SALES;
-PROC PRINT DATA=CK_SALE(OBS=5);TITLE 'CK_SALE';
-PROC SORT  DATA=CK_CCODE; BY CUSTCODE;
-PROC PRINT DATA=CK_CCODE(OBS=5);TITLE 'CK_CODE';
-PROC SORT  DATA=CK_BGC; BY BGCCODE;
-PROC PRINT DATA=CK_BGC(OBS=5);TITLE 'CK_BGC';
-PROC SORT  DATA=CK_MSIC; BY MSICCODE;
-PROC PRINT DATA=CK_MSIC(OBS=5);TITLE 'CK_MSIC';
-PROC SORT  DATA=CK_MASCO; BY MASCOCODE;
-PROC PRINT DATA=CK_MASCO(OBS=5);TITLE 'CK_MASCO';
-PROC PRINT DATA=OUTOTH(OBS=5);TITLE 'OUTOTH  ';
-PROC SORT  DATA=CK_EMPSEC; BY EMPSEC;
-PROC SORT  DATA=CK_EMPTYPE; BY EMPTYPE;
-PROC SORT  DATA=CK_PRCTRY;  BY PRCOUNTRY;
-RUN;
-
-   DATA MRGCTZ;
-        MERGE CK_CTZN(IN=A) RECCTZ(IN=B);BY CITIZEN;
-        IF A;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGCTZ(OBS=15);TITLE 'RESULT OLD CTZN';RUN;
-
-   DATA MRGRSD;
-        MERGE CK_RSDN(IN=C) RECRES(IN=D);BY RESIDEN;
-        IF C;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGRSD(OBS=15);TITLE 'RESULT OLD RESI';RUN;
-
-   DATA MRGSAL;
-        MERGE CK_SALE(IN=E) RECSAL(IN=F);BY SALES;
-        IF E;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGSAL(OBS=15);TITLE 'RESULT OLD SALE';RUN;
-
-   DATA MRGCCD;
-        MERGE CK_CCODE(IN=G) CCODE(IN=H);BY CUSTCODE;
-        IF G;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGCCD(OBS=15);TITLE 'RESULT OLD MSIC6';RUN;
-
-   DATA MRGBGC;
-        MERGE CK_BGC(IN=I) BGCFL(IN=J);BY BGCCODE;
-        IF I;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGBGC(OBS=15);TITLE 'RESULT OLD BGC';RUN;
-
-   DATA MRGMSC;
-        MERGE CK_MSIC(IN=K) MSICFL(IN=L);BY MSICCODE;
-        IF K;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGMSC(OBS=15);TITLE 'RESULT OLD MSC';RUN;
-
-   DATA MRGMAS;
-        MERGE CK_MASCO(IN=M) MASCOFL(IN=N);BY MASCOCODE;
-        IF M;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGMAS(OBS=15);TITLE 'RESULT OLD MSC';RUN;
-
-   DATA MRGESEC;
-        MERGE CK_EMPSEC(IN=MA) EMPSEC(IN=NA);BY EMPSEC;
-        IF MA;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGESEC(OBS=15);TITLE 'RESULT OLD SEC';RUN;
-
-   DATA MRGETYP;
-        MERGE CK_EMPTYPE(IN=MB) EMPTYPE(IN=NB);BY EMPTYPE;
-        IF MB;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGETYP(OBS=15);TITLE 'RESULT OLD TYP';RUN;
-
-   DATA MRGPRC;
-        MERGE CK_PRCTRY(IN=MC) RECPRC(IN=NC);BY PRCOUNTRY;
-        IF MC;
-        IF DESC NOT = ' ' THEN OLDVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRGPRC(OBS=15);TITLE 'RESULT OLD PRC';RUN;
-
-   DATA COMOLD;
-     SET MRGCTZ MRGRSD MRGSAL MRGCCD MRGBGC MRGMSC MRGMAS
-         MRGETYP MRGESEC OUTOTH MRGPRC;
-     KEEP UPDOPER CUSTNO ACCTNOC CUSTNAME FIELDS OLDVALUE
-          NEWVALUE UPDDATE;
-   RUN;
-   PROC PRINT DATA=COMOLD(OBS=50);TITLE 'COMBINE OLD';RUN;
-
-   DATA CN_CTZN CN_RSDN CN_SALE CN_CCODE CN_BGC CN_MSIC CN_MASCO OUTNEW
-        CN_EMPSEC CN_EMPTYPE CN_PRCTR;
-     SET COMOLD;
-     KEEP UPDOPER CUSTNO ACCTNOC CUSTNAME FIELDS OLDVALUE
-          NEWVALUE UPDDATE;
-     KEEP CITIZEN RESIDEN SALES CUSTCODE BGCCODE MSICCODE MASCOCODE
-          EMPTYPE EMPSEC PRCOUNTRY;
-         IF FIELDS = 'NATIONALITY' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            CITIZEN = SUBSTR(NEWVALUE,1,2);
-            OUTPUT CN_CTZN;
-         END;
-         IF FIELDS = 'RESIDENCY' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            RESIDEN = SUBSTR(NEWVALUE,1,3);
-            OUTPUT CN_RSDN;
-         END;
-         IF FIELDS = 'CORPORATE STATUS' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            SALES = SUBSTR(NEWVALUE,1,3);
-            OUTPUT CN_SALE;
-         END;
-         IF FIELDS = 'CUSTOMER CODE' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            CUSTCODE = SUBSTR(NEWVALUE,1,3);
-            OUTPUT CN_CCODE;
-         END;
-         IF FIELDS ='ENTITY TYPE' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            BGCCODE = SUBSTR(NEWVALUE,1,3);
-            OUTPUT CN_BGC;
-         END;
-         IF FIELDS ='MSIC 2008' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            MSICCODE = SUBSTR(NEWVALUE,1,5);
-            OUTPUT CN_MSIC;
-         END;
-         IF FIELDS ='MASCO OCCUPATION' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            MASCOCODE = SUBSTR(NEWVALUE,1,5);
-            OUTPUT CN_MASCO;
-         END;
-         IF FIELDS ='EMPLOYMENT SECTOR' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            EMPSEC = SUBSTR(NEWVALUE,1,5);
-            OUTPUT CN_EMPSEC;
-         END;
-         IF FIELDS ='EMPLOYMENT TYPE' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            EMPTYPE = SUBSTR(NEWVALUE,1,5);
-            OUTPUT CN_EMPTYPE;
-         END;
-         IF FIELDS ='PR COUNTRY' AND NEWVALUE NOT = ' ' THEN DO;
-            INDY = 'Y';
-            PRCOUNTRY = SUBSTR(NEWVALUE,1,2);
-            OUTPUT CN_PRCTR;
-         END;
-         IF INDY NOT = 'Y' THEN OUTPUT OUTNEW;
-   RUN;
-PROC SORT  DATA=CN_CTZN; BY CITIZEN;
-PROC PRINT DATA=CN_CTZN(OBS=5);TITLE 'CN_CTZN';
-PROC SORT  DATA=CN_RSDN; BY RESIDEN;
-PROC PRINT DATA=CN_RSDN(OBS=5);TITLE 'CN_RSDN';
-PROC SORT  DATA=CN_SALE; BY SALES;
-PROC PRINT DATA=CN_SALE(OBS=5);TITLE 'CN_SALE';
-PROC SORT  DATA=CN_CCODE; BY CUSTCODE;
-PROC PRINT DATA=CN_CCODE(OBS=5);TITLE 'CN_CODE';
-PROC SORT  DATA=CN_BGC; BY BGCCODE;
-PROC PRINT DATA=CN_BGC(OBS=5);TITLE 'CN_BGC';
-PROC SORT  DATA=CN_MSIC; BY MSICCODE;
-PROC PRINT DATA=CN_MSIC(OBS=5);TITLE 'CN_MSIC';
-PROC SORT  DATA=CN_MASCO; BY MASCOCODE;
-PROC PRINT DATA=CN_MASCO(OBS=5);TITLE 'CN_MASCO';
-PROC PRINT DATA=OUTNEW(OBS=5);TITLE 'OUTNEW  ';
-PROC SORT  DATA=CN_EMPSEC; BY EMPSEC;
-PROC SORT  DATA=CN_EMPTYPE; BY EMPTYPE;
-PROC SORT  DATA=CN_PRCTR; BY PRCOUNTRY;
-RUN;
-
-   DATA MRXCTZ;
-        MERGE CN_CTZN(IN=O) RECCTZ(IN=P);BY CITIZEN;
-        IF O;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXCTZ(OBS=15);TITLE 'RESULT NEW CTZN';RUN;
-
-   DATA MRXRSD;
-        MERGE CN_RSDN(IN=Q) RECRES(IN=R);BY RESIDEN;
-        IF Q;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXRSD(OBS=15);TITLE 'RESULT NEW RESI';RUN;
-
-   DATA MRXSAL;
-        MERGE CN_SALE(IN=S) RECSAL(IN=T);BY SALES;
-        IF S;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXSAL(OBS=15);TITLE 'RESULT NEW SALE';RUN;
-
-   DATA MRXCCD;
-        MERGE CN_CCODE(IN=U) CCODE(IN=V);BY CUSTCODE;
-        IF U;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXCCD(OBS=15);TITLE 'RESULT NEW MSIC6';RUN;
-
-   DATA MRXBGC;
-        MERGE CN_BGC(IN=W) BGCFL(IN=X);BY BGCCODE;
-        IF W;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXBGC(OBS=15);TITLE 'RESULT NEW BGC';RUN;
-
-   DATA MRXMSC;
-        MERGE CN_MSIC(IN=Y) MSICFL(IN=Z);BY MSICCODE;
-        IF Y;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXMSC(OBS=15);TITLE 'RESULT NEW MSC';RUN;
-
-   DATA MRXMAS;
-        MERGE CN_MASCO(IN=AB) MASCOFL(IN=CD);BY MASCOCODE;
-        IF AB;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXMAS(OBS=15);TITLE 'RESULT NEW MSC';RUN;
-
-   DATA MRXESEC;
-        MERGE CN_EMPSEC(IN=WA) EMPSEC(IN=XA);BY EMPSEC;
-        IF WA;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXESEC(OBS=15);TITLE 'RESULT OLD SEC';RUN;
-
-   DATA MRXETYP;
-        MERGE CN_EMPTYPE(IN=WB) EMPTYPE(IN=XB);BY EMPTYPE;
-        IF WB;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXETYP(OBS=15);TITLE 'RESULT OLD TYP';RUN;
-
-   DATA MRXPRC;
-        MERGE CN_PRCTR(IN=WC) RECPRC(IN=XC);BY PRCOUNTRY;
-        IF WC;
-        IF DESC NOT = ' ' THEN NEWVALUE = DESC;
-   RUN;
-   PROC PRINT DATA=MRXPRC(OBS=15);TITLE 'RESULT OLD PRC';RUN;
-
-   DATA LASTREC;
-     SET MRXCTZ MRXRSD MRXSAL MRXCCD MRXBGC MRXMSC MRXMAS OUTNEW
-         MRXETYP MRXESEC MRXPRC;
-     IF FIELDS NOT = ' ';
-     RUN;
-   PROC SORT  DATA=LASTREC; BY CUSTNO FIELDS;
-
-   DATA RECORDS;
-     SET LASTREC;
-     FILE OUTFILE;
-     PUT  @001   UPDOPER         $10.
-          @021   CUSTNO          $20.
-          @041   ACCTNOC         $20.
-          @061   CUSTNAME        $40.
-          @101   FIELDS          $20.
-          @121   OLDVALUE        $150.
-          @271   NEWVALUE        $150.
-          @424   UPDDATE         $10.
-          ;
-     RUN;
+ /*----------------------------------------------------------------*/
+ /*  OUTPUT CUST WITH OTHER IDS AND WITH NO IDS INCLUDE DP ACCTS   */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT;
+SET ALLDP NOIDREL;
+FILE OUTFILE;
+     PUT @01   CUSTBRCH            Z7.
+         @08   CUSTNO              $11.
+         @19   ACCTCODE            $5.
+         @24   ACCTNO              20.
+         @44   RACE                $1.
+         @45   ALIASKEY            $3.
+         @48   ALIAS               $20.
+         @68   CITIZENSHIP         $2.;
+  RUN;
