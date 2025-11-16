@@ -19,20 +19,17 @@ con.execute(f"""
     CREATE TABLE CUST AS
     SELECT * FROM read_parquet('{cis[0]}')
 """)
+print("STEP 1: CUST table preview (5 rows)")
+print(con.execute("SELECT * FROM CUST LIMIT 5").fetchdf())
 
 # ============================
 # STEP 2: PROCESS HRC FIELDS
 # ============================
 hrc_list = [f"HRC{str(i).zfill(2)}" for i in range(1, 21)]
-# LPAD to 3 chars (Z3.), replace '002' -> '   '
 processed_hrc = ",\n".join([
     f"CASE WHEN LPAD(CAST({h} AS VARCHAR),3,'0')='002' THEN '   ' ELSE LPAD(CAST({h} AS VARCHAR),3,'0') END AS {h}C"
     for h in hrc_list
 ])
-
-# ============================
-# STEP 3: FILTER BANK EMPLOYEES (any HRCxxC = '002')
-# ============================
 filter_condition = " OR ".join([f"LPAD(CAST({h} AS VARCHAR),3,'0')='002'" for h in hrc_list])
 
 con.execute(f"""
@@ -48,6 +45,8 @@ con.execute(f"""
     FROM CUST
     WHERE {filter_condition}
 """)
+print("STEP 2: CIS table preview (5 rows)")
+print(con.execute("SELECT * FROM CIS LIMIT 5").fetchdf())
 
 # ============================
 # STEP 4: CREATE CUSTCODEALL
@@ -59,6 +58,8 @@ con.execute(f"""
            REPLACE({concat_fields}, ' ', '') AS CUSTCODEALL
     FROM CIS
 """)
+print("STEP 4: CIS2 table preview (5 rows)")
+print(con.execute("SELECT * FROM CIS2 LIMIT 5").fetchdf())
 
 # ============================
 # STEP 5: REMOVE DUPLICATES BY CUSTNO
@@ -69,6 +70,8 @@ con.execute("""
     FROM CIS2
     QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
 """)
+print("STEP 5: FINAL table preview (5 rows)")
+print(con.execute("SELECT * FROM FINAL LIMIT 5").fetchdf())
 
 # -----------------------------
 # 9. Write Parquet and CSV
@@ -87,6 +90,9 @@ SELECT
     {day} AS day
 FROM FINAL
 """.format(year=year,month=month,day=day)
+
+print("STEP 9: Output query preview (5 rows)")
+print(con.execute(out + " LIMIT 5").fetchdf())
 
 queries = {
     "CICUSCD4_STAF002_INIT": out
@@ -119,13 +125,16 @@ for txt_name, txt_query in txt_queries.items():
     txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
     df_txt = con.execute(txt_query).fetchdf()
 
+    print(f"STEP 10: Fixed-width TXT preview for {txt_name} (5 rows)")
+    print(df_txt.head(5))  # preview first 5 rows
+
     with open(txt_path, "w", encoding="utf-8") as f:
         for _, row in df_txt.iterrows():
             line = (
-                f"{str(row['CUSTNO']).ljust(20)}"          # Z7. numeric
+                f"{str(row['CUSTNO']).ljust(20)}"
                 f"{str(row['INDORG']).ljust(1)}"
                 f"{str(row['CUSTBRCH']).ljust(7)}"
-                f"{str(row['CUSTCODEALL']).ljust(60)}"          # 20. numeric
+                f"{str(row['CUSTCODEALL']).ljust(60)}"
                 f"{str(row['FILECODE']).ljust(1)}"
                 f"{str(row['STAFFID']).ljust(9)}" 
                 f"{str(row['CUSTNAME']).ljust(40)}"
