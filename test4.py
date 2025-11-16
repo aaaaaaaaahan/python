@@ -1,136 +1,559 @@
-OLDCHG:
-INPUT @01   RUNTIMESTAMP           $EBCDIC20.
-      @21   CUSTNOX                $EBCDIC20.
-      @41   ADDREFX                $EBCDIC11.
-      @52   CUSTNAME               $EBCDIC40.
-      @92   PRIPHONEX              $EBCDIC11.
-      @103  SECPHONEX              $EBCDIC11.
-      @114  MOBILEPHX              $EBCDIC11.
-      @125  FAXX                   $EBCDIC11.
-      @136  ALIASKEY               $EBCDIC3. 
-      @139  ALIAS                  $EBCDIC20.
-      @159  PROCESSTIME            $EBCDIC8. 
-      @167  CUSTSTAT               $EBCDIC1. 
-      @168  TAXCODE                $EBCDIC1. 
-      @169  TAXID                  $EBCDIC9. 
-      @178  CUSTBRCH               $EBCDIC5. 
-      @183  COSTCTR                $EBCDIC5. 
-      @188  CUSTMNTDATE            $EBCDIC08.
-      @196  CUSTLASTOPER           $EBCDIC8. 
-      @204  PRIM_OFF               $EBCDIC5.
-      @209  SEC_OFF                $EBCDIC5.
-      @214  PRIM_LN_OFF            $EBCDIC5.
-      @219  SEC_LN_OFF             $EBCDIC5.
-      @224  RACE                   $EBCDIC1. 
-      @225  RESIDENCY              $EBCDIC3. 
-      @228  CITIZENSHIP            $EBCDIC2. 
-      @230  OPENDT                 $EBCDIC08.
-      @241  HRCALL                 $EBCDIC60.
-      @301  EXPERIENCE             $EBCDIC3. 
-      @304  HOBBIES                $EBCDIC3. 
-      @307  RELIGION               $EBCDIC3. 
-      @310  LANGUAGE               $EBCDIC3. 
-      @313  INST_SEC               $EBCDIC3. 
-      @316  CUST_CODE              $EBCDIC3. 
-      @319  CUSTCONSENT            $EBCDIC3. 
-      @322  BASICGRPCODE           $EBCDIC3. 
-      @327  MSICCODE               $EBCDIC5. 
-      @332  MASCO2008              $EBCDIC5. 
-      @337  INCOME                 $EBCDIC3. 
-      @340  EDUCATION              $EBCDIC3.  
-      @343  OCCUP                  $EBCDIC3.  
-      @346  MARITALSTAT            $EBCDIC1.  
-      @347  OWNRENT                $EBCDIC1.  
-      @348  EMPNAME                $EBCDIC40. 
-      @388  DOBDOR                 $EBCDIC08. 
-      @396  SICCODE                $EBCDIC05. 
-      @401  CORPSTATUS             $EBCDIC3.  
-      @404  NETWORTH               $EBCDIC3.  
-      @407  LAST_UPDATE_DATE       $EBCDIC10. 
-      @417  LAST_UPDATE_TIME       $EBCDIC10. 
-      @427  LAST_UPDATE_OPER       $EBCDIC10. 
-      @437  PRCOUNTRY              $EBCDIC02. 
-      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
-      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
-      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
-      @469  BNMID                  $EBCDIC20. 
-      @489  LONGNAME               $EBCDIC150.
-      @639  INDORG                 $EBCDIC1.  
-      @640  RESDESC                $EBCDIC20. 
-      @660  SALDESC                $EBCDIC20. 
-      @680  CTZDESC                $EBCDIC20.
-      ;
+import duckdb
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+import datetime
 
-NEWCHG:
-INPUT @01   RUNTIMESTAMP           $EBCDIC20.
-      @21   CUSTNOX                $EBCDIC20.
-      @41   ADDREFX                $EBCDIC11.
-      @52   CUSTNAME               $EBCDIC40.
-      @92   PRIPHONEX              $EBCDIC11.
-      @103  SECPHONEX              $EBCDIC11.
-      @114  MOBILEPHX              $EBCDIC11.
-      @125  FAXX                   $EBCDIC11.
-      @136  ALIASKEY               $EBCDIC3. 
-      @139  ALIAS                  $EBCDIC20.
-      @159  PROCESSTIME            $EBCDIC8. 
-      @167  CUSTSTAT               $EBCDIC1. 
-      @168  TAXCODE                $EBCDIC1. 
-      @169  TAXID                  $EBCDIC9. 
-      @178  CUSTBRCH               $EBCDIC5. 
-      @183  COSTCTR                $EBCDIC5. 
-      @188  CUSTMNTDATE            $EBCDIC08.
-      @196  CUSTLASTOPER           $EBCDIC8. 
-      @204  PRIM_OFF               $EBCDIC5.
-      @209  SEC_OFF                $EBCDIC5.
-      @214  PRIM_LN_OFF            $EBCDIC5.
-      @219  SEC_LN_OFF             $EBCDIC5.
-      @224  RACE                   $EBCDIC1. 
-      @225  RESIDENCY              $EBCDIC3. 
-      @228  CITIZENSHIP            $EBCDIC2. 
-      @230  OPENDT                 $EBCDIC08.
-      @241  HRCALL                 $EBCDIC60.
-      @301  EXPERIENCE             $EBCDIC3. 
-      @304  HOBBIES                $EBCDIC3. 
-      @307  RELIGION               $EBCDIC3. 
-      @310  LANGUAGE               $EBCDIC3. 
-      @313  INST_SEC               $EBCDIC3. 
-      @316  CUST_CODE              $EBCDIC3. 
-      @319  CUSTCONSENT            $EBCDIC3. 
-      @322  BASICGRPCODE           $EBCDIC3. 
-      @327  MSICCODE               $EBCDIC5. 
-      @332  MASCO2008              $EBCDIC5. 
-      @337  INCOME                 $EBCDIC3. 
-      @340  EDUCATION              $EBCDIC3.  
-      @343  OCCUP                  $EBCDIC3.  
-      @346  MARITALSTAT            $EBCDIC1.  
-      @347  OWNRENT                $EBCDIC1.  
-      @348  EMPNAME                $EBCDIC40. 
-      @388  DOBDOR                 $EBCDIC08. 
-      @396  SICCODE                $EBCDIC05. 
-      @401  CORPSTATUS             $EBCDIC3.  
-      @404  NETWORTH               $EBCDIC3.  
-      @407  LAST_UPDATE_DATE       $EBCDIC10. 
-      @417  LAST_UPDATE_TIME       $EBCDIC10. 
-      @427  LAST_UPDATE_OPER       $EBCDIC10. 
-      @437  PRCOUNTRY              $EBCDIC02. 
-      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
-      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
-      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
-      @469  BNMID                  $EBCDIC20. 
-      @489  LONGNAME               $EBCDIC150.
-      @639  INDORG                 $EBCDIC1.  
-      @640  RESDESC                $EBCDIC20. 
-      @660  SALDESC                $EBCDIC20. 
-      @680  CTZDESC                $EBCDIC20.
-      ;
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+report_date = batch_date.strftime("%d-%m-%Y")
 
-ACTIVE:
-INPUT  @001   CUSTNO          $20.
-       @021   ACCTCODE        $5. 
-       @026   ACCTNOC         $20.
-       @047   NOTENOC         $5. 
-       @052   BANKINDC        $1. 
-       @055   DATEOPEN        $10.
-       @065   DATECLSE        $10.
-       @075   ACCTSTATUS      $1.
-       ;                
+con = duckdb.connect()
+
+# -----------------------------
+# 1) Load NEWCHG (fields as in SAS NEWCHG)
+# -----------------------------
+con.execute(f"""
+CREATE OR REPLACE TABLE NEWCHG AS
+SELECT
+    -- NEWCHG (no X suffix) as per your SAS NEWCHG INPUT layout
+    RUNTIMESTAMP            AS RUNTIMESTAMP,
+    CUSTNO                  AS CUSTNO,
+    ADDREF                  AS ADDREF,
+    CUSTNAME                AS CUSTNAME,
+    PRIPHONE                AS PRIPHONE,
+    SECPHONE                AS SECPHONE,
+    MOBILEPH                AS MOBILEPH,
+    FAX                     AS FAX,
+    ALIASKEY                AS ALIASKEY,
+    ALIAS                   AS ALIAS,
+    PROCESSTIME             AS PROCESSTIME,
+    CUSTSTAT                AS CUSTSTAT,
+    TAXCODE                 AS TAXCODE,
+    TAXID                   AS TAXID,
+    CUSTBRCH                AS CUSTBRCH,
+    COSTCTR                 AS COSTCTR,
+    CUSTMNTDATE             AS CUSTMNTDATE,
+    CUSTLASTOPER            AS CUSTLASTOPER,
+    PRIM_OFF                AS PRIM_OFF,
+    SEC_OFF                 AS SEC_OFF,
+    PRIM_LN_OFF             AS PRIM_LN_OFF,
+    SEC_LN_OFF              AS SEC_LN_OFF,
+    RACE                    AS RACE,
+    RESIDENCY               AS RESIDENCY,
+    CITIZENSHIP             AS CITIZENSHIP,
+    OPENDT                  AS OPENDT,
+    HRCALL                  AS HRCALL,
+    EXPERIENCE              AS EXPERIENCE,
+    HOBBIES                 AS HOBBIES,
+    RELIGION                AS RELIGION,
+    LANGUAGE                AS LANGUAGE,
+    INST_SEC                AS INST_SEC,
+    CUST_CODE               AS CUST_CODE,
+    CUSTCONSENT             AS CUSTCONSENT,
+    BASICGRPCODE            AS BASICGRPCODE,
+    MSICCODE                AS MSICCODE,
+    MASCO2008               AS MASCO2008,
+    INCOME                  AS INCOME,
+    EDUCATION               AS EDUCATION,
+    OCCUP                   AS OCCUP,
+    MARITALSTAT             AS MARITALSTAT,
+    OWNRENT                 AS OWNRENT,
+    EMPNAME                 AS EMPNAME,
+    DOBDOR                  AS DOBDOR,
+    SICCODE                 AS SICCODE,
+    CORPSTATUS              AS CORPSTATUS,
+    NETWORTH                AS NETWORTH,
+    LAST_UPDATE_DATE        AS LAST_UPDATE_DATE,
+    LAST_UPDATE_TIME        AS LAST_UPDATE_TIME,
+    LAST_UPDATE_OPER        AS LAST_UPDATE_OPER,
+    PRCOUNTRY               AS PRCOUNTRY,
+    EMPLOYMENT_TYPE         AS EMPLOYMENT_TYPE,
+    EMPLOYMENT_SECTOR       AS EMPLOYMENT_SECTOR,
+    EMPLOYMENT_LAST_UPDATE  AS EMPLOYMENT_LAST_UPDATE,
+    BNMID                   AS BNMID,
+    LONGNAME                AS LONGNAME,
+    INDORG                  AS INDORG,
+    RESDESC                 AS RESDESC,
+    SALDESC                 AS SALDESC,
+    CTZDESC                 AS CTZDESC
+FROM '{host_parquet_path("CIS_IDIC_DAILY_INEW.parquet")}'
+""")
+
+# -----------------------------
+# 2) Load OLDCHG (keep X suffix column names exactly like SAS OLDCHG)
+# -----------------------------
+# Note: OLD file fields in SAS have X suffix (CUSTNOX, ADDREFX, CUSTNAMEX ...).
+# We keep those names as they are in SAS and join on NEW.CUSTNO = OLD.CUSTNOX
+con.execute(f"""
+CREATE OR REPLACE TABLE OLDCHG AS
+SELECT
+    RUNTIMESTAMP           AS RUNTIMESTAMP,
+    CUSTNOX                AS CUSTNOX,
+    ADDREFX                AS ADDREFX,
+    CUSTNAMEX              AS CUSTNAMEX,
+    PRIPHONEX              AS PRIPHONEX,
+    SECPHONEX              AS SECPHONEX,
+    MOBILEPHX              AS MOBILEPHX,
+    FAXX                   AS FAXX,
+    ALIASKEYX              AS ALIASKEYX,
+    ALIASX                 AS ALIASX,
+    PROCESSTIMEX           AS PROCESSTIMEX,
+    CUSTSTATX              AS CUSTSTATX,
+    TAXCODEX               AS TAXCODEX,
+    TAXIDX                 AS TAXIDX,
+    CUSTBRCHX              AS CUSTBRCHX,
+    COSTCTRX               AS COSTCTRX,
+    CUSTMNTDATEX           AS CUSTMNTDATEX,
+    CUSTLASTOPERX          AS CUSTLASTOPERX,
+    PRIM_OFFX              AS PRIM_OFFX,
+    SEC_OFFX               AS SEC_OFFX,
+    PRIM_LN_OFFX           AS PRIM_LN_OFFX,
+    SEC_LN_OFFX            AS SEC_LN_OFFX,
+    RACEX                  AS RACEX,
+    RESIDENCYX             AS RESIDENCYX,
+    CITIZENSHIPX           AS CITIZENSHIPX,
+    OPENDTX                AS OPENDTX,
+    HRCALLX                AS HRCALLX,
+    EXPERIENCEX            AS EXPERIENCEX,
+    HOBBIESX               AS HOBBIESX,
+    RELIGIONX              AS RELIGIONX,
+    LANGUAGEX              AS LANGUAGEX,
+    INST_SECX              AS INST_SECX,
+    CUST_CODEX             AS CUST_CODEX,
+    CUSTCONSENTX           AS CUSTCONSENTX,
+    BASICGRPCODEX          AS BASICGRPCODEX,
+    MSICCODEX              AS MSICCODEX,
+    MASCO2008X             AS MASCO2008X,
+    INCOMEX                AS INCOMEX,
+    EDUCATIONX             AS EDUCATIONX,
+    OCCUPX                 AS OCCUPX,
+    MARITALSTATX           AS MARITALSTATX,
+    OWNRENTX               AS OWNRENTX,
+    EMPNAMEX               AS EMPNAMEX,
+    DOBDORX                AS DOBDORX,
+    SICCODEX               AS SICCODEX,
+    CORPSTATUSX            AS CORPSTATUSX,
+    NETWORTHX              AS NETWORTHX,
+    LAST_UPDATE_DATEX      AS LAST_UPDATE_DATEX,
+    LAST_UPDATE_TIMEX      AS LAST_UPDATE_TIMEX,
+    LAST_UPDATE_OPERX      AS LAST_UPDATE_OPERX,
+    PRCOUNTRYX             AS PRCOUNTRYX,
+    EMPLOYMENT_TYPEX       AS EMPLOYMENT_TYPEX,
+    EMPLOYMENT_SECTORX     AS EMPLOYMENT_SECTORX,
+    EMPLOYMENT_LAST_UPDATX AS EMPLOYMENT_LAST_UPDATX,
+    BNMIDX                 AS BNMIDX,
+    LONGNAMEX              AS LONGNAMEX,
+    INDORG                 AS INDORG,
+    RESDESCX               AS RESDESCX,
+    SALDESCX               AS SALDESCX,
+    CTZDESCX               AS CTZDESCX
+FROM '{host_parquet_path("CIS_IDIC_DAILY_IOLD.parquet")}'
+""")
+
+# -----------------------------
+# 3) Load ACTIVE (same field names as SAS ACTIVE)
+# -----------------------------
+con.execute(f"""
+CREATE OR REPLACE TABLE ACTIVE AS
+SELECT
+    CUSTNO    AS CUSTNO,
+    ACCTCODE  AS ACCTCODE,
+    ACCTNOC   AS ACCTNOC,
+    NOTENOC   AS NOTENOC,
+    BANKINDC  AS BANKINDC,
+    DATEOPEN  AS DATEOPEN,
+    DATECLSE  AS DATECLSE,
+    ACCTSTATUS AS ACCTSTATUS
+FROM '{host_parquet_path("CIS_CUST_DAILY_ACTVOD.parquet")}'
+WHERE ACCTCODE IN ('DP   ', 'LN   ')
+""")
+
+# -----------------------------
+# 4) LISTACT: keep only accounts with NO closing date (SAS had IF DATECLSE NOT IN(...) THEN DELETE)
+#    and keep latest by DATEOPEN per CUSTNO (SAS: SORT BY CUSTNO DESCENDING DATEOPEN; NODUPKEY)
+# -----------------------------
+con.execute("""
+CREATE OR REPLACE TABLE LISTACT AS
+SELECT CUSTNO, ACCTCODE, ACCTNOC
+FROM (
+    SELECT
+        CUSTNO,
+        ACCTCODE,
+        ACCTNOC,
+        ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY DATEOPEN DESC) AS rn,
+        TRIM(DATECLSE) AS DATECLSE_TRIM
+    FROM ACTIVE
+) t
+WHERE rn = 1
+  AND (DATECLSE_TRIM = '' OR DATECLSE_TRIM = '.' OR DATECLSE_TRIM = '00000000')
+""")
+
+# -----------------------------
+# 5) NEWACT = NEWCHG (F) merged with LISTACT (G) by CUSTNO (SAS: MERGE ... IF F AND G)
+# -----------------------------
+con.execute("""
+CREATE OR REPLACE TABLE NEWACT AS
+SELECT n.*, l.ACCTNOC
+FROM NEWCHG n
+JOIN LISTACT l
+  ON n.CUSTNO = l.CUSTNO
+""")
+
+# -----------------------------
+# 6) MERGE_A = merge NEWACT and OLDCHG by CUSTNO (SAS used MERGE NEWACT(IN=A) OLDCHG(IN=B); IF A AND B)
+#    In SAS OLD fields have X suffix (CUSTNOX), so join on NEWACT.CUSTNO = OLDCHG.CUSTNOX
+# -----------------------------
+con.execute("""
+CREATE OR REPLACE TABLE MERGE_A AS
+SELECT n.*, o.*
+FROM NEWACT n
+JOIN OLDCHG o
+  ON n.CUSTNO = o.CUSTNOX
+""")
+
+# -----------------------------
+# 7) Create the various C_* data sets by comparing MERGE_A fields (mirrors the SAS DATA step logic)
+#    We create:
+#      - C_DATE (DATEUPD) when CUSTMNTDATE <> CUSTMNTDATEX
+#      - C_OPER (OPERUPD) when CUSTLASTOPER <> CUSTLASTOPERX
+#      - C_ADDREF/C_NAME/C_LONG/C_DOB/... etc for field-by-field differences
+#    For fields that SAS labelled specially (e.g. DOBDOR -> "DATE OF BIRTH" vs "DATE OF REGISTRATION")
+#    we preserve the same FIELDS text.
+# -----------------------------
+
+# C_DATE: DATEUPD
+con.execute("""
+CREATE OR REPLACE TABLE C_DATE AS
+SELECT
+    CUSTNO,
+    CUSTMNTDATE AS DATEUPD
+FROM MERGE_A
+WHERE CUSTMNTDATE IS NOT NULL
+  AND (CUSTMNTDATE <> CUSTMNTDATEX OR CUSTMNTDATEX IS NULL)
+""")
+
+# C_OPER: OPERUPD
+con.execute("""
+CREATE OR REPLACE TABLE C_OPER AS
+SELECT
+    CUSTNO,
+    CUSTLASTOPER AS OPERUPD
+FROM MERGE_A
+WHERE CUSTLASTOPER IS NOT NULL
+  AND (CUSTLASTOPER <> CUSTLASTOPERX OR CUSTLASTOPERX IS NULL)
+""")
+
+# C_ADDREF
+con.execute("""
+CREATE OR REPLACE TABLE C_ADDREF AS
+SELECT
+    CUSTNO,
+    'ADDREF' AS FIELDS,
+    ADDREFX AS OLDVALUE,
+    ADDREF AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (ADDREF IS NOT NULL OR ADDREFX IS NOT NULL)
+  AND (ADDREF <> ADDREFX OR ADDREFX IS NULL OR ADDREF IS NULL)
+""")
+
+# C_NAME (CUSTNAME)
+con.execute("""
+CREATE OR REPLACE TABLE C_NAME AS
+SELECT
+    CUSTNO,
+    'NAME' AS FIELDS,
+    CUSTNAMEX AS OLDVALUE,
+    CUSTNAME  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (CUSTNAME IS NOT NULL OR CUSTNAMEX IS NOT NULL)
+  AND (CUSTNAME <> CUSTNAMEX OR CUSTNAMEX IS NULL OR CUSTNAME IS NULL)
+""")
+
+# C_LONG (LONGNAME -> "CUSTOMER NAME")
+con.execute("""
+CREATE OR REPLACE TABLE C_LONG AS
+SELECT
+    CUSTNO,
+    'CUSTOMER NAME' AS FIELDS,
+    LONGNAMEX AS OLDVALUE,
+    LONGNAME  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (LONGNAME IS NOT NULL OR LONGNAMEX IS NOT NULL)
+  AND (LONGNAME <> LONGNAMEX OR LONGNAMEX IS NULL OR LONGNAME IS NULL)
+""")
+
+# C_DOB: DOBDOR comparison with label depending on INDORG
+con.execute("""
+CREATE OR REPLACE TABLE C_DOB AS
+SELECT
+    CUSTNO,
+    CASE WHEN INDORG = 'I' THEN 'DATE OF BIRTH' ELSE 'DATE OF REGISTRATION' END AS FIELDS,
+    DOBDORX AS OLDVALUE,
+    DOBDOR  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (DOBDOR IS NOT NULL OR DOBDORX IS NOT NULL)
+  AND (DOBDOR <> DOBDORX OR DOBDORX IS NULL OR DOBDOR IS NULL)
+""")
+
+# C_BGC (BASICGRPCODE -> "ENTITY TYPE")
+con.execute("""
+CREATE OR REPLACE TABLE C_BGC AS
+SELECT
+    CUSTNO,
+    'ENTITY TYPE' AS FIELDS,
+    BASICGRPCODEX AS OLDVALUE,
+    BASICGRPCODE  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (BASICGRPCODE IS NOT NULL OR BASICGRPCODEX IS NOT NULL)
+  AND (BASICGRPCODE <> BASICGRPCODEX OR BASICGRPCODEX IS NULL OR BASICGRPCODE IS NULL)
+""")
+
+# C_CORP (CORPSTATUS -> "CORPORATE STATUS")
+con.execute("""
+CREATE OR REPLACE TABLE C_CORP AS
+SELECT
+    CUSTNO,
+    'CORPORATE STATUS' AS FIELDS,
+    CORPSTATUSX AS OLDVALUE,
+    CORPSTATUS  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (CORPSTATUS IS NOT NULL OR CORPSTATUSX IS NOT NULL)
+  AND (CORPSTATUS <> CORPSTATUSX OR CORPSTATUSX IS NULL OR CORPSTATUS IS NULL)
+""")
+
+# C_MSIC (MSICCODE -> "MSIC 2008")
+con.execute("""
+CREATE OR REPLACE TABLE C_MSIC AS
+SELECT
+    CUSTNO,
+    'MSIC 2008' AS FIELDS,
+    MSICCODEX AS OLDVALUE,
+    MSICCODE  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (MSICCODE IS NOT NULL OR MSICCODEX IS NOT NULL)
+  AND (MSICCODE <> MSICCODEX OR MSICCODEX IS NULL OR MSICCODE IS NULL)
+""")
+
+# C_CCODE (CUST_CODE -> "CUSTOMER CODE")
+con.execute("""
+CREATE OR REPLACE TABLE C_CCODE AS
+SELECT
+    CUSTNO,
+    'CUSTOMER CODE' AS FIELDS,
+    CUST_CODEX AS OLDVALUE,
+    CUST_CODE  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (CUST_CODE IS NOT NULL OR CUST_CODEX IS NOT NULL)
+  AND (CUST_CODE <> CUST_CODEX OR CUST_CODEX IS NULL OR CUST_CODE IS NULL)
+""")
+
+# C_CTZN (CITIZENSHIP -> "NATIONALITY")
+con.execute("""
+CREATE OR REPLACE TABLE C_CTZN AS
+SELECT
+    CUSTNO,
+    'NATIONALITY' AS FIELDS,
+    CITIZENSHIPX AS OLDVALUE,
+    CITIZENSHIP  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (CITIZENSHIP IS NOT NULL OR CITIZENSHIPX IS NOT NULL)
+  AND (CITIZENSHIP <> CITIZENSHIPX OR CITIZENSHIPX IS NULL OR CITIZENSHIP IS NULL)
+""")
+
+# C_MASCO (MASCO2008 -> "MASCO OCCUPATION")
+con.execute("""
+CREATE OR REPLACE TABLE C_MASCO AS
+SELECT
+    CUSTNO,
+    'MASCO OCCUPATION' AS FIELDS,
+    MASCO2008X AS OLDVALUE,
+    MASCO2008  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (MASCO2008 IS NOT NULL OR MASCO2008X IS NOT NULL)
+  AND (MASCO2008 <> MASCO2008X OR MASCO2008X IS NULL OR MASCO2008 IS NULL)
+""")
+
+# C_EMNAME (EMPNAME -> "EMPLOYER NAME")
+con.execute("""
+CREATE OR REPLACE TABLE C_EMNAME AS
+SELECT
+    CUSTNO,
+    'EMPLOYER NAME' AS FIELDS,
+    EMPNAMEX AS OLDVALUE,
+    EMPNAME  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (EMPNAME IS NOT NULL OR EMPNAMEX IS NOT NULL)
+  AND (EMPNAME <> EMPNAMEX OR EMPNAMEX IS NULL OR EMPNAME IS NULL)
+""")
+
+# C_PRCTRY (PRCOUNTRY -> "PR COUNTRY")
+con.execute("""
+CREATE OR REPLACE TABLE C_PRCTRY AS
+SELECT
+    CUSTNO,
+    'PR COUNTRY' AS FIELDS,
+    PRCOUNTRYX AS OLDVALUE,
+    PRCOUNTRY  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (PRCOUNTRY IS NOT NULL OR PRCOUNTRYX IS NOT NULL)
+  AND (PRCOUNTRY <> PRCOUNTRYX OR PRCOUNTRYX IS NULL OR PRCOUNTRY IS NULL)
+""")
+
+# C_RESD (RESIDENCY -> "RESIDENCY")
+con.execute("""
+CREATE OR REPLACE TABLE C_RESD AS
+SELECT
+    CUSTNO,
+    'RESIDENCY' AS FIELDS,
+    RESIDENCYX AS OLDVALUE,
+    RESIDENCY  AS NEWVALUE,
+    ACCTNOC
+FROM MERGE_A
+WHERE (RESIDENCY IS NOT NULL OR RESIDENCYX IS NOT NULL)
+  AND (RESIDENCY <> RESIDENCYX OR RESIDENCYX IS NULL OR RESIDENCY IS NULL)
+""")
+
+# C_EMSEC (EMPLOYMENT_SECTOR -> "EMPLOYMENT SECTOR")
+# Also set DATEUPD and DATEOPER according to SAS logic
+con.execute("""
+CREATE OR REPLACE TABLE C_EMSEC AS
+SELECT
+    CUSTNO,
+    'EMPLOYMENT SECTOR' AS FIELDS,
+    EMPLOYMENT_SECTORX AS OLDVALUE,
+    EMPLOYMENT_SECTOR  AS NEWVALUE,
+    ACCTNOC,
+    CASE WHEN EMPLOYMENT_LAST_UPDATE IS NOT NULL AND (EMPLOYMENT_LAST_UPDATE <> EMPLOYMENT_LAST_UPDATX OR EMPLOYMENT_LAST_UPDATX IS NULL)
+         THEN EMPLOYMENT_LAST_UPDATE ELSE NULL END AS DATEUPD,
+    CASE WHEN LAST_UPDATE_OPER IS NOT NULL AND (LAST_UPDATE_OPER <> LAST_UPDATE_OPERX OR LAST_UPDATE_OPERX IS NULL)
+         THEN LAST_UPDATE_OPER ELSE NULL END AS DATEOPER
+FROM MERGE_A
+WHERE (EMPLOYMENT_SECTOR IS NOT NULL OR EMPLOYMENT_SECTORX IS NOT NULL)
+  AND (EMPLOYMENT_SECTOR <> EMPLOYMENT_SECTORX OR EMPLOYMENT_SECTORX IS NULL OR EMPLOYMENT_SECTOR IS NULL)
+""")
+
+# C_EMTYP (EMPLOYMENT_TYPE -> "EMPLOYMENT TYPE")
+con.execute("""
+CREATE OR REPLACE TABLE C_EMTYP AS
+SELECT
+    CUSTNO,
+    'EMPLOYMENT TYPE' AS FIELDS,
+    EMPLOYMENT_TYPEX AS OLDVALUE,
+    EMPLOYMENT_TYPE  AS NEWVALUE,
+    ACCTNOC,
+    CASE WHEN EMPLOYMENT_LAST_UPDATE IS NOT NULL AND (EMPLOYMENT_LAST_UPDATE <> EMPLOYMENT_LAST_UPDATX OR EMPLOYMENT_LAST_UPDATX IS NULL)
+         THEN EMPLOYMENT_LAST_UPDATE ELSE NULL END AS DATEUPD,
+    CASE WHEN LAST_UPDATE_OPER IS NOT NULL AND (LAST_UPDATE_OPER <> LAST_UPDATE_OPERX OR LAST_UPDATE_OPERX IS NULL)
+         THEN LAST_UPDATE_OPER ELSE NULL END AS DATEOPER
+FROM MERGE_A
+WHERE (EMPLOYMENT_TYPE IS NOT NULL OR EMPLOYMENT_TYPEX IS NOT NULL)
+  AND (EMPLOYMENT_TYPE <> EMPLOYMENT_TYPEX OR EMPLOYMENT_TYPEX IS NULL OR EMPLOYMENT_TYPE IS NULL)
+""")
+
+# -----------------------------
+# 8) TEMPALL: union the SAS-specified C_* tables in the same order as SAS
+#    SAS: SET C_LONG C_DOB C_BGC C_CORP C_MSIC C_CCODE C_CTZN C_MASCO
+#              C_EMNAME C_PRCTRY C_EMSEC C_RESD C_EMTYP;
+# -----------------------------
+con.execute("""
+CREATE OR REPLACE TABLE TEMPALL AS
+SELECT * FROM C_LONG
+UNION ALL
+SELECT * FROM C_DOB
+UNION ALL
+SELECT * FROM C_BGC
+UNION ALL
+SELECT * FROM C_CORP
+UNION ALL
+SELECT * FROM C_MSIC
+UNION ALL
+SELECT * FROM C_CCODE
+UNION ALL
+SELECT * FROM C_CTZN
+UNION ALL
+SELECT * FROM C_MASCO
+UNION ALL
+SELECT * FROM C_EMNAME
+UNION ALL
+SELECT * FROM C_PRCTRY
+UNION ALL
+SELECT * FROM C_EMSEC
+UNION ALL
+SELECT * FROM C_RESD
+UNION ALL
+SELECT * FROM C_EMTYP
+""")
+
+# -----------------------------
+# 9) MRGCIS: merge C_DATE (DATEUPD), C_OPER (OPERUPD) and TEMPALL by CUSTNO.
+#    Then apply SAS defaults:
+#      IF DATEUPD NOT = ' ' THEN UPDDATE = DATEUPD;
+#      IF OPERUPD NOT = ' ' THEN UPDOPER = OPERUPD;
+#      IF UPDOPER = ' ' THEN UPDOPER = CUSTLASTOPER;
+#      IF UPDDATE = ' ' THEN UPDDATE = CUSTMNTDATE;
+#    Finally, remove rows where UPDOPER in exclusion list.
+# -----------------------------
+con.execute("""
+CREATE OR REPLACE TABLE MRGCIS AS
+SELECT
+    t.CUSTNO,
+    -- bring through TEMPALL fields
+    t.FIELDS,
+    t.OLDVALUE,
+    t.NEWVALUE,
+    t.ACCTNOC,
+    -- DATEUPD from TEMPALL (for employment records) or C_DATE
+    COALESCE(t.DATEUPD, d.DATEUPD) AS DATEUPD,
+    -- OPERUPD from TEMPALL (DATEOPER) or C_OPER
+    COALESCE(t.DATEOPER, o.OPERUPD) AS OPERUPD,
+    -- source MERGE_A columns we need to default from
+    m.CUSTLASTOPER,
+    m.CUSTMNTDATE
+FROM TEMPALL t
+LEFT JOIN C_DATE d ON t.CUSTNO = d.CUSTNO
+LEFT JOIN C_OPER o ON t.CUSTNO = o.CUSTNO
+LEFT JOIN MERGE_A m ON t.CUSTNO = m.CUSTNO
+""")
+
+# Apply SAS defaulting logic and exclusion list to produce final RECORDS table
+con.execute(f"""
+CREATE OR REPLACE TABLE RECORDS AS
+SELECT
+    -- UPDOPER: if OPERUPD exists use it; else use CUSTLASTOPER; if still null then null
+    COALESCE(NULLIF(TRIM(OPERUPD), ''), NULLIF(TRIM(CUSTLASTOPER), '')) AS UPDOPER,
+    CUSTNO,
+    ACCTNOC,
+    CUSTNAME,
+    FIELDS,
+    OLDVALUE,
+    NEWVALUE,
+    -- UPDDATX = "&DAY"/"&MONTH"/"&YEAR" in SAS; produce same format DD/MM/YYYY using batch_date
+    '{str(day).zfill(2)}/{str(month).zfill(2)}/{str(year)}' AS UPDDATX,
+    -- compute effective UPDDATE: if DATEUPD present use it else use CUSTMNTDATE
+    COALESCE(NULLIF(TRIM(DATEUPD), ''), NULLIF(TRIM(CUSTMNTDATE), '')) AS UPDDATE
+FROM MRGCIS
+WHERE COALESCE(NULLIF(TRIM(OPERUPD), ''), NULLIF(TRIM(CUSTLASTOPER), '')) NOT IN
+    ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH','CIFLPRCE','CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS','CRIS')
+""")
+
+# -----------------------------
+# 10) Optionally write RECORDS to output (parquet/csv) — uncomment one you want.
+# -----------------------------
+# write to parquet
+# con.execute(f"COPY (SELECT * FROM RECORDS) TO '{parquet_output_path('CIS_IDIC_DAILY_RPT_OUT.parquet')}' (FORMAT PARQUET)")
+
+# write to csv
+# con.execute(f"COPY (SELECT * FROM RECORDS) TO '{csv_output_path('CIS_IDIC_DAILY_RPT_OUT.csv')}' (HEADER, DELIMITER ',')")
+
+print("Processing completed. RECORDS table created.")
