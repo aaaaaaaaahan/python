@@ -3,20 +3,16 @@ duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
 //CICUSCD4 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB77614
-//*--------- -----------------------------------------------------------
-//* ESMR 2014-746 LESLIE ANDREW DE SOUZA
-//* PERFORM ONE TIME CIS EXTRACTION AND UPDATE CUSTOMER CODE
-//* THIS JOBS PREPARE FILE TO INITIALIZE 002 FROM CUSTOMER CODE
 //*---------------------------------------------------------------------
 //DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=RBP2.B033.CICUSCD4.STAF002.INIT,
+//DEL1     DD DSN=CICUSCD4.STAF002.INIT,
 //            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
 //*-------------------------------------------------------------------**
 //*- GET CUSTOMER WITH STAFF 003                                      **
 //*-------------------------------------------------------------------**
 //SASPGRM  EXEC SAS609
-//CUSTFILE  DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY
-//OUTFILE  DD DSN=RBP2.B033.CICUSCD4.STAF002.INIT,
+//CUSTFILE  DD DISP=SHR,DSN=CIS.CUST.DAILY
+//OUTFILE  DD DSN=CICUSCD4.STAF002.INIT,
 //            DISP=(NEW,CATLG,DELETE),
 //            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
 //            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
