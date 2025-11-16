@@ -1,21 +1,3 @@
-i need the python output same with as output.
-
-sas output:
-SET MRGCIS;                                    
-FILE OUTFILE;                                  
-UPDDATX = "&DAY"||"/"||"&MONTH"||"/"||"&YEAR"; 
-PUT  @001   UPDOPER         $10.               
-     @021   CUSTNO          $20.               
-     @041   ACCTNOC         $20.               
-     @061   CUSTNAME        $40.               
-     @101   FIELDS          $20.               
-     @121   OLDVALUE        $150.              
-     @271   NEWVALUE        $150.              
-     @424   UPDDATX         $10.               
-     ;                                         
-RUN;                                           
-
-python program:
 import duckdb
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 import datetime
@@ -478,96 +460,117 @@ WHERE (EMPLOYMENT_TYPE IS NOT NULL OR EMPLOYMENT_TYPEX IS NOT NULL)
 """)
 
 # -----------------------------
-# 8) TEMPALL: union the SAS-specified C_* tables in the same order as SAS
-#    SAS: SET C_LONG C_DOB C_BGC C_CORP C_MSIC C_CCODE C_CTZN C_MASCO
-#              C_EMNAME C_PRCTRY C_EMSEC C_RESD C_EMTYP;
+# 8) TEMPALL: union all C_* tables in SAS order, include DATEUPD and OPERUPD
 # -----------------------------
 con.execute("""
 CREATE OR REPLACE TABLE TEMPALL AS
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_LONG
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_LONG
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_DOB
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_DOB
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_BGC
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_BGC
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_CORP
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_CORP
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_MSIC
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_MSIC
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_CCODE
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_CCODE
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_CTZN
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_CTZN
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_MASCO
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_MASCO
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_EMNAME
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_EMNAME
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_PRCTRY
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, NULL AS DATEUPD, NULL AS OPERUPD FROM C_PRCTRY
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_EMSEC
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, DATEUPD, DATEOPER AS OPERUPD FROM C_EMSEC
 UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_RESD
-UNION ALL
-SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC FROM C_EMTYP
+SELECT CUSTNO, FIELDS, OLDVALUE, NEWVALUE, ACCTNOC, DATEUPD, DATEOPER AS OPERUPD FROM C_EMTYP
 """)
 
 # -----------------------------
-# 9) MRGCIS: merge C_DATE (DATEUPD), C_OPER (OPERUPD) and TEMPALL by CUSTNO.
-#    Then apply SAS defaults:
-#      IF DATEUPD NOT = ' ' THEN UPDDATE = DATEUPD;
-#      IF OPERUPD NOT = ' ' THEN UPDOPER = OPERUPD;
-#      IF UPDOPER = ' ' THEN UPDOPER = CUSTLASTOPER;
-#      IF UPDDATE = ' ' THEN UPDDATE = CUSTMNTDATE;
-#    Finally, remove rows where UPDOPER in exclusion list.
+# 9) MRGCIS: merge TEMPALL with C_DATE, C_OPER, MERGE_A to bring default values
 # -----------------------------
 con.execute("""
 CREATE OR REPLACE TABLE MRGCIS AS
 SELECT
     t.CUSTNO,
-    -- bring through TEMPALL fields
     t.FIELDS,
     t.OLDVALUE,
     t.NEWVALUE,
     t.ACCTNOC,
-    ' ' AS DATEUPD,
-    ' ' AS OPERUPD,
-    -- source MERGE_A columns we need to default from
+    COALESCE(NULLIF(d.DATEUPD,''), t.DATEUPD) AS DATEUPD,
+    COALESCE(NULLIF(o.OPERUPD,''), t.OPERUPD) AS OPERUPD,
     m.CUSTLASTOPER,
-    m.CUSTMNTDATE
+    m.CUSTMNTDATE,
+    m.CUSTNAME
 FROM TEMPALL t
 LEFT JOIN C_DATE d ON t.CUSTNO = d.CUSTNO
 LEFT JOIN C_OPER o ON t.CUSTNO = o.CUSTNO
 LEFT JOIN MERGE_A m ON t.CUSTNO = m.CUSTNO
 """)
 
-# Apply SAS defaulting logic and exclusion list to produce final RECORDS table
+# -----------------------------
+# 10) RECORDS: apply SAS defaulting logic and exclusion list
+# -----------------------------
 con.execute(f"""
 CREATE OR REPLACE TABLE RECORDS AS
 SELECT
-    -- UPDOPER: if OPERUPD exists use it; else use CUSTLASTOPER; if still null then null
-    COALESCE(NULLIF(TRIM(OPERUPD), ''), NULLIF(TRIM(CUSTLASTOPER), '')) AS UPDOPER,
+    -- UPDOPER default: OPERUPD > CUSTLASTOPER
+    COALESCE(NULLIF(TRIM(OPERUPD),''), NULLIF(TRIM(CUSTLASTOPER),'')) AS UPDOPER,
     CUSTNO,
     ACCTNOC,
     CUSTNAME,
     FIELDS,
     OLDVALUE,
     NEWVALUE,
-    -- UPDDATX = "&DAY"/"&MONTH"/"&YEAR" in SAS; produce same format DD/MM/YYYY using batch_date
-    '{str(day).zfill(2)}/{str(month).zfill(2)}/{str(year)}' AS UPDDATX,
-    -- compute effective UPDDATE: if DATEUPD present use it else use CUSTMNTDATE
-    COALESCE(NULLIF(TRIM(DATEUPD), ''), NULLIF(TRIM(CUSTMNTDATE), '')) AS UPDDATE
+    {UPDDATX} AS UPDDATX,
+    -- UPDDATE default: DATEUPD > CUSTMNTDATE
+    COALESCE(NULLIF(TRIM(DATEUPD),''), NULLIF(TRIM(CUSTMNTDATE),'')) AS UPDDATE
 FROM MRGCIS
-WHERE COALESCE(NULLIF(TRIM(OPERUPD), ''), NULLIF(TRIM(CUSTLASTOPER), '')) NOT IN
-    ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH','CIFLPRCE','CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS','CRIS')
+WHERE COALESCE(NULLIF(TRIM(OPERUPD),''), NULLIF(TRIM(CUSTLASTOPER),'')) NOT IN ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH','CIFLPRCE',
+    'CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS','CRIS')
 """)
 
-# -----------------------------
-# 10) Optionally write RECORDS to output (parquet/csv) — uncomment one you want.
-# -----------------------------
-# write to parquet
-# con.execute(f"COPY (SELECT * FROM RECORDS) TO '{parquet_output_path('CIS_IDIC_DAILY_RPT_OUT.parquet')}' (FORMAT PARQUET)")
+# ----------------------------
+# OUTPUT TO PARQUET, CSV, TXT
+# ----------------------------
+out = """
+    SELECT 
+        UPDOPER,
+        CUSTNO,
+        ACCTNOC,
+        CUSTNAME,
+        FIELDS,
+        OLDVALUE,
+        NEWVALUE,  
+        UPDDATX,
+        {year} AS year,
+        {month} AS month,
+        {day} AS day
+    FROM RECORDS
+""".format(year=year,month=month,day=day)
 
-# write to csv
-# con.execute(f"COPY (SELECT * FROM RECORDS) TO '{csv_output_path('CIS_IDIC_DAILY_RPT_OUT.csv')}' (HEADER, DELIMITER ',')")
+# Dictionary of outputs for parquet & CSV
+queries = {
+    "CIS_IDIC_DAILY_RPT_OUT":              out
+    }
 
-print("Processing completed. RECORDS table created.")
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    # COPY to Parquet with partitioning
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
+    """)
+
+    # COPY to CSV with header
+    con.execute(f"""
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
+    """)
