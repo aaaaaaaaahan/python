@@ -162,7 +162,7 @@ SELECT
     DATECLSE,
     ACCTSTATUS
 FROM '{host_parquet_path("CIS_CUST_DAILY_ACTVOD.parquet")}'
-WHERE ACCTCODE IN ('DP   ', 'LN   ')
+WHERE ACCTCODE IN ('DP', 'LN')
 """)
 
 # -----------------------------
@@ -574,3 +574,26 @@ for name, query in queries.items():
         TO '{csv_path}'
         (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
     """)
+
+# Dictionary for fixed-width TXT
+txt_queries = {
+        "CIS_IDIC_DAILY_RPT_OUT":              out
+    }
+
+for txt_name, txt_query in txt_queries.items():
+    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
+    df_txt = con.execute(txt_query).fetchdf()
+
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row['UPDOPER']).ljust(10)}"
+                f"{str(row['CUSTNO']).ljust(20)}"
+                f"{str(row['ACCTNOC']).ljust(20)}"
+                f"{str(row['CUSTNAME']).ljust(40)}"
+                f"{str(row['FIELDS']).ljust(20)}"
+                f"{str(row['OLDVALUE']).ljust(150)}"
+                f"{str(row['NEWVALUE']).ljust(150)}"
+                f"{str(row['UPDDATX']).ljust(10)}"
+            )
+            f.write(line + "\n")
