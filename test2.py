@@ -1,126 +1,100 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
 import datetime
-import os
 
-# ================================================================
-# 1. SYSTEM DATE (replace DATEFILE logic)
-# ================================================================
-today = datetime.date.today()
-DATEYY1 = today.strftime("%Y")
-DATEMM1 = today.strftime("%m")
-DATEDD1 = today.strftime("%d")
+# ============================
+# CONFIG
+# ============================
+input_parquet = host_parquet_path("CIS/CUST/DAILY/CUSTDLY.parquet")
+output_parquet = parquet_output_path("CICUSCD4/STAF002_INIT.parquet")
+output_text = csv_output_path("CICUSCD4/STAF002.INIT.txt")
 
-# ================================================================
-# 2. DUCKDB CONNECTION
-# ================================================================
 con = duckdb.connect()
 
-# ================================================================
-# 3. LOAD PARQUET INPUT FILES (already converted)
-# ================================================================
-CISFILE = "CIS_CUST_DAILY.parquet"            # CIS.CUST.DAILY
-CIPHONET = "UNLOAD_CIPHONET_FB.parquet"       # UNLOAD.CIPHONET.FB
-
-# ================================================================
-# 4. LOAD CIS (same as DATA CIS; SET CISFILE; IF INDORG='I')
-# ================================================================
+# ============================
+# STEP 1: LOAD PARQUET
+# ============================
 con.execute(f"""
-    CREATE OR REPLACE TABLE CIS AS
-    SELECT *
-    FROM read_parquet('{CISFILE}')
-    WHERE INDORG = 'I'
+    CREATE TABLE CUST AS
+    SELECT * FROM read_parquet('{input_parquet}')
 """)
 
-# Remove duplicates same as PROC SORT NODUPKEY
-con.execute("""
-    CREATE OR REPLACE TABLE CIS AS
-    SELECT *
+# ============================
+# STEP 2: PROCESS HRC FIELDS
+# ============================
+hrc_list = [f"HRC{str(i).zfill(2)}" for i in range(1, 21)]
+# LPAD to 3 chars (Z3.), replace '002' -> '   '
+processed_hrc = ",\n".join([
+    f"CASE WHEN LPAD({h},3,'0')='002' THEN '   ' ELSE LPAD({h},3,'0') END AS {h}C"
+    for h in hrc_list
+])
+
+# ============================
+# STEP 3: FILTER BANK EMPLOYEES (any HRCxxC = '002')
+# ============================
+filter_condition = " OR ".join([f"LPAD({h},3,'0')='002'" for h in hrc_list])
+
+con.execute(f"""
+    CREATE TABLE CIS AS
+    SELECT
+        CUSTNO,
+        INDORG,
+        CUSTBRCH,
+        CUSTNAME,
+        'A' AS FILECODE,
+        {processed_hrc},
+        '000' AS CODEFILLER
+    FROM CUST
+    WHERE {filter_condition}
+""")
+
+# ============================
+# STEP 4: CREATE CUSTCODEALL
+# ============================
+concat_fields = "||".join([f"{h}C" for h in hrc_list] + ["CODEFILLER"])
+con.execute(f"""
+    CREATE TABLE CIS2 AS
+    SELECT *,
+           REPLACE({concat_fields}, ' ', '') AS CUSTCODEALL
     FROM CIS
+""")
+
+# ============================
+# STEP 5: REMOVE DUPLICATES BY CUSTNO
+# ============================
+con.execute("""
+    CREATE TABLE FINAL AS
+    SELECT *
+    FROM CIS2
     QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
 """)
 
-# ================================================================
-# 5. LOAD PHONE FILE (same as DATA PHONE and INPUT @9 CUSTNO $11.)
-# Defaults: PHONE=0, PROMPT=0
-# ================================================================
+# ============================
+# STEP 6: WRITE PARQUET
+# ============================
 con.execute(f"""
-    CREATE OR REPLACE TABLE PHONE AS
-    SELECT
-        SUBSTR(CUSTNO, 1, 11) AS CUSTNO,
-        0 AS PHONE,
-        0 AS PROMPT
-    FROM read_parquet('{CIPHONET}')
+    COPY FINAL TO '{output_parquet}' (FORMAT PARQUET)
 """)
 
-# ================================================================
-# 6. MERGE (same as SAS MERGE PHONE(IN=A) CIS(IN=B); IF NOT A THEN OUTPUT)
-# Keep CIS rows that do not exist in PHONE
-# ================================================================
-con.execute("""
-    CREATE OR REPLACE TABLE MERGE AS
-    SELECT B.*
-         , 0 AS PHONE
-         , 0 AS PROMPT
-    FROM CIS B
-    LEFT JOIN PHONE A
-           ON A.CUSTNO = B.CUSTNO
-    WHERE A.CUSTNO IS NULL
+# ============================
+# STEP 7: WRITE FIXED-WIDTH TEXT
+# ============================
+# DuckDB allows fixed-width via LPAD/RPAD
+# Columns: @1 CUSTNO $20, @21 INDORG $1, @22 CUSTBRCH Z7
+# @29 CUSTCODEALL $60, @89 FILECODE $1, @90 STAFFID $9 (blank), @99 CUSTNAME $40
+
+con.execute(f"""
+    COPY (
+        SELECT
+            RPAD(CUSTNO,20,' ') ||
+            RPAD(INDORG,1,' ') ||
+            LPAD(CAST(CUSTBRCH AS VARCHAR),7,'0') ||
+            RPAD(CUSTCODEALL,60,' ') ||
+            RPAD(FILECODE,1,' ') ||
+            RPAD('',9,' ') ||  -- STAFFID blank
+            RPAD(CUSTNAME,40,' ')
+        AS line
+        FROM FINAL
+    ) TO '{output_text}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
 """)
 
-# ================================================================
-# 7. SAVE MERGE TO PARQUET (optional)
-# ================================================================
-MERGE_PARQUET = "CIPHONET_CUSTNEW.parquet"
-pq.write_table(con.execute("SELECT * FROM MERGE").fetch_arrow_table(), MERGE_PARQUET)
-
-# ================================================================
-# 8. WRITE FIXED-WIDTH TXT (same layout as SAS PUT @ positions)
-# ================================================================
-OUTPUT_TXT = "CIPHONET_CUSTNEW.txt"
-
-def fmt_pd8(n):
-    """PD8. equivalent: numeric without decimals, 8 width"""
-    return f"{int(n):08d}"
-
-def fmt_pd1(n):
-    """PD1. equivalent: width 1"""
-    return f"{int(n):1d}"
-
-with open(OUTPUT_TXT, "w") as f:
-    rows = con.execute("SELECT * FROM MERGE").fetchall()
-
-    for r in rows:
-        (
-            CUSTNO, INDORG, PHONE, PROMPT, *rest
-        ) = r
-
-        line = (
-            f"033"                                       # @01
-            f"CUST"                                      # @04
-            f"{CUSTNO:<11}"                              # @09
-            f"{'PRIMARY':<15}"                           # @29
-            f"{fmt_pd8(PHONE)}"                          # @44
-            f"{fmt_pd8(PHONE)}"                          # @52
-            f"{INDORG}"                                  # @60
-            f"{DATEYY1}"                                 # @61
-            f"-{DATEMM1}-{DATEDD1}"                      # @65
-            f"{fmt_pd1(PROMPT)}"                         # @71
-            f"INIT"                                      # @72
-            f"{DATEYY1}-{DATEMM1}-{DATEDD1}"             # @77
-            f"01.01.01"                                  # @87
-            f"INIT"                                      # @95
-            f"{DATEYY1}-{DATEMM1}-{DATEDD1}"             # @100
-            f"01.01.01"                                  # @110
-            f"INIT"                                      # @118
-            f"INIT"                                      # @126
-            f"INIT"                                      # @131
-            f"{fmt_pd8(PHONE)}"                          # @151
-        )
-
-        f.write(line + "\n")
-
-print("Completed: Output written to:")
-print(" -", MERGE_PARQUET)
-print(" -", OUTPUT_TXT)
+print("DuckDB-only processing done: parquet + fixed-width text generated.")
