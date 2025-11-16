@@ -1,11 +1,7 @@
 error:
- line 202, in <module>
+line 327, in <module>
     con.execute("""
-duckdb.duckdb.BinderException: Binder Error: Table "o" does not have a column named "CUSTNOX"
-
-Candidate bindings: : "CUSTNO", "CUSTNAMEX", "CUST_CODEX", "CUSTCONSENTX", "CUSTMNTDATEX"
-
-LINE 6:   ON n.CUSTNO = o.CUSTNOX
+duckdb.duckdb.ParserException: Parser Error: syntax error at or near "MSICCODE"
 
 program:
 import duckdb
@@ -94,13 +90,13 @@ FROM '{host_parquet_path("CIS_IDIC_DAILY_INEW.parquet")}'
 con.execute(f"""
 CREATE OR REPLACE TABLE OLDCHG AS
 SELECT
-    CUSTNOX          AS CUSTNO,
-    ADDREFX          AS ADDREF,
-    CUSTNAME         AS CUSTNAMEX,  -- Keep OLDCHG naming if needed separately
-    PRIPHONEX        AS PRIPHONEX,
-    SECPHONEX        AS SECPHONEX,
-    MOBILEPHX        AS MOBILEPHX,
-    FAXX             AS FAXX,
+    CUSTNOX,
+    ADDREFX,
+    CUSTNAME         AS CUSTNAMEX,
+    PRIPHONEX,
+    SECPHONEX,
+    MOBILEPHX,
+    FAXX,
     ALIASKEY,
     ALIAS,
     PROCESSTIME,
@@ -340,10 +336,10 @@ SELECT
     CUSTNO,
     'MSIC 2008' AS FIELDS,
     MSICCODEX AS OLDVALUE,
-    MSICCODE  AS NEWVALUE,
     ACCTNOC
 FROM MERGE_A
 WHERE (MSICCODE IS NOT NULL OR MSICCODEX IS NOT NULL)
+    MSICCODE  AS NEWVALUE,
   AND (MSICCODE <> MSICCODEX OR MSICCODEX IS NULL OR MSICCODE IS NULL)
 """)
 
