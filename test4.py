@@ -1,125 +1,124 @@
-NEWCHG:
-INPUT @01   RUNTIMESTAMP           $EBCDIC20.
-      @21   CUSTNOX                $EBCDIC20.
-      @41   ADDREFX                $EBCDIC11.
-      @52   CUSTNAME               $EBCDIC40.
-      @92   PRIPHONEX              $EBCDIC11.
-      @103  SECPHONEX              $EBCDIC11.
-      @114  MOBILEPHX              $EBCDIC11.
-      @125  FAXX                   $EBCDIC11.
-      @136  ALIASKEY               $EBCDIC3. 
-      @139  ALIAS                  $EBCDIC20.
-      @159  PROCESSTIME            $EBCDIC8. 
-      @167  CUSTSTAT               $EBCDIC1. 
-      @168  TAXCODE                $EBCDIC1. 
-      @169  TAXID                  $EBCDIC9. 
-      @178  CUSTBRCH               $EBCDIC5. 
-      @183  COSTCTR                $EBCDIC5. 
-      @188  CUSTMNTDATE            $EBCDIC08.
-      @196  CUSTLASTOPER           $EBCDIC8. 
-      @204  PRIM_OFF               $EBCDIC5.
-      @209  SEC_OFF                $EBCDIC5.
-      @214  PRIM_LN_OFF            $EBCDIC5.
-      @219  SEC_LN_OFF             $EBCDIC5.
-      @224  RACE                   $EBCDIC1. 
-      @225  RESIDENCY              $EBCDIC3. 
-      @228  CITIZENSHIP            $EBCDIC2. 
-      @230  OPENDT                 $EBCDIC08.
-      @241  HRCALL                 $EBCDIC60.
-      @301  EXPERIENCE             $EBCDIC3. 
-      @304  HOBBIES                $EBCDIC3. 
-      @307  RELIGION               $EBCDIC3. 
-      @310  LANGUAGE               $EBCDIC3. 
-      @313  INST_SEC               $EBCDIC3. 
-      @316  CUST_CODE              $EBCDIC3. 
-      @319  CUSTCONSENT            $EBCDIC3. 
-      @322  BASICGRPCODE           $EBCDIC3. 
-      @327  MSICCODE               $EBCDIC5. 
-      @332  MASCO2008              $EBCDIC5. 
-      @337  INCOME                 $EBCDIC3. 
-      @340  EDUCATION              $EBCDIC3.  
-      @343  OCCUP                  $EBCDIC3.  
-      @346  MARITALSTAT            $EBCDIC1.  
-      @347  OWNRENT                $EBCDIC1.  
-      @348  EMPNAME                $EBCDIC40. 
-      @388  DOBDOR                 $EBCDIC08. 
-      @396  SICCODE                $EBCDIC05. 
-      @401  CORPSTATUS             $EBCDIC3.  
-      @404  NETWORTH               $EBCDIC3.  
-      @407  LAST_UPDATE_DATE       $EBCDIC10. 
-      @417  LAST_UPDATE_TIME       $EBCDIC10. 
-      @427  LAST_UPDATE_OPER       $EBCDIC10. 
-      @437  PRCOUNTRY              $EBCDIC02. 
-      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
-      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
-      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
-      @469  BNMID                  $EBCDIC20. 
-      @489  LONGNAME               $EBCDIC150.
-      @639  INDORG                 $EBCDIC1.  
-      @640  RESDESC                $EBCDIC20. 
-      @660  SALDESC                $EBCDIC20. 
-      @680  CTZDESC                $EBCDIC20.
-      ;
+SELECT
+    CUSTNOX          AS CUSTNO,
+    ADDREFX          AS ADDREF,
+    CUSTNAME,
+    PRIPHONEX        AS PRIPHONE,
+    SECPHONEX        AS SECPHONE,
+    MOBILEPHX        AS MOBILEPH,
+    FAXX             AS FAX,
+    ALIASKEY,
+    ALIAS,
+    PROCESSTIME,
+    CUSTSTAT,
+    TAXCODE,
+    TAXID,
+    CUSTBRCH,
+    COSTCTR,
+    CUSTMNTDATE,
+    CUSTLASTOPER,
+    PRIM_OFF,
+    SEC_OFF,
+    PRIM_LN_OFF,
+    SEC_LN_OFF,
+    RACE,
+    RESIDENCY,
+    CITIZENSHIP,
+    OPENDT,
+    HRCALL,
+    EXPERIENCE,
+    HOBBIES,
+    RELIGION,
+    LANGUAGE,
+    INST_SEC,
+    CUST_CODE,
+    CUSTCONSENT,
+    BASICGRPCODE,
+    MSICCODE,
+    MASCO2008,
+    INCOME,
+    EDUCATION,
+    OCCUP,
+    MARITALSTAT,
+    OWNRENT,
+    EMPNAME,
+    DOBDOR,
+    SICCODE,
+    CORPSTATUS,
+    NETWORTH,
+    LAST_UPDATE_DATE,
+    LAST_UPDATE_TIME,
+    LAST_UPDATE_OPER,
+    PRCOUNTRY,
+    EMPLOYMENT_TYPE,
+    EMPLOYMENT_SECTOR,
+    EMPLOYMENT_LAST_UPDATE,
+    BNMID,
+    LONGNAME,
+    INDORG,
+    RESDESC,
+    SALDESC,
+    CTZDESC
+FROM read_parquet('path_to_newchg.parquet')
 
-OLDCHG:
-INPUT @01   RUNTIMESTAMP           $EBCDIC20.
-      @21   CUSTNOX                $EBCDIC20.
-      @41   ADDREFX                $EBCDIC11.
-      @52   CUSTNAME               $EBCDIC40.
-      @92   PRIPHONEX              $EBCDIC11.
-      @103  SECPHONEX              $EBCDIC11.
-      @114  MOBILEPHX              $EBCDIC11.
-      @125  FAXX                   $EBCDIC11.
-      @136  ALIASKEY               $EBCDIC3. 
-      @139  ALIAS                  $EBCDIC20.
-      @159  PROCESSTIME            $EBCDIC8. 
-      @167  CUSTSTAT               $EBCDIC1. 
-      @168  TAXCODE                $EBCDIC1. 
-      @169  TAXID                  $EBCDIC9. 
-      @178  CUSTBRCH               $EBCDIC5. 
-      @183  COSTCTR                $EBCDIC5. 
-      @188  CUSTMNTDATE            $EBCDIC08.
-      @196  CUSTLASTOPER           $EBCDIC8. 
-      @204  PRIM_OFF               $EBCDIC5.
-      @209  SEC_OFF                $EBCDIC5.
-      @214  PRIM_LN_OFF            $EBCDIC5.
-      @219  SEC_LN_OFF             $EBCDIC5.
-      @224  RACE                   $EBCDIC1. 
-      @225  RESIDENCY              $EBCDIC3. 
-      @228  CITIZENSHIP            $EBCDIC2. 
-      @230  OPENDT                 $EBCDIC08.
-      @241  HRCALL                 $EBCDIC60.
-      @301  EXPERIENCE             $EBCDIC3. 
-      @304  HOBBIES                $EBCDIC3. 
-      @307  RELIGION               $EBCDIC3. 
-      @310  LANGUAGE               $EBCDIC3. 
-      @313  INST_SEC               $EBCDIC3. 
-      @316  CUST_CODE              $EBCDIC3. 
-      @319  CUSTCONSENT            $EBCDIC3. 
-      @322  BASICGRPCODE           $EBCDIC3. 
-      @327  MSICCODE               $EBCDIC5. 
-      @332  MASCO2008              $EBCDIC5. 
-      @337  INCOME                 $EBCDIC3. 
-      @340  EDUCATION              $EBCDIC3.  
-      @343  OCCUP                  $EBCDIC3.  
-      @346  MARITALSTAT            $EBCDIC1.  
-      @347  OWNRENT                $EBCDIC1.  
-      @348  EMPNAME                $EBCDIC40. 
-      @388  DOBDOR                 $EBCDIC08. 
-      @396  SICCODE                $EBCDIC05. 
-      @401  CORPSTATUS             $EBCDIC3.  
-      @404  NETWORTH               $EBCDIC3.  
-      @407  LAST_UPDATE_DATE       $EBCDIC10. 
-      @417  LAST_UPDATE_TIME       $EBCDIC10. 
-      @427  LAST_UPDATE_OPER       $EBCDIC10. 
-      @437  PRCOUNTRY              $EBCDIC02. 
-      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
-      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
-      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
-      @469  BNMID                  $EBCDIC20. 
-      @489  LONGNAME               $EBCDIC150.
-      @639  INDORG                 $EBCDIC1.  
-      @640  RESDESC                $EBCDIC20. 
-      @660  SALDESC                $EBCDIC20. 
-      @680  CTZDESC                $EBCDIC20.
-      ;
+
+SELECT
+    CUSTNOX          AS CUSTNO,
+    ADDREFX          AS ADDREF,
+    CUSTNAME         AS CUSTNAMEX,  -- Keep OLDCHG naming if needed separately
+    PRIPHONEX        AS PRIPHONEX,
+    SECPHONEX        AS SECPHONEX,
+    MOBILEPHX        AS MOBILEPHX,
+    FAXX             AS FAXX,
+    ALIASKEY,
+    ALIAS,
+    PROCESSTIME,
+    CUSTSTAT,
+    TAXCODE,
+    TAXID,
+    CUSTBRCH,
+    COSTCTR,
+    CUSTMNTDATE      AS CUSTMNTDATEX,
+    CUSTLASTOPER     AS CUSTLASTOPERX,
+    PRIM_OFF         AS PRIM_OFFX,
+    SEC_OFF          AS SEC_OFFX,
+    PRIM_LN_OFF      AS PRIM_LN_OFFX,
+    SEC_LN_OFF       AS SEC_LN_OFFX,
+    RACE,
+    RESIDENCY,
+    CITIZENSHIP,
+    OPENDT           AS OPENDTX,
+    HRCALL           AS HRCALLX,
+    EXPERIENCE       AS EXPERIENCEX,
+    HOBBIES          AS HOBBIESX,
+    RELIGION         AS RELIGIONX,
+    LANGUAGE         AS LANGUAGEX,
+    INST_SEC         AS INST_SECX,
+    CUST_CODE        AS CUST_CODEX,
+    CUSTCONSENT      AS CUSTCONSENTX,
+    BASICGRPCODE     AS BASICGRPCODEX,
+    MSICCODE         AS MSICCODEX,
+    MASCO2008        AS MASCO2008X,
+    INCOME           AS INCOMEX,
+    EDUCATION        AS EDUCATIONX,
+    OCCUP            AS OCCUPX,
+    MARITALSTAT      AS MARITALSTATX,
+    OWNRENT          AS OWNRENTX,
+    EMPNAME          AS EMPNAMEX,
+    DOBDOR           AS DOBDORX,
+    SICCODE          AS SICCODEX,
+    CORPSTATUS       AS CORPSTATUSX,
+    NETWORTH         AS NETWORTHX,
+    LAST_UPDATE_DATE AS LAST_UPDATE_DATEX,
+    LAST_UPDATE_TIME AS LAST_UPDATE_TIMEX,
+    LAST_UPDATE_OPER AS LAST_UPDATE_OPERX,
+    PRCOUNTRY        AS PRCOUNTRYX,
+    EMPLOYMENT_TYPE  AS EMPLOYMENT_TYPEX,
+    EMPLOYMENT_SECTOR AS EMPLOYMENT_SECTORX,
+    EMPLOYMENT_LAST_UPDATE AS EMPLOYMENT_LAST_UPDATEX,
+    BNMID            AS BNMIDX,
+    LONGNAME         AS LONGNAMEX,
+    INDORG,
+    RESDESC          AS RESDESCX,
+    SALDESC          AS SALDESCX,
+    CTZDESC          AS CTZDESCX
+FROM read_parquet('path_to_oldchg.parquet')
