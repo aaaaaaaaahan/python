@@ -2,153 +2,111 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CICUSDPR JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB19340
-//*--------------------------------------------------------------------
-//* INITIALIZE DATASETS
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIS.RELDP.CUSTS,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//DEL2     DD DSN=CIS.RELDP.CUSNOID.WTHACCT,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*--------------------------------------------------------------------
-//* PROCESSING STARTS HERE
-//*--------------------------------------------------------------------
-//MERGE#01 EXEC SAS609
-//RLEN#CA  DD DISP=SHR,DSN=UNLOAD.RLEN#CA
-//CUSTFILE DD DISP=SHR,DSN=UNLOAD.ALLCUST.FB
-//IDFILE   DD DISP=SHR,DSN=UNLOAD.ALLALIAS.FB
-//OUTFILE  DD DSN=CIS.RELDP.CUSTS,
-//            DISP=(NEW,CATLG,DELETE),
-//            DCB=(RECFM=FB,LRECL=100,BLKSIZE=0),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA
-//OUTFILE2 DD DSN=CIS.RELDP.CUSNOID.WTHACCT,
-//            DISP=(NEW,CATLG,DELETE),
-//            DCB=(RECFM=FB,LRECL=100,BLKSIZE=0),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTIONS NOCENTER;
-TITLE;
-DATA RLEN;
-  INFILE RLEN#CA;
-  INPUT  @003  BANKNO            PD2.
-         @005  ACCTNOC           $20.
-         @005  ACCTNO            20.
-         @025  ACCTCODE          $5.
-         @046  CUSTNO            $11.
-         @066  RLENCODE          PD2.
-         @068  PRISEC            PD2.;
-       IF ACCTCODE = 'DP   ' THEN OUTPUT;
-PROC SORT  DATA=RLEN; BY CUSTNO ; RUN;
-
-DATA CUST;
-  INFILE CUSTFILE;
-  INPUT  @005  CUSTNO           $11.
-         @033  GENDER            $1.
-         @034  CUSTSTAT          $1.
-         @035  TAXCODE           $1.
-         @036  TAXID             $9.
-         @045  CUSTBRCH         PD4.
-         @049  COSTCTR          PD4.
-         @053  CUSTLASTDATECC   $2.
-         @055  CUSTLASTDATEYY   $2.
-         @058  CUSTLASTDATEMM   $2.
-         @061  CUSTLASTDATEDD   $2.
-         @063  CUSTLASTOPER     $8.
-         @108  RACE             $1.
-         @109  CITIZENSHIP      $2.
-         @119  CUSTOPENDATE     PD6.
-         @232  CUSTCONSENT      $3.;
-         IF GENDER='O' THEN INDORG='O';
-         ELSE INDORG = 'I';
-         IF CITIZENSHIP EQ 'MY' AND INDORG = 'I' THEN OUTPUT;
-PROC SORT  DATA=CUST; BY CUSTNO ;RUN;
-
-DATA ICID;
-  INFILE IDFILE;
-  INPUT  @005  CUSTNO             $11.
-         @089  ALIASKEY           $3.
-         @092  ALIAS              $20.;
-PROC SORT  DATA=ICID NODUPKEY; BY CUSTNO ;RUN;
-*;
- PROC SQL;
-     CREATE TABLE MERGE1 AS
-     SELECT RLEN.BANKNO
-           ,RLEN.ACCTNOC
-           ,RLEN.ACCTNO
-           ,RLEN.ACCTCODE
-           ,RLEN.RLENCODE
-           ,RLEN.PRISEC
-           ,ICID.CUSTNO
-           ,ICID.ALIASKEY
-           ,ICID.ALIAS
-     FROM RLEN,ICID
-     WHERE RLEN.CUSTNO = ICID.CUSTNO
-     AND   ICID.ALIASKEY NOT = 'IC';
- QUIT;
-
- PROC SORT  DATA=MERGE1; BY CUSTNO; RUN;
- PROC PRINT DATA=MERGE1(OBS=10);TITLE 'CUST WITH NO IC';RUN;
-
-DATA ALLDP;
-   MERGE CUST(IN=A) MERGE1(IN=B); BY CUSTNO;
-   IF A AND B THEN DO;
-      OUTPUT ALLDP;
-   END;
+//CICUSNEW JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=256M,NOTIFY=&SYSUID     JOB09682
+//*---------------------------------------------------------------------
+//* DELETE OUTPUT FILES
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIPHONET.CUSTNEW,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//MOVEDATA EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK09  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK10  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK11  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//DATEFILE  DD DISP=SHR,DSN=RBP2.SAS.B033.DATEFILE
+//CISFILE   DD DISP=SHR,DSN=CIS.CUST.DAILY
+//CIPHONET  DD DISP=SHR,DSN=UNLOAD.CIPHONET.FB
+//OUTFILE   DD DSN=CIPHONET.CUSTNEW,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=158,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS NOSORTBLKMODE;
+ /*----------------------------------------------------------------*/
+ /*    GET SYSTEMS DATE                                            */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+   INFILE DATEFILE;
+   INPUT @1  DATE  11.
+         @1  DATEMM 2.
+         @3  DATEDD 2.
+         @5  DATEYY 4.;
+   TODAYDTE=INPUT(SUBSTR(PUT(DATE, Z11.), 1, 8),MMDDYY8.);
+   CALL SYMPUT('TODAYDTE',PUT(TODAYDTE,MMDDYY8.));
+   CALL SYMPUT('DATEMM1',PUT(DATEMM,Z2.));
+   CALL SYMPUT('DATEDD1',PUT(DATEDD,Z2.));
+   CALL SYMPUT('DATEYY1',PUT(DATEYY,4.));
 RUN;
-PROC SORT  DATA=ALLDP; BY CUSTNO;RUN;
-PROC PRINT DATA=ALLDP(OBS=10);TITLE 'ALL DP CUSTOMERS';RUN;
-
- /*---------------------------------------------------------*/
- /* PROCESSING FOR CUSTOMER WITHOUT ANY IDS  *SMR 2020-541  */
- /*---------------------------------------------------------*/
-DATA NOID;
-   MERGE CUST(IN=C) ICID(IN=D); BY CUSTNO;
-   IF C AND NOT D THEN DO;
-      OUTPUT NOID;
-   END;
-RUN;
-PROC SORT  DATA=NOID; BY CUSTNO;RUN;
-PROC PRINT DATA=NOID(OBS=10);TITLE 'CUST NO ID';RUN;
-
-DATA NOIDREL;
-   MERGE NOID(IN=E) RLEN(IN=F); BY CUSTNO;
-   IF E AND F THEN DO;
-      OUTPUT NOIDREL;
-   END;
-RUN;
-PROC SORT  DATA=NOIDREL; BY CUSTNO;RUN;
-PROC PRINT DATA=NOIDREL(OBS=10);TITLE 'CUST NO ID WITH REL';RUN;
 
  /*----------------------------------------------------------------*/
- /*   OUTPUT CUST WITH DP ACCTS WITH NO IDS                         */
+ /*    DATA DECLARATION                                            */
  /*----------------------------------------------------------------*/
-DATA OUTNOID;
-SET NOIDREL;
-FILE OUTFILE2;
-     PUT @01   CUSTBRCH            Z7.
-         @08   CUSTNO              $11.
-         @19   ACCTCODE            $5.
-         @24   ACCTNO              20.
-         @44   RACE                $1.
-         @45   ALIASKEY            $3.
-         @48   ALIAS               $20.
-         @68   CITIZENSHIP         $2.;
-  RUN;
+   DATA CIS;
+   SET CISFILE.CUSTDLY;
+        IF INDORG='I' THEN OUTPUT;     /*  INDIVIDUALS ONLY  */
+   RUN;
+   PROC SORT  DATA=CIS NODUPKEY ;BY CUSTNO;RUN;
 
+   DATA PHONE;
+       FORMAT PHONE PD8. PROMPT PD1.;
+       INFILE CIPHONET;
+               INPUT @009  CUSTNO             $11.;
+                  PHONE=0;
+                  PROMPT=0;
+       RUN;
+   PROC PRINT DATA=PHONE(OBS=5);TITLE 'PHONE';RUN;
+   PROC SORT DATA=PHONE ; BY CUSTNO;RUN;
+
+   DATA MERGE;
+   MERGE PHONE(IN=A) CIS(IN=B) ;BY CUSTNO;
+   IF NOT A THEN OUTPUT;
+   RUN;
  /*----------------------------------------------------------------*/
- /*  OUTPUT CUST WITH OTHER IDS AND WITH NO IDS INCLUDE DP ACCTS   */
+ /*   OUTPUT DETAIL REPORT                                         */
  /*----------------------------------------------------------------*/
 DATA TEMPOUT;
-SET ALLDP NOIDREL;
-FILE OUTFILE;
-     PUT @01   CUSTBRCH            Z7.
-         @08   CUSTNO              $11.
-         @19   ACCTCODE            $5.
-         @24   ACCTNO              20.
-         @44   RACE                $1.
-         @45   ALIASKEY            $3.
-         @48   ALIAS               $20.
-         @68   CITIZENSHIP         $2.;
+  SET MERGE;
+  FILE OUTFILE;
+     PUT @01   '033'
+         @04   'CUST'
+         @09   CUSTNO             $11.
+         @29   'PRIMARY'                    /*PHONE FIELD*/
+         @44   PHONE              PD8.      /*PAC PHONE*/
+         @52   PHONE              PD8.      /*PREV PHONE*/
+         @60   INDORG             $1.
+         @61   "&DATEYY1"                    /*FIRST DATE*/
+         @65   '-'
+         @66   "&DATEMM1"
+         @68   '-'
+         @69   "&DATEDD1"
+         @71   PROMPT             PD1.      /*NO OF PROMPT*/
+         @72   'INIT'                       /*PROMPT SOURCE*/
+         @77   "&DATEYY1"                   /*PROMPT DATE*/
+         @81   '-'
+         @82   "&DATEMM1"
+         @84   '-'
+         @85   "&DATEDD1"
+         @87   '01.01.01'                   /*PROMPT TIME*/
+         @95   'INIT'                       /*UPDATE SOURCE*/
+         @100  "&DATEYY1"                   /*UPDATE DATE*/
+         @104  '-'
+         @105  "&DATEMM1"
+         @107  '-'
+         @108  "&DATEDD1"
+         @110  '01.01.01'                   /*UPDATE TIME*/
+         @118  'INIT'                       /*UPDATE OPERATOR*/
+         @126  'INIT'                       /*APPLICATION CODE*/
+         @131  'INIT'                       /*APPLICATION NO  */
+         @151  PHONE              PD8. ;    /*NEW  PHONE*/
+  RETURN;
   RUN;
