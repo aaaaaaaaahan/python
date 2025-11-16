@@ -18,11 +18,11 @@ con.execute(f"""
 CREATE OR REPLACE TABLE RLEN AS
 SELECT *
 FROM '{host_parquet_path("RLENCA.parquet")}'
-WHERE ACCTCODE = 'DP   '
+WHERE ACCTCODE = 'DP'
 """)
 
 # -----------------------------
-# 2. Load CUST and filter by Citizenship MY and gender
+# 2. Load CUST and filter by Citizenship MY and INDORG='I'
 # -----------------------------
 con.execute(f"""
 CREATE OR REPLACE TABLE CUST AS
@@ -30,6 +30,7 @@ SELECT *,
        CASE WHEN GENDER='O' THEN 'O' ELSE 'I' END AS INDORG
 FROM '{host_parquet_path("ALLCUST_FB.parquet")}'
 WHERE CITIZENSHIP='MY'
+  AND (CASE WHEN GENDER='O' THEN 'O' ELSE 'I' END)='I'
 """)
 
 # -----------------------------
@@ -87,69 +88,103 @@ FROM NOID n
 JOIN RLEN r ON n.CUSTNO = r.CUSTNO
 """)
 
-# ----------------------------
-# OUTPUT TO PARQUET, CSV, TXT
-# ----------------------------
-out = """
-    SELECT 
-        CUSTBRCH,
-        CUSTNO,
-        ACCTCODE,
-        ACCTNO,
-        RACE,
-        ALIASKEY,
-        ALIAS,
-        CITIZENSHIP,  
-        {year} AS year,
-        {month} AS month,
-        {day} AS day
-    FROM NOIDREL
-""".format(year=year,month=month,day=day)
+# -----------------------------
+# 8. Output Queries
+# -----------------------------
+# Output 1: NOIDREL only
+query_noidrel = f"""
+SELECT 
+    CUSTBRCH,
+    CUSTNO,
+    ACCTCODE,
+    ACCTNO,
+    RACE,
+    ' ' AS ALIASKEY,
+    ' ' AS ALIAS,
+    CITIZENSHIP,  
+    {year} AS year,
+    {month} AS month,
+    {day} AS day
+FROM NOIDREL
+"""
 
-# Dictionary of outputs for parquet & CSV
-queries = {
-    "CIS_RELDP_CUSNOID_WTHACCT":              out
-    }
+# Output 2: ALLDP + NOIDREL (SAS TEMPOUT)
+query_all = f"""
+SELECT 
+    CUSTBRCH,
+    CUSTNO,
+    ACCTCODE_MERGE AS ACCTCODE,
+    ACCTNO,
+    RACE,
+    ALIASKEY,
+    ALIAS,
+    CITIZENSHIP,  
+    {year} AS year,
+    {month} AS month,
+    {day} AS day
+FROM ALLDP
+UNION ALL
+SELECT 
+    CUSTBRCH,
+    CUSTNO,
+    ACCTCODE,
+    ACCTNO,
+    RACE,
+    ' ' AS ALIASKEY,
+    ' ' AS ALIAS,
+    CITIZENSHIP,  
+    {year} AS year,
+    {month} AS month,
+    {day} AS day
+FROM NOIDREL
+"""
 
-for name, query in queries.items():
+# -----------------------------
+# 9. Write Parquet and CSV
+# -----------------------------
+outputs = {
+    "CIS_RELDP_CUSNOID_WTHACCT": query_noidrel,
+    "CIS_RELDP_CUSTS": query_all
+}
+
+for name, query in outputs.items():
     parquet_path = parquet_output_path(name)
     csv_path = csv_output_path(name)
 
-    # COPY to Parquet with partitioning
     con.execute(f"""
         COPY ({query})
         TO '{parquet_path}'
         (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
     """)
 
-    # COPY to CSV with header
     con.execute(f"""
         COPY ({query})
         TO '{csv_path}'
         (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
     """)
 
-# Dictionary for fixed-width TXT
-txt_queries = {
-        "CIS_RELDP_CUSNOID_WTHACCT":              out
-    }
+# -----------------------------
+# 10. Write Fixed-width TXT (matching SAS positions)
+# -----------------------------
+txt_outputs = {
+    "CIS_RELDP_CUSNOID_WTHACCT": query_noidrel,
+    "CIS_RELDP_CUSTS": query_all
+}
 
-for txt_name, txt_query in txt_queries.items():
+for txt_name, txt_query in txt_outputs.items():
     txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
     df_txt = con.execute(txt_query).fetchdf()
 
     with open(txt_path, "w", encoding="utf-8") as f:
         for _, row in df_txt.iterrows():
             line = (
-                f"{str(row['CUSTBRCH']).ljust(7)}"
+                f"{str(row['CUSTBRCH']).zfill(7)}"          # Z7. numeric
                 f"{str(row['CUSTNO']).ljust(11)}"
                 f"{str(row['ACCTCODE']).ljust(5)}"
-                f"{str(row['ACCTNO']).ljust(20)}"
+                f"{str(row['ACCTNO']).rjust(20)}"          # 20. numeric
                 f"{str(row['RACE']).ljust(1)}"
                 f"{str(row['ALIASKEY']).ljust(3)}" 
                 f"{str(row['ALIAS']).ljust(20)}"
                 f"{str(row['CITIZENSHIP']).ljust(2)}"
             )
             f.write(line + "\n")
-
-print("Processing completed. Parquet and TXT files are generated.")
