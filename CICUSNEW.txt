@@ -1,0 +1,112 @@
+//CICUSNEW JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=256M,NOTIFY=&SYSUID     JOB09682
+//*---------------------------------------------------------------------
+//* GET THE NEW UNIQUE CUSTOMER
+//* FIT INTO CIPHONET LOADING JOB
+//* A2014-27965  5/12/2014  ADD OPTIONS NOSORTBLKMODE
+//*---------------------------------------------------------------------
+//* DELETE OUTPUT FILES
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=RBP2.B033.CIPHONET.CUSTNEW,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//MOVEDATA EXEC SAS609,OPTIONS='VERBOSE SORTLIST SORTMSG MSGLEVEL=I'
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK09  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK10  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//SORTWK11  DD UNIT=SYSDA,SPACE=(CYL,(1000,500))
+//DATEFILE  DD DISP=SHR,DSN=RBP2.SAS.B033.DATEFILE
+//CISFILE   DD DISP=SHR,DSN=RBP2.B033.CIS.CUST.DAILY
+//CIPHONET  DD DISP=SHR,DSN=RBP2.B033.UNLOAD.CIPHONET.FB
+//OUTFILE   DD DSN=RBP2.B033.CIPHONET.CUSTNEW,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=158,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+OPTIONS NOSORTBLKMODE;
+ /*----------------------------------------------------------------*/
+ /*    GET SYSTEMS DATE                                            */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+   INFILE DATEFILE;
+   INPUT @1  DATE  11.
+         @1  DATEMM 2.
+         @3  DATEDD 2.
+         @5  DATEYY 4.;
+   TODAYDTE=INPUT(SUBSTR(PUT(DATE, Z11.), 1, 8),MMDDYY8.);
+   CALL SYMPUT('TODAYDTE',PUT(TODAYDTE,MMDDYY8.));
+   CALL SYMPUT('DATEMM1',PUT(DATEMM,Z2.));
+   CALL SYMPUT('DATEDD1',PUT(DATEDD,Z2.));
+   CALL SYMPUT('DATEYY1',PUT(DATEYY,4.));
+RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    DATA DECLARATION                                            */
+ /*----------------------------------------------------------------*/
+   DATA CIS;
+   SET CISFILE.CUSTDLY;
+        IF INDORG='I' THEN OUTPUT;     /*  INDIVIDUALS ONLY  */
+   RUN;
+   PROC SORT  DATA=CIS NODUPKEY ;BY CUSTNO;RUN;
+
+   DATA PHONE;
+       FORMAT PHONE PD8. PROMPT PD1.;
+       INFILE CIPHONET;
+               INPUT @009  CUSTNO             $11.;
+                  PHONE=0;
+                  PROMPT=0;
+       RUN;
+   PROC PRINT DATA=PHONE(OBS=5);TITLE 'PHONE';RUN;
+   PROC SORT DATA=PHONE ; BY CUSTNO;RUN;
+
+   DATA MERGE;
+   MERGE PHONE(IN=A) CIS(IN=B) ;BY CUSTNO;
+   IF NOT A THEN OUTPUT;
+   RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA TEMPOUT;
+  SET MERGE;
+  FILE OUTFILE;
+     PUT @01   '033'
+         @04   'CUST'
+         @09   CUSTNO             $11.
+         @29   'PRIMARY'                    /*PHONE FIELD*/
+         @44   PHONE              PD8.      /*PAC PHONE*/
+         @52   PHONE              PD8.      /*PREV PHONE*/
+         @60   INDORG             $1.
+         @61   "&DATEYY1"                    /*FIRST DATE*/
+         @65   '-'
+         @66   "&DATEMM1"
+         @68   '-'
+         @69   "&DATEDD1"
+         @71   PROMPT             PD1.      /*NO OF PROMPT*/
+         @72   'INIT'                       /*PROMPT SOURCE*/
+         @77   "&DATEYY1"                   /*PROMPT DATE*/
+         @81   '-'
+         @82   "&DATEMM1"
+         @84   '-'
+         @85   "&DATEDD1"
+         @87   '01.01.01'                   /*PROMPT TIME*/
+         @95   'INIT'                       /*UPDATE SOURCE*/
+         @100  "&DATEYY1"                   /*UPDATE DATE*/
+         @104  '-'
+         @105  "&DATEMM1"
+         @107  '-'
+         @108  "&DATEDD1"
+         @110  '01.01.01'                   /*UPDATE TIME*/
+         @118  'INIT'                       /*UPDATE OPERATOR*/
+         @126  'INIT'                       /*APPLICATION CODE*/
+         @131  'INIT'                       /*APPLICATION NO  */
+         @151  PHONE              PD8. ;    /*NEW  PHONE*/
+  RETURN;
+  RUN;
