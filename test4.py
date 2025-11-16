@@ -1,290 +1,136 @@
-import duckdb
-import pyarrow.parquet as pq
-import pyarrow as pa
-from datetime import datetime, timedelta
+OLDCHG:
+INPUT @01   RUNTIMESTAMP           $EBCDIC20.
+      @21   CUSTNOX                $EBCDIC20.
+      @41   ADDREFX                $EBCDIC11.
+      @52   CUSTNAME               $EBCDIC40.
+      @92   PRIPHONEX              $EBCDIC11.
+      @103  SECPHONEX              $EBCDIC11.
+      @114  MOBILEPHX              $EBCDIC11.
+      @125  FAXX                   $EBCDIC11.
+      @136  ALIASKEY               $EBCDIC3. 
+      @139  ALIAS                  $EBCDIC20.
+      @159  PROCESSTIME            $EBCDIC8. 
+      @167  CUSTSTAT               $EBCDIC1. 
+      @168  TAXCODE                $EBCDIC1. 
+      @169  TAXID                  $EBCDIC9. 
+      @178  CUSTBRCH               $EBCDIC5. 
+      @183  COSTCTR                $EBCDIC5. 
+      @188  CUSTMNTDATE            $EBCDIC08.
+      @196  CUSTLASTOPER           $EBCDIC8. 
+      @204  PRIM_OFF               $EBCDIC5.
+      @209  SEC_OFF                $EBCDIC5.
+      @214  PRIM_LN_OFF            $EBCDIC5.
+      @219  SEC_LN_OFF             $EBCDIC5.
+      @224  RACE                   $EBCDIC1. 
+      @225  RESIDENCY              $EBCDIC3. 
+      @228  CITIZENSHIP            $EBCDIC2. 
+      @230  OPENDT                 $EBCDIC08.
+      @241  HRCALL                 $EBCDIC60.
+      @301  EXPERIENCE             $EBCDIC3. 
+      @304  HOBBIES                $EBCDIC3. 
+      @307  RELIGION               $EBCDIC3. 
+      @310  LANGUAGE               $EBCDIC3. 
+      @313  INST_SEC               $EBCDIC3. 
+      @316  CUST_CODE              $EBCDIC3. 
+      @319  CUSTCONSENT            $EBCDIC3. 
+      @322  BASICGRPCODE           $EBCDIC3. 
+      @327  MSICCODE               $EBCDIC5. 
+      @332  MASCO2008              $EBCDIC5. 
+      @337  INCOME                 $EBCDIC3. 
+      @340  EDUCATION              $EBCDIC3.  
+      @343  OCCUP                  $EBCDIC3.  
+      @346  MARITALSTAT            $EBCDIC1.  
+      @347  OWNRENT                $EBCDIC1.  
+      @348  EMPNAME                $EBCDIC40. 
+      @388  DOBDOR                 $EBCDIC08. 
+      @396  SICCODE                $EBCDIC05. 
+      @401  CORPSTATUS             $EBCDIC3.  
+      @404  NETWORTH               $EBCDIC3.  
+      @407  LAST_UPDATE_DATE       $EBCDIC10. 
+      @417  LAST_UPDATE_TIME       $EBCDIC10. 
+      @427  LAST_UPDATE_OPER       $EBCDIC10. 
+      @437  PRCOUNTRY              $EBCDIC02. 
+      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
+      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
+      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
+      @469  BNMID                  $EBCDIC20. 
+      @489  LONGNAME               $EBCDIC150.
+      @639  INDORG                 $EBCDIC1.  
+      @640  RESDESC                $EBCDIC20. 
+      @660  SALDESC                $EBCDIC20. 
+      @680  CTZDESC                $EBCDIC20.
+      ;
 
-# -----------------------------
-# Paths
-# -----------------------------
-# Replace with your paths
-newchg_file = "/host/cis/parquet/NEWCHG.parquet"
-oldchg_file = "/host/cis/parquet/OLDCHG.parquet"
-active_file = "/host/cis/parquet/ACTIVE.parquet"
-output_file = "/host/cis/output/CIS_IDIC_DAILY_RPT.txt"
+NEWCHG:
+INPUT @01   RUNTIMESTAMP           $EBCDIC20.
+      @21   CUSTNOX                $EBCDIC20.
+      @41   ADDREFX                $EBCDIC11.
+      @52   CUSTNAME               $EBCDIC40.
+      @92   PRIPHONEX              $EBCDIC11.
+      @103  SECPHONEX              $EBCDIC11.
+      @114  MOBILEPHX              $EBCDIC11.
+      @125  FAXX                   $EBCDIC11.
+      @136  ALIASKEY               $EBCDIC3. 
+      @139  ALIAS                  $EBCDIC20.
+      @159  PROCESSTIME            $EBCDIC8. 
+      @167  CUSTSTAT               $EBCDIC1. 
+      @168  TAXCODE                $EBCDIC1. 
+      @169  TAXID                  $EBCDIC9. 
+      @178  CUSTBRCH               $EBCDIC5. 
+      @183  COSTCTR                $EBCDIC5. 
+      @188  CUSTMNTDATE            $EBCDIC08.
+      @196  CUSTLASTOPER           $EBCDIC8. 
+      @204  PRIM_OFF               $EBCDIC5.
+      @209  SEC_OFF                $EBCDIC5.
+      @214  PRIM_LN_OFF            $EBCDIC5.
+      @219  SEC_LN_OFF             $EBCDIC5.
+      @224  RACE                   $EBCDIC1. 
+      @225  RESIDENCY              $EBCDIC3. 
+      @228  CITIZENSHIP            $EBCDIC2. 
+      @230  OPENDT                 $EBCDIC08.
+      @241  HRCALL                 $EBCDIC60.
+      @301  EXPERIENCE             $EBCDIC3. 
+      @304  HOBBIES                $EBCDIC3. 
+      @307  RELIGION               $EBCDIC3. 
+      @310  LANGUAGE               $EBCDIC3. 
+      @313  INST_SEC               $EBCDIC3. 
+      @316  CUST_CODE              $EBCDIC3. 
+      @319  CUSTCONSENT            $EBCDIC3. 
+      @322  BASICGRPCODE           $EBCDIC3. 
+      @327  MSICCODE               $EBCDIC5. 
+      @332  MASCO2008              $EBCDIC5. 
+      @337  INCOME                 $EBCDIC3. 
+      @340  EDUCATION              $EBCDIC3.  
+      @343  OCCUP                  $EBCDIC3.  
+      @346  MARITALSTAT            $EBCDIC1.  
+      @347  OWNRENT                $EBCDIC1.  
+      @348  EMPNAME                $EBCDIC40. 
+      @388  DOBDOR                 $EBCDIC08. 
+      @396  SICCODE                $EBCDIC05. 
+      @401  CORPSTATUS             $EBCDIC3.  
+      @404  NETWORTH               $EBCDIC3.  
+      @407  LAST_UPDATE_DATE       $EBCDIC10. 
+      @417  LAST_UPDATE_TIME       $EBCDIC10. 
+      @427  LAST_UPDATE_OPER       $EBCDIC10. 
+      @437  PRCOUNTRY              $EBCDIC02. 
+      @439  EMPLOYMENT_TYPE        $EBCDIC10. 
+      @449  EMPLOYMENT_SECTOR      $EBCDIC10. 
+      @459  EMPLOYMENT_LAST_UPDATE $EBCDIC10. 
+      @469  BNMID                  $EBCDIC20. 
+      @489  LONGNAME               $EBCDIC150.
+      @639  INDORG                 $EBCDIC1.  
+      @640  RESDESC                $EBCDIC20. 
+      @660  SALDESC                $EBCDIC20. 
+      @680  CTZDESC                $EBCDIC20.
+      ;
 
-# -----------------------------
-# Batch date (same as SAS SRSDATE)
-# -----------------------------
-batch_date = datetime.today() - timedelta(days=1)
-DAY = f"{batch_date.day:02}"
-MONTH = f"{batch_date.month:02}"
-YEAR = f"{batch_date.year}"
-
-# -----------------------------
-# DuckDB connection
-# -----------------------------
-con = duckdb.connect()
-
-# -----------------------------
-# Load parquet files
-# -----------------------------
-con.execute(f"""
-CREATE OR REPLACE TABLE NEWCHG AS
-SELECT 
-    RUNTIMESTAMP,
-    CUSTNOX AS CUSTNO,
-    ADDREFX AS ADDREF,
-    CUSTNAME,
-    PRIPHONEX AS PRIPHONE,
-    SECPHONEX AS SECPHONE,
-    MOBILEPHX AS MOBILEPH,
-    FAXX AS FAX,
-    ALIASKEY,
-    ALIAS,
-    PROCESSTIME,
-    CUSTSTAT,
-    TAXCODE,
-    TAXID,
-    CUSTBRCH,
-    COSTCTR,
-    CUSTMNTDATE,
-    CUSTLASTOPER,
-    PRIM_OFF,
-    SEC_OFF,
-    PRIM_LN_OFF,
-    SEC_LN_OFF,
-    RACE,
-    RESIDENCY,
-    CITIZENSHIP,
-    OPENDT,
-    HRCALL,
-    EXPERIENCE,
-    HOBBIES,
-    RELIGION,
-    LANGUAGE,
-    INST_SEC,
-    CUST_CODE,
-    CUSTCONSENT,
-    BASICGRPCODE,
-    MSICCODE,
-    MASCO2008,
-    INCOME,
-    EDUCATION,
-    OCCUP,
-    MARITALSTAT,
-    OWNRENT,
-    EMPNAME,
-    DOBDOR,
-    SICCODE,
-    CORPSTATUS,
-    NETWORTH,
-    LAST_UPDATE_DATE,
-    LAST_UPDATE_TIME,
-    LAST_UPDATE_OPER,
-    PRCOUNTRY,
-    EMPLOYMENT_TYPE,
-    EMPLOYMENT_SECTOR,
-    EMPLOYMENT_LAST_UPDATE,
-    BNMID,
-    LONGNAME,
-    INDORG,
-    RESDESC,
-    SALDESC,
-    CTZDESC
-FROM read_parquet('{newchg_file}')
-""")
-
-con.execute(f"""
-CREATE OR REPLACE TABLE OLDCHG AS
-SELECT 
-    RUNTIMESTAMP,
-    CUSTNOX AS CUSTNO,
-    ADDREFX AS ADDREF,
-    CUSTNAME,
-    PRIPHONEX AS PRIPHONE,
-    SECPHONEX AS SECPHONE,
-    MOBILEPHX AS MOBILEPH,
-    FAXX AS FAX,
-    ALIASKEY,
-    ALIAS,
-    PROCESSTIME,
-    CUSTSTAT,
-    TAXCODE,
-    TAXID,
-    CUSTBRCH,
-    COSTCTR,
-    CUSTMNTDATE,
-    CUSTLASTOPER,
-    PRIM_OFF,
-    SEC_OFF,
-    PRIM_LN_OFF,
-    SEC_LN_OFF,
-    RACE,
-    RESIDENCY,
-    CITIZENSHIP,
-    OPENDT,
-    HRCALL,
-    EXPERIENCE,
-    HOBBIES,
-    RELIGION,
-    LANGUAGE,
-    INST_SEC,
-    CUST_CODE,
-    CUSTCONSENT,
-    BASICGRPCODE,
-    MSICCODE,
-    MASCO2008,
-    INCOME,
-    EDUCATION,
-    OCCUP,
-    MARITALSTAT,
-    OWNRENT,
-    EMPNAME,
-    DOBDOR,
-    SICCODE,
-    CORPSTATUS,
-    NETWORTH,
-    LAST_UPDATE_DATE,
-    LAST_UPDATE_TIME,
-    LAST_UPDATE_OPER,
-    PRCOUNTRY,
-    EMPLOYMENT_TYPE,
-    EMPLOYMENT_SECTOR,
-    EMPLOYMENT_LAST_UPDATE,
-    BNMID,
-    LONGNAME,
-    INDORG,
-    RESDESC,
-    SALDESC,
-    CTZDESC
-FROM read_parquet('{oldchg_file}')
-""")
-
-con.execute(f"""
-CREATE OR REPLACE TABLE ACTIVE AS
-SELECT 
-    CUSTNO,
-    ACCTCODE,
-    ACCTNOC,
-    NOTENOC,
-    BANKINDC,
-    DATEOPEN,
-    DATECLSE,
-    ACCTSTATUS
-FROM read_parquet('{active_file}')
-WHERE ACCTCODE IN ('DP   ', 'LN   ')
-""")
-
-# -----------------------------
-# Keep only active accounts (latest, no closing date)
-# -----------------------------
-con.execute("""
-CREATE OR REPLACE TABLE LISTACT AS
-SELECT DISTINCT ON (CUSTNO)
-    CUSTNO, ACCTCODE, ACCTNOC
-FROM ACTIVE
-WHERE DATECLSE NOT IN ('       .', '        ', '00000000')
-ORDER BY CUSTNO, DATEOPEN DESC
-""")
-
-# -----------------------------
-# Merge NEWCHG and active accounts
-# -----------------------------
-con.execute("""
-CREATE OR REPLACE TABLE NEWACT AS
-SELECT N.*
-FROM NEWCHG N
-JOIN LISTACT L
-ON N.CUSTNO = L.CUSTNO
-""")
-
-# -----------------------------
-# Merge NEWACT and OLDCHG
-# -----------------------------
-con.execute("""
-CREATE OR REPLACE TABLE MERGE_A AS
-SELECT N.*, O.*
-FROM NEWACT N
-JOIN OLDCHG O
-ON N.CUSTNO = O.CUSTNO
-""")
-
-# -----------------------------
-# Compare fields and output differences
-# -----------------------------
-# In Python, we can generate all changes similar to SAS C_* tables
-fields_to_check = [
-    ('CUSTMNTDATE', 'CUSTMNTDATE'),
-    ('CUSTLASTOPER', 'CUSTLASTOPER'),
-    ('ADDREF', 'ADDREF'),
-    ('CUSTNAME', 'CUSTNAME'),
-    ('LONGNAME', 'LONGNAME'),
-    ('DOBDOR', 'DOBDOR'),
-    ('BASICGRPCODE', 'BASICGRPCODE'),
-    ('CORPSTATUS', 'CORPSTATUS'),
-    ('MSICCODE', 'MSICCODE'),
-    ('CUST_CODE', 'CUST_CODE'),
-    ('CITIZENSHIP', 'CITIZENSHIP'),
-    ('MASCO2008', 'MASCO2008'),
-    ('EMPLOYMENT_SECTOR', 'EMPLOYMENT_SECTOR'),
-    ('EMPLOYMENT_TYPE', 'EMPLOYMENT_TYPE'),
-    ('EMPNAME', 'EMPNAME'),
-    ('PRCOUNTRY', 'PRCOUNTRY'),
-    ('RESIDENCY', 'RESIDENCY')
-]
-
-# For simplicity, we create a long union of differences
-diff_queries = []
-for field, field_old in fields_to_check:
-    diff_queries.append(f"""
-    SELECT
-        CUSTNO,
-        '{field}' AS FIELDS,
-        {field_old} AS OLDVALUE,
-        {field} AS NEWVALUE,
-        CUSTLASTOPER AS UPDOPER,
-        CUSTMNTDATE AS UPDDATE,
-        ACCTNOC
-    FROM MERGE_A
-    WHERE {field} IS DISTINCT FROM {field_old}
-    """)
-
-con.execute(f"""
-CREATE OR REPLACE TABLE TEMPALL AS
-{ ' UNION ALL '.join(diff_queries) }
-""")
-
-# -----------------------------
-# Final merge to set missing UPDDATE/UPDOPER
-# -----------------------------
-# In SAS they overwrite empty UPDDATE/UPDOPER with CUSTMNTDATE/CUSTLASTOPER
-con.execute(f"""
-CREATE OR REPLACE TABLE MRGCIS AS
-SELECT *,
-       COALESCE(UPDDATE, CUSTMNTDATE) AS UPDDATE_FINAL,
-       COALESCE(UPDOPER, CUSTLASTOPER) AS UPDOPER_FINAL
-FROM TEMPALL
-WHERE UPDOPER NOT IN ('ELNBATCH','AMLBATCH','HRCBATCH','CTRBATCH',
-                      'CIFLPRCE','CISUPDEC','CIUPDMSX','CIUPDMS9','MAPLOANS','CRIS')
-""")
-
-# -----------------------------
-# Export to fixed-width text file
-# -----------------------------
-# Calculate fixed-width fields
-con.execute(f"""
-COPY (
-SELECT
-    UPDOPER_FINAL AS UPDOPER,
-    CUSTNO,
-    ACCTNOC,
-    CUSTNAME,
-    FIELDS,
-    OLDVALUE,
-    NEWVALUE,
-    '{DAY}/{MONTH}/{YEAR}' AS UPDDATX
-FROM MRGCIS
-) TO '{output_file}' (FORMAT 'fixedwidth');
-""")
-
-print("Processing completed. Output file:", output_file)
+ACTIVE:
+INPUT  @001   CUSTNO          $20.
+       @021   ACCTCODE        $5. 
+       @026   ACCTNOC         $20.
+       @047   NOTENOC         $5. 
+       @052   BANKINDC        $1. 
+       @055   DATEOPEN        $10.
+       @065   DATECLSE        $10.
+       @075   ACCTSTATUS      $1.
+       ;                
