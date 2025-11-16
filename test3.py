@@ -1,129 +1,77 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
 
 batch_date = datetime.date.today() - datetime.timedelta(days=1)
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
+DATEYY1 = year
+DATEMM1 = month
+DATEDD1 = day
 
-# -----------------------------
-# Connect to DuckDB
-# -----------------------------
+# ================================================================
+# 2. DUCKDB CONNECTION
+# ================================================================
 con = duckdb.connect()
+cis = get_hive_parquet('CIS_CUST_DAILY')
 
-# -----------------------------
-# 1. Load RLEN and filter DP accounts
-# -----------------------------
+# ================================================================
+# 3. LOAD PARQUET INPUT FILES (already converted)
+# ================================================================
+CISFILE = "CIS_CUST_DAILY.parquet"            # CIS.CUST.DAILY
+CIPHONET = "UNLOAD_CIPHONET_FB.parquet"       # UNLOAD.CIPHONET.FB
+
+# ================================================================
+# 4. LOAD CIS (same as DATA CIS; SET CISFILE; IF INDORG='I')
+# ================================================================
 con.execute(f"""
-CREATE OR REPLACE TABLE RLEN AS
-SELECT *
-FROM '{host_parquet_path("RLENCA.parquet")}'
-WHERE ACCTCODE = 'DP'
+    CREATE OR REPLACE TABLE CIS AS
+    SELECT *
+    FROM read_parquet('{cis[0]}')
+    WHERE INDORG = 'I'
 """)
 
-# -----------------------------
-# 2. Load CUST and filter by Citizenship MY and INDORG='I'
-# -----------------------------
+# Remove duplicates same as PROC SORT NODUPKEY
+con.execute("""
+    CREATE OR REPLACE TABLE CIS AS
+    SELECT *
+    FROM CIS
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
+""")
+
+# ================================================================
+# 5. LOAD PHONE FILE (same as DATA PHONE and INPUT @9 CUSTNO $11.)
+# Defaults: PHONE=0, PROMPT=0
+# ================================================================
 con.execute(f"""
-CREATE OR REPLACE TABLE CUST AS
-SELECT *,
-       CASE WHEN GENDER='O' THEN 'O' ELSE 'I' END AS INDORG
-FROM '{host_parquet_path("ALLCUST_FB.parquet")}'
-WHERE CITIZENSHIP='MY'
-  AND (CASE WHEN GENDER='O' THEN 'O' ELSE 'I' END)='I'
+    CREATE OR REPLACE TABLE PHONE AS
+    SELECT
+        SUBSTR(CUSTNO, 1, 11) AS CUSTNO,
+        0 AS PHONE,
+        0 AS PROMPT
+    FROM '{host_parquet_path("UNLOAD_CIPHONET_FB.parquet")}'
 """)
 
-# -----------------------------
-# 3. Load ICID and remove duplicates
-# -----------------------------
-con.execute(f"""
-CREATE OR REPLACE TABLE ICID AS
-SELECT DISTINCT ON (CUSTNO) *
-FROM '{host_parquet_path("ALLALIAS_FB.parquet")}'
-""")
-
-# -----------------------------
-# 4. Merge RLEN and ICID for customers with aliases not 'IC'
-# -----------------------------
+# ================================================================
+# 6. MERGE (same as SAS MERGE PHONE(IN=A) CIS(IN=B); IF NOT A THEN OUTPUT)
+# Keep CIS rows that do not exist in PHONE
+# ================================================================
 con.execute("""
-CREATE OR REPLACE TABLE MERGE1 AS
-SELECT r.BANKNO, r.ACCTNOC, r.ACCTNO, r.ACCTCODE, r.RLENCODE, r.PRISEC,
-       i.CUSTNO, i.ALIASKEY, i.ALIAS
-FROM RLEN r
-JOIN ICID i
-  ON r.CUSTNO = i.CUSTNO
-WHERE i.ALIASKEY <> 'IC'
-""")
-
-# -----------------------------
-# 5. Merge CUST and MERGE1 to get ALLDP
-# -----------------------------
-con.execute("""
-CREATE OR REPLACE TABLE ALLDP AS
-SELECT c.*, m.BANKNO, m.ACCTNOC, m.ACCTNO, m.ACCTCODE AS ACCTCODE_MERGE,
-       m.RLENCODE, m.PRISEC, m.ALIASKEY, m.ALIAS
-FROM CUST c
-JOIN MERGE1 m
-  ON c.CUSTNO = m.CUSTNO
-""")
-
-# -----------------------------
-# 6. Customers with NO ID
-# -----------------------------
-con.execute("""
-CREATE OR REPLACE TABLE NOID AS
-SELECT c.*
-FROM CUST c
-LEFT JOIN ICID i ON c.CUSTNO = i.CUSTNO
-WHERE i.CUSTNO IS NULL
-""")
-
-# -----------------------------
-# 7. NOID with RLEN info
-# -----------------------------
-con.execute("""
-CREATE OR REPLACE TABLE NOIDREL AS
-SELECT n.*, r.BANKNO, r.ACCTNOC, r.ACCTNO, r.ACCTCODE, r.RLENCODE, r.PRISEC
-FROM NOID n
-JOIN RLEN r ON n.CUSTNO = r.CUSTNO
+    CREATE OR REPLACE TABLE MERGE AS
+    SELECT B.*
+         , 0 AS PHONE
+         , 0 AS PROMPT
+    FROM CIS B
+    LEFT JOIN PHONE A
+           ON A.CUSTNO = B.CUSTNO
+    WHERE A.CUSTNO IS NULL
 """)
 
 # -----------------------------
 # 8. Output Queries
 # -----------------------------
 # Output 1: NOIDREL only
-query_noidrel = f"""
-SELECT 
-    CUSTBRCH,
-    CUSTNO,
-    ACCTCODE,
-    ACCTNO,
-    RACE,
-    ' ' AS ALIASKEY,
-    ' ' AS ALIAS,
-    CITIZENSHIP,  
-    {year} AS year,
-    {month} AS month,
-    {day} AS day
-FROM NOIDREL
-"""
-
-# Output 2: ALLDP + NOIDREL (SAS TEMPOUT)
-query_all = f"""
-SELECT 
-    CUSTBRCH,
-    CUSTNO,
-    ACCTCODE_MERGE AS ACCTCODE,
-    ACCTNO,
-    RACE,
-    ALIASKEY,
-    ALIAS,
-    CITIZENSHIP,  
-    {year} AS year,
-    {month} AS month,
-    {day} AS day
-FROM ALLDP
-UNION ALL
+out = """
 SELECT 
     CUSTBRCH,
     CUSTNO,
@@ -143,8 +91,7 @@ FROM NOIDREL
 # 9. Write Parquet and CSV
 # -----------------------------
 outputs = {
-    "CIS_RELDP_CUSNOID_WTHACCT": query_noidrel,
-    "CIS_RELDP_CUSTS": query_all
+    "CIPHONET_CUSTNEW": out
 }
 
 for name, query in outputs.items():
@@ -167,8 +114,7 @@ for name, query in outputs.items():
 # 10. Write Fixed-width TXT (matching SAS positions)
 # -----------------------------
 txt_outputs = {
-    "CIS_RELDP_CUSNOID_WTHACCT": query_noidrel,
-    "CIS_RELDP_CUSTS": query_all
+    "CIPHONET_CUSTNEW": out
 }
 
 for txt_name, txt_query in txt_outputs.items():
@@ -178,7 +124,7 @@ for txt_name, txt_query in txt_outputs.items():
     with open(txt_path, "w", encoding="utf-8") as f:
         for _, row in df_txt.iterrows():
             line = (
-                f"{str(row['CUSTBRCH']).zfill(7)}"          # Z7. numeric
+                f"{str(int(row['CUSTBRCH'])).zfill(7)}"          # Z7. numeric
                 f"{str(row['CUSTNO']).ljust(11)}"
                 f"{str(row['ACCTCODE']).ljust(5)}"
                 f"{str(row['ACCTNO']).rjust(20)}"          # 20. numeric
