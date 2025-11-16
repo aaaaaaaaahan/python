@@ -1,12 +1,133 @@
+import duckdb
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
+import datetime
+
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+report_date = batch_date.strftime("%d-%m-%Y")
+
 # ============================
-# STEP 2: PROCESS HRC FIELDS (cast to VARCHAR first)
+# CONFIG
 # ============================
+con = duckdb.connect()
+cis = get_hive_parquet('CIS_CUST_DAILY')
+
+# ============================
+# STEP 1: LOAD PARQUET
+# ============================
+con.execute(f"""
+    CREATE TABLE CUST AS
+    SELECT * FROM read_parquet('{cis[0]}')
+""")
+
+# ============================
+# STEP 2: PROCESS HRC FIELDS
+# ============================
+hrc_list = [f"HRC{str(i).zfill(2)}" for i in range(1, 21)]
+# LPAD to 3 chars (Z3.), replace '002' -> '   '
 processed_hrc = ",\n".join([
     f"CASE WHEN LPAD(CAST({h} AS VARCHAR),3,'0')='002' THEN '   ' ELSE LPAD(CAST({h} AS VARCHAR),3,'0') END AS {h}C"
     for h in hrc_list
 ])
 
 # ============================
-# STEP 3: FILTER BANK EMPLOYEES (cast to VARCHAR first)
+# STEP 3: FILTER BANK EMPLOYEES (any HRCxxC = '002')
 # ============================
 filter_condition = " OR ".join([f"LPAD(CAST({h} AS VARCHAR),3,'0')='002'" for h in hrc_list])
+
+con.execute(f"""
+    CREATE TABLE CIS AS
+    SELECT
+        CUSTNO,
+        INDORG,
+        CUSTBRCH,
+        CUSTNAME,
+        'A' AS FILECODE,
+        {processed_hrc},
+        '000' AS CODEFILLER
+    FROM CUST
+    WHERE {filter_condition}
+""")
+
+# ============================
+# STEP 4: CREATE CUSTCODEALL
+# ============================
+concat_fields = "||".join([f"{h}C" for h in hrc_list] + ["CODEFILLER"])
+con.execute(f"""
+    CREATE TABLE CIS2 AS
+    SELECT *,
+           REPLACE({concat_fields}, ' ', '') AS CUSTCODEALL
+    FROM CIS
+""")
+
+# ============================
+# STEP 5: REMOVE DUPLICATES BY CUSTNO
+# ============================
+con.execute("""
+    CREATE TABLE FINAL AS
+    SELECT *
+    FROM CIS2
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
+""")
+
+# -----------------------------
+# 9. Write Parquet and CSV
+# -----------------------------
+out = """
+SELECT 
+    CUSTNO,
+    INDORG,
+    CUSTBRCH,
+    CUSTCODEALL,
+    FILECODE,
+    ' ' AS STAFFID,
+    CUSTNAME,  
+    {year} AS year,
+    {month} AS month,
+    {day} AS day
+FROM FINAL
+""".format(year=year,month=month,day=day)
+
+queries = {
+    "CICUSCD4_STAF002_INIT": out
+}
+
+for name, query in queries.items():
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
+    """)
+
+    con.execute(f"""
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
+    """)
+
+# -----------------------------
+# 10. Write Fixed-width TXT (matching SAS positions)
+# -----------------------------
+txt_queries = {
+    "CICUSCD4_STAF002_INIT": out
+}
+
+for txt_name, txt_query in txt_queries.items():
+    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
+    df_txt = con.execute(txt_query).fetchdf()
+
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row['CUSTNO']).ljust(20)}"          # Z7. numeric
+                f"{str(row['INDORG']).ljust(1)}"
+                f"{str(row['CUSTBRCH']).ljust(7)}"
+                f"{str(row['CUSTCODEALL']).ljust(60)}"          # 20. numeric
+                f"{str(row['FILECODE']).ljust(1)}"
+                f"{str(row['STAFFID']).ljust(9)}" 
+                f"{str(row['CUSTNAME']).ljust(40)}"
+            )
+            f.write(line + "\n")
