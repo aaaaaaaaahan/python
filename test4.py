@@ -1,11 +1,7 @@
 import duckdb
-import pyarrow.parquet as pq
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
 
-# ------------------------------------------------
-# 0. Batch date & report date
-# ------------------------------------------------
 batch_date = datetime.date.today() - datetime.timedelta(days=1)
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
@@ -44,7 +40,7 @@ con.execute(f"""
     CREATE TABLE hrc_sorted AS
     SELECT 
         CUSTNO,
-        RECTYPE,
+        CUSTTYPE AS RECTYPE,
         BRANCH,
         SUBSTR(HRCCODES,  1, 3)::INTEGER AS C01,
         SUBSTR(HRCCODES,  4, 3)::INTEGER AS C02,
@@ -86,7 +82,11 @@ con.execute("CREATE TABLE custacct2 AS SELECT * FROM custacct ORDER BY ACCTNOC")
 # 5. HRMS (converted from CSV earlier)
 # ------------------------------------------------
 con.execute(f"""CREATE TABLE hrms2 AS 
-    SELECT * FROM read_parquet('{host_parquet_path("HCMS_STFF_TAG.parquet")}') 
+    SELECT
+        * ,
+        'B' AS FILECODE,        
+        LPAD(CAST(ACCTNO AS VARCHAR),11, '0') AS ACCTNOC
+    FROM read_parquet('{host_parquet_path("HCMS_STAFF_TAG.parquet")}') 
     ORDER BY ACCTNOC
 """)
 
@@ -109,10 +109,24 @@ con.execute("""
 """)
 
 # ------------------------------------------------
+# 6a. EXPAND mergefound for TXT/Parquet same rows (C01–C20)
+# ------------------------------------------------
+con.execute("""
+    CREATE TABLE mergefound_expanded AS
+    SELECT
+        custno, rectype, branch, filecode, staffno, staffname,
+        code
+    FROM mergefound
+    JOIN UNNEST([C01,C02,C03,C04,C05,C06,C07,C08,C09,C10,
+                 C11,C12,C13,C14,C15,C16,C17,C18,C19,C20]) AS t(code)
+    WHERE code IS NOT NULL AND code != 0
+""")
+
+# ------------------------------------------------
 # 7. TXT, CSV & Parquet OUTPUT (3 files)
 # ------------------------------------------------
 files = {
-    "NOTFND": """
+    "CICUSCD5_NOTFND": """
         SELECT 
             ORGCODE,
             STAFFNO,
@@ -120,23 +134,26 @@ files = {
             ACCTNOC,
             NEWIC,
             OLDIC,
-            BRANCHCODE
+            BRANCHCODE, 
+            {year} AS year,
+            {month} AS month,
+            {day} AS day
         FROM mergexmtch
         ORDER BY ORGCODE, STAFFNAME, ACCTNOC
-    """,
-    "DPFILE": """
+    """.format(year=year,month=month,day=day),
+    "CICUSCD5_UPDATE_DP_TEMP": """
         SELECT 
-            STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC, STAFFNAME, BRANCHCODE
+            STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC, STAFFNAME, BRANCHCODE, {year} AS year, {month} AS month, {day} AS day
         FROM mergefound
         ORDER BY STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC
-    """,
-    "OUTFILE": """
+    """.format(year=year,month=month,day=day),
+    "CICUSCD5_UPDATE": """
         SELECT
-            CUSTNO, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME,
-            C01,C02,C03,C04,C05,C06,C07,C08,C09,C10,
-            C11,C12,C13,C14,C15,C16,C17,C18,C19,C20
-        FROM mergefound
-    """
+            custno, LPAD(CAST(code AS VARCHAR),3,'0') AS code,
+            rectype, branch, filecode, staffno, staffname,
+            {year} AS year, {month} AS month, {day} AS day
+        FROM mergefound_expanded
+    """.format(year=year,month=month,day=day)
 }
 
 for name, query in files.items():
@@ -144,7 +161,7 @@ for name, query in files.items():
     txt_path = csv_output_path(f"{name}_{report_date}").replace(".csv", ".txt")
     df = con.execute(query).fetchdf()
     with open(txt_path, "w", encoding="utf-8") as f:
-        if name == "OUTFILE":
+        if name == "CICUSCD5_UPDATE":
             def write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname):
                 f.write(
                     f" {custno:<11}"
@@ -157,15 +174,11 @@ for name, query in files.items():
                 )
 
             for _, row in df.iterrows():
-                custno, rectype, branch, filecode, staffno, staffname = row[:6]
-                codes = row[6:]
-                write_update_line(f, custno, 2, rectype, branch, filecode, staffno, staffname)
-                for code in codes:
-                    if code not in (0, None):
-                        write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname)
+                custno, code, rectype, branch, filecode, staffno, staffname = row[:7]
+                write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname)
         else:
             for _, row in df.iterrows():
-                if name == "NOTFND":
+                if name == "CICUSCD5_NOTFND":
                     line = (
                         f"{str(row['ORGCODE']).ljust(3)}"
                         f"{str(row['STAFFNO']).ljust(9)}"
@@ -175,7 +188,7 @@ for name, query in files.items():
                         f"{str(row['OLDIC']).ljust(10)}"
                         f"{str(row['BRANCHCODE']).ljust(3)}"
                     )
-                else:  # DPFILE
+                else:  # DP_TEMP
                     line = (
                         f"{str(row['STAFFNO']).ljust(9)}"
                         f"{str(row['CUSTNO']).ljust(20)}"
@@ -188,7 +201,7 @@ for name, query in files.items():
                 f.write(line + "\n")
 
     # ---------------- CSV
-    csv_path = csv_output_path(f"{name}_{report_date}")
+    csv_path = csv_output_path(name)
     con.execute(f"""
         COPY ({query})
         TO '{csv_path}'
@@ -196,11 +209,10 @@ for name, query in files.items():
     """)
 
     # ---------------- Parquet
-    parquet_path = parquet_output_path(f"{name}_{report_date}")
+    parquet_path = parquet_output_path(name)
     con.execute(f"""
         COPY ({query})
         TO '{parquet_path}'
-        (FORMAT PARQUET, OVERWRITE_OR_IGNORE TRUE)
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
     """)
 
-print("Completed full processing: TXT, CSV, and Parquet for 3 files (NOTFND, DPFILE, OUTFILE).")
