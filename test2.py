@@ -1,100 +1,120 @@
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
 import datetime
+import os
 
-# ============================
+# ==========================================================
 # CONFIG
-# ============================
-input_parquet = host_parquet_path("CIS/CUST/DAILY/CUSTDLY.parquet")
-output_parquet = parquet_output_path("CICUSCD4/STAF002_INIT.parquet")
-output_text = csv_output_path("CICUSCD4/STAF002.INIT.txt")
+# ==========================================================
+custfile_parquet = "RBP2.B033.CIS.CUST.DAILY.parquet"
+custcode_parquet = "RBP2.B033.CUSTCODE.C002.parquet"
 
+output_parquet = "RBP2.B033.CUSTCODE.BNKEMP.parquet"
+output_txt = "RBP2.B033.CUSTCODE.BNKEMP.txt"
+
+# Delete old output files (same as DISP=MOD,DELETE,DELETE)
+for f in [output_parquet, output_txt]:
+    if os.path.exists(f):
+        os.remove(f)
+
+# ==========================================================
+# CONNECT
+# ==========================================================
 con = duckdb.connect()
 
-# ============================
-# STEP 1: LOAD PARQUET
-# ============================
+# ==========================================================
+# 1. LOAD CUST FILE  (like SET CUSTFILE.CUSTDLY)
+#    Filter ACCTCODE = 'DP'
+#    Keep SAS fields
+# ==========================================================
 con.execute(f"""
-    CREATE TABLE CUST AS
-    SELECT * FROM read_parquet('{input_parquet}')
-""")
-
-# ============================
-# STEP 2: PROCESS HRC FIELDS
-# ============================
-hrc_list = [f"HRC{str(i).zfill(2)}" for i in range(1, 21)]
-# LPAD to 3 chars (Z3.), replace '002' -> '   '
-processed_hrc = ",\n".join([
-    f"CASE WHEN LPAD({h},3,'0')='002' THEN '   ' ELSE LPAD({h},3,'0') END AS {h}C"
-    for h in hrc_list
-])
-
-# ============================
-# STEP 3: FILTER BANK EMPLOYEES (any HRCxxC = '002')
-# ============================
-filter_condition = " OR ".join([f"LPAD({h},3,'0')='002'" for h in hrc_list])
-
-con.execute(f"""
-    CREATE TABLE CIS AS
+    CREATE OR REPLACE TABLE CUST AS
     SELECT
         CUSTNO,
-        INDORG,
-        CUSTBRCH,
         CUSTNAME,
-        'A' AS FILECODE,
-        {processed_hrc},
-        '000' AS CODEFILLER
-    FROM CUST
-    WHERE {filter_condition}
+        ACCTNOC,
+        ACCTCODE,
+        JOINTACC
+    FROM read_parquet('{custfile_parquet}')
+    WHERE ACCTCODE = 'DP'
+    ORDER BY CUSTNO
 """)
 
-# ============================
-# STEP 4: CREATE CUSTCODEALL
-# ============================
-concat_fields = "||".join([f"{h}C" for h in hrc_list] + ["CODEFILLER"])
+print("CUST sample:")
+print(con.execute("SELECT * FROM CUST LIMIT 5").fetchdf())
+
+# ==========================================================
+# 2. LOAD BANKEMP (CUSTCODE file)
+#    Equivalent to INPUT @1 CUSTNO $20
+#    Then dedup by CUSTNO
+# ==========================================================
 con.execute(f"""
-    CREATE TABLE CIS2 AS
-    SELECT *,
-           REPLACE({concat_fields}, ' ', '') AS CUSTCODEALL
-    FROM CIS
+    CREATE OR REPLACE TABLE BANKEMP AS
+    SELECT DISTINCT
+        CUSTNO
+    FROM read_parquet('{custcode_parquet}')
+    ORDER BY CUSTNO
 """)
 
-# ============================
-# STEP 5: REMOVE DUPLICATES BY CUSTNO
-# ============================
+print("BANKEMP sample:")
+print(con.execute("SELECT * FROM BANKEMP LIMIT 5").fetchdf())
+
+# ==========================================================
+# 3. MERGE (LEFT JOIN WHERE BANKEMP EXISTS)
+#    SAS: MERGE CUST(IN=S) BANKEMP(IN=T); IF T;
+# ==========================================================
 con.execute("""
-    CREATE TABLE FINAL AS
+    CREATE OR REPLACE TABLE MERGE AS
+    SELECT
+        C.CUSTNO,
+        C.ACCTCODE,
+        C.ACCTNOC,
+        C.JOINTACC,
+        C.CUSTNAME
+    FROM CUST C
+    JOIN BANKEMP B
+    ON C.CUSTNO = B.CUSTNO
+    ORDER BY C.CUSTNO, C.ACCTNOC
+""")
+
+print("MERGE sample:")
+print(con.execute("SELECT * FROM MERGE LIMIT 5").fetchdf())
+
+# ==========================================================
+# 4. REMOVE ACCTNOC = '' (SAS: IF ACCTNOC=' ' THEN DELETE)
+# ==========================================================
+con.execute("""
+    CREATE OR REPLACE TABLE OUT AS
     SELECT *
-    FROM CIS2
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
+    FROM MERGE
+    WHERE TRIM(ACCTNOC) <> ''
 """)
 
-# ============================
-# STEP 6: WRITE PARQUET
-# ============================
-con.execute(f"""
-    COPY FINAL TO '{output_parquet}' (FORMAT PARQUET)
-""")
+print("OUT sample:")
+print(con.execute("SELECT * FROM OUT LIMIT 5").fetchdf())
 
-# ============================
-# STEP 7: WRITE FIXED-WIDTH TEXT
-# ============================
-# DuckDB allows fixed-width via LPAD/RPAD
-# Columns: @1 CUSTNO $20, @21 INDORG $1, @22 CUSTBRCH Z7
-# @29 CUSTCODEALL $60, @89 FILECODE $1, @90 STAFFID $9 (blank), @99 CUSTNAME $40
+# ==========================================================
+# 5. WRITE PARQUET OUTPUT
+# ==========================================================
+out_arrow = con.execute("SELECT * FROM OUT").fetch_arrow_table()
+pq.write_table(out_arrow, output_parquet)
 
-con.execute(f"""
-    COPY (
-        SELECT
-            RPAD(CUSTNO,20,' ') ||
-            RPAD(INDORG,1,' ') ||
-            LPAD(CAST(CUSTBRCH AS VARCHAR),7,'0') ||
-            RPAD(CUSTCODEALL,60,' ') ||
-            RPAD(FILECODE,1,' ') ||
-            RPAD('',9,' ') ||  -- STAFFID blank
-            RPAD(CUSTNAME,40,' ')
-        AS line
-        FROM FINAL
-    ) TO '{output_text}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
-""")
+# ==========================================================
+# 6. WRITE FIXED-WIDTH TXT (same as SAS PUT @01 …)
+# ==========================================================
+with open(output_txt, "w") as f:
+    df = con.execute("SELECT * FROM OUT").fetchdf()
 
-print("DuckDB-only processing done: parquet + fixed-width text generated.")
+    for _, row in df.iterrows():
+        line = (
+            f"{str(row['CUSTNO']).ljust(20)}"
+            f"{str(row['ACCTCODE']).ljust(5)}"
+            f"{str(row['ACCTNOC']).ljust(11)}"
+            f"{str(row['JOINTACC']).ljust(1)}"
+            f"{str(row['CUSTNAME']).ljust(40)}"
+        )
+        f.write(line + "\n")
+
+print("TXT output written:", output_txt)
+print("PARQUET output written:", output_parquet)
