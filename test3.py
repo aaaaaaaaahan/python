@@ -33,9 +33,6 @@ con.execute(f"""
     ORDER BY CUSTNO
 """)
 
-print("Cust Daily:")
-print(con.execute("SELECT * FROM cust LIMIT 500").fetchdf())
-
 # ------------------------------------------------
 # 3. Sort HRC (C01–C20 from HRCCODES)
 # ------------------------------------------------
@@ -69,9 +66,6 @@ con.execute(f"""
     ORDER BY CUSTNO
 """)
 
-print("Custcode:")
-print(con.execute("SELECT * FROM hrc_sorted LIMIT 500").fetchdf())
-
 # ------------------------------------------------
 # 4. Merge HRC + CUST → CUSTACCT
 # ------------------------------------------------
@@ -84,23 +78,17 @@ con.execute("""
 """)
 con.execute("CREATE TABLE custacct2 AS SELECT * FROM custacct ORDER BY ACCTNOC")
 
-print("HRC + Cust Daily:")
-print(con.execute("SELECT * FROM custacct2 LIMIT 500").fetchdf())
-
 # ------------------------------------------------
 # 5. HRMS (converted from CSV earlier)
 # ------------------------------------------------
 con.execute(f"""CREATE TABLE hrms2 AS 
     SELECT
         *,
-        'B' AS FILECODE,
-        ACCTNO AS ACCTNOC
+        'B' AS FILECODE,        
+        LPAD(CAST(ACCTNO AS VARCHAR),11, '0') AS ACCTNOC
     FROM read_parquet('{host_parquet_path("HCMS_STAFF_TAG.parquet")}') 
     ORDER BY ACCTNOC
 """)
-
-print("Staff Tag:")
-print(con.execute("SELECT * FROM hrms2 LIMIT 500").fetchdf())
 
 # ------------------------------------------------
 # 6. MERGE HRMS + CUSTACCT
@@ -112,9 +100,6 @@ con.execute("""
     INNER JOIN custacct2 c USING(ACCTNOC)
 """)
 
-print("Merge Found:")
-print(con.execute("SELECT * FROM mergefound LIMIT 500").fetchdf())
-
 con.execute("""
     CREATE TABLE mergexmtch AS
     SELECT *
@@ -122,9 +107,6 @@ con.execute("""
     LEFT JOIN custacct2 c USING(ACCTNOC)
     WHERE c.CUSTNO IS NULL
 """)
-
-print("Merge X Found:")
-print(con.execute("SELECT * FROM mergexmtch LIMIT 500").fetchdf())
 
 # ------------------------------------------------
 # 7. TXT, CSV & Parquet OUTPUT (3 files)
@@ -224,5 +206,3 @@ for name, query in files.items():
         TO '{parquet_path}'
         (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
     """)
-
-print("Completed full processing: TXT, CSV, and Parquet for 3 files (NOTFND, DPFILE, OUTFILE).")
