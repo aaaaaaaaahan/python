@@ -83,7 +83,7 @@ con.execute("CREATE TABLE custacct2 AS SELECT * FROM custacct ORDER BY ACCTNOC")
 # ------------------------------------------------
 con.execute(f"""CREATE TABLE hrms2 AS 
     SELECT
-        *,
+        * ,
         'B' AS FILECODE,        
         LPAD(CAST(ACCTNO AS VARCHAR),11, '0') AS ACCTNOC
     FROM read_parquet('{host_parquet_path("HCMS_STAFF_TAG.parquet")}') 
@@ -106,6 +106,20 @@ con.execute("""
     FROM hrms2 h
     LEFT JOIN custacct2 c USING(ACCTNOC)
     WHERE c.CUSTNO IS NULL
+""")
+
+# ------------------------------------------------
+# 6a. EXPAND mergefound for TXT/Parquet same rows (C01–C20)
+# ------------------------------------------------
+con.execute("""
+    CREATE TABLE mergefound_expanded AS
+    SELECT
+        custno, rectype, branch, filecode, staffno, staffname,
+        code
+    FROM mergefound,
+    UNNEST(ARRAY[C01,C02,C03,C04,C05,C06,C07,C08,C09,C10,
+                C11,C12,C13,C14,C15,C16,C17,C18,C19,C20]) AS t(code)
+    WHERE code IS NOT NULL AND code != 0
 """)
 
 # ------------------------------------------------
@@ -135,11 +149,10 @@ files = {
     """.format(year=year,month=month,day=day),
     "CICUSCD5_UPDATE": """
         SELECT
-            CUSTNO, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME,
-            C01,C02,C03,C04,C05,C06,C07,C08,C09,C10,
-            C11,C12,C13,C14,C15,C16,C17,C18,C19,C20,
+            custno, LPAD(CAST(code AS VARCHAR),3,'0') AS code,
+            rectype, branch, filecode, staffno, staffname,
             {year} AS year, {month} AS month, {day} AS day
-        FROM mergefound
+        FROM mergefound_expanded
     """.format(year=year,month=month,day=day)
 }
 
@@ -151,7 +164,7 @@ for name, query in files.items():
         if name == "CICUSCD5_UPDATE":
             def write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname):
                 f.write(
-                    f" {custno:<11}"
+                    f" {custno:<19}"
                     f"{code:0>3}"
                     f"{rectype:<1}"
                     f"{branch:<7}"
@@ -161,12 +174,8 @@ for name, query in files.items():
                 )
 
             for _, row in df.iterrows():
-                custno, rectype, branch, filecode, staffno, staffname = row[:6]
-                codes = row[6:]
-                write_update_line(f, custno, 2, rectype, branch, filecode, staffno, staffname)
-                for code in codes:
-                    if code not in (0, None):
-                        write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname)
+                custno, code, rectype, branch, filecode, staffno, staffname = row[:7]
+                write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname)
         else:
             for _, row in df.iterrows():
                 if name == "CICUSCD5_NOTFND":
@@ -179,7 +188,7 @@ for name, query in files.items():
                         f"{str(row['OLDIC']).ljust(10)}"
                         f"{str(row['BRANCHCODE']).ljust(3)}"
                     )
-                else:  # DPFILE
+                else:  # DP_TEMP
                     line = (
                         f"{str(row['STAFFNO']).ljust(9)}"
                         f"{str(row['CUSTNO']).ljust(20)}"
@@ -206,3 +215,101 @@ for name, query in files.items():
         TO '{parquet_path}'
         (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
     """)
+
+# =====================================================
+# RE-SORT CUSTCODE AND REFORMAT TO FIT PROGRAM CIUPDCCD
+# =====================================================
+
+# ---------------------------
+# Step 1: Read Parquet
+# ---------------------------
+con.execute(f"""
+CREATE OR REPLACE TABLE temp1 AS
+SELECT 
+    *,
+    code AS F1,
+FROM mergefound_expanded
+""")
+
+# ---------------------------
+# Step 2: Sort and remove duplicates
+# ---------------------------
+con.execute("""
+CREATE OR REPLACE TABLE temp_sorted AS
+SELECT DISTINCT CUSTNO, F1, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME
+FROM temp1
+ORDER BY CUSTNO, F1
+""")
+
+# ---------------------------
+# Step 3: Array-like columns W1-W20
+# We assign row numbers per CUSTNO and pivot F1 into W1-W10
+# ---------------------------
+con.execute("""
+CREATE OR REPLACE TABLE temp2 AS
+WITH numbered AS (
+    SELECT *,
+           ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY F1) AS rn
+    FROM temp_sorted
+)
+SELECT
+    CUSTNO,
+    RECTYPE,
+    BRANCH,
+    FILECODE,
+    STAFFNO,
+    STAFFNAME,
+    COALESCE(MAX(CASE WHEN rn=1 THEN F1 END),0) AS W1,
+    COALESCE(MAX(CASE WHEN rn=2 THEN F1 END),0) AS W2,
+    COALESCE(MAX(CASE WHEN rn=3 THEN F1 END),0) AS W3,
+    COALESCE(MAX(CASE WHEN rn=4 THEN F1 END),0) AS W4,
+    COALESCE(MAX(CASE WHEN rn=5 THEN F1 END),0) AS W5,
+    COALESCE(MAX(CASE WHEN rn=6 THEN F1 END),0) AS W6,
+    COALESCE(MAX(CASE WHEN rn=7 THEN F1 END),0) AS W7,
+    COALESCE(MAX(CASE WHEN rn=8 THEN F1 END),0) AS W8,
+    COALESCE(MAX(CASE WHEN rn=9 THEN F1 END),0) AS W9,
+    COALESCE(MAX(CASE WHEN rn=10 THEN F1 END),0) AS W10,
+    0 AS W11,
+    0 AS W12,
+    0 AS W13,
+    0 AS W14,
+    0 AS W15,
+    0 AS W16,
+    0 AS W17,
+    0 AS W18,
+    0 AS W19,
+    0 AS W20
+FROM numbered
+GROUP BY CUSTNO, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME
+ORDER BY CUSTNO
+""")
+
+# ---------------------------
+# Step 4: Export Parquet
+# ---------------------------
+con.execute(f"COPY temp2 TO '{output_parquet}' (FORMAT PARQUET)")
+
+# ---------------------------
+# Step 5: Export fixed-width TXT
+# ---------------------------
+# Use DuckDB string formatting to mimic SAS PUT Z3. and fixed-width columns
+query_txt = """
+SELECT
+    lpad(CUSTNO,11,' ') ||
+    lpad(RECTYPE,1,' ') ||
+    lpad(BRANCH,7,' ') ||
+    lpad(W1,3,'0') || lpad(W2,3,'0') || lpad(W3,3,'0') || lpad(W4,3,'0') || lpad(W5,3,'0') ||
+    lpad(W6,3,'0') || lpad(W7,3,'0') || lpad(W8,3,'0') || lpad(W9,3,'0') || lpad(W10,3,'0') ||
+    lpad(W11,3,'0') || lpad(W12,3,'0') || lpad(W13,3,'0') || lpad(W14,3,'0') || lpad(W15,3,'0') ||
+    lpad(W16,3,'0') || lpad(W17,3,'0') || lpad(W18,3,'0') || lpad(W19,3,'0') || lpad(W20,3,'0') ||
+    lpad(FILECODE,1,' ') ||
+    lpad(STAFFNO,9,' ') ||
+    lpad(STAFFNAME,40,' ')
+FROM temp2
+"""
+
+# Fetch as Python list and write to file
+result = con.execute(query_txt).fetchall()
+with open(output_txt, 'w') as f:
+    for row in result:
+        f.write(row[0] + '\n')
