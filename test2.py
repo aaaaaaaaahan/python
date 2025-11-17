@@ -1,192 +1,108 @@
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
-import datetime
+import pandas as pd
 
-# ------------------------------------------------
-# Input + Output Paths
-# ------------------------------------------------
-CUSTFILE = "CUSTFILE.CUSTDLY.parquet"
-CUSTCODE = "CUSTCODE.parquet"
-HRMSFILE = "HRMSFILE.parquet"
+# ---------------------------
+# Paths
+# ---------------------------
+input_parquet = 'RBP2.B033.CICUSCD5.UPDATE.parquet'
+output_parquet = 'RBP2.B033.CICUSCD5.UPDATE.SORT.parquet'
+output_txt = 'RBP2.B033.CICUSCD5.UPDATE.SORT.txt'
 
-OUTFILE = "CICUSCD5.UPDATE.txt"
-NOTFND = "CICUSCD5.NOTFND.txt"
-DPFILE = "CICUSCD5.UPDATE.DP.TEMP.txt"
-
-OUT_PARQUET = "CICUSCD5.UPDATE.parquet"   # optional
-
-# ------------------------------------------------
-# 1. Connect to DuckDB
-# ------------------------------------------------
+# ---------------------------
+# Connect to DuckDB
+# ---------------------------
 con = duckdb.connect()
 
-# ------------------------------------------------
-# 2. Load Input Tables
-# ------------------------------------------------
-con.execute(f"CREATE TABLE custfile AS SELECT * FROM parquet_scan('{CUSTFILE}')")
-con.execute(f"CREATE TABLE hrc AS SELECT * FROM parquet_scan('{CUSTCODE}')")
-con.execute(f"CREATE TABLE hrms AS SELECT * FROM parquet_scan('{HRMSFILE}')")
-
-# ------------------------------------------------
-# 3. Build CUST (ACCTCODE='DP' AND PRISEC = 901)
-# ------------------------------------------------
-con.execute("""
-    CREATE TABLE cust AS
-    SELECT
-        CUSTNO,
-        ACCTNOC,
-        ACCTCODE,
-        CUSTNAME,
-        TAXID,
-        ALIASKEY,
-        ALIAS,
-        JOINTACC,
-        LPAD(CAST(CUSTBRCH AS VARCHAR), 7, '0') AS BRANCH
-    FROM custfile
-    WHERE ACCTCODE = 'DP'
-      AND PRISEC = 901
+# ---------------------------
+# Step 1: Read Parquet
+# ---------------------------
+con.execute(f"""
+CREATE OR REPLACE TABLE temp1 AS
+SELECT *
+FROM read_parquet('{input_parquet}')
 """)
 
-# CUST sorted
-con.execute("CREATE TABLE cust1 AS SELECT * FROM cust ORDER BY ACCTNOC")
-con.execute("CREATE TABLE cust2 AS SELECT * FROM cust1 ORDER BY CUSTNO")
-
-# ------------------------------------------------
-# 4. Sort HRC (C01–C20)
-# ------------------------------------------------
-con.execute("CREATE TABLE hrc_sorted AS SELECT * FROM hrc ORDER BY CUSTNO")
-
-# ------------------------------------------------
-# 5. Merge HRC + CUST → CUSTACCT
-# ------------------------------------------------
+# ---------------------------
+# Step 2: Sort and remove duplicates
+# ---------------------------
 con.execute("""
-    CREATE TABLE custacct AS
-    SELECT *
-    FROM hrc_sorted h
-    LEFT JOIN cust2 c USING (CUSTNO)
-    WHERE c.CUSTNO IS NOT NULL
+CREATE OR REPLACE TABLE temp_sorted AS
+SELECT DISTINCT CUSTNO, F1, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME
+FROM temp1
+ORDER BY CUSTNO, F1
 """)
 
-con.execute("CREATE TABLE custacct2 AS SELECT * FROM custacct ORDER BY ACCTNOC")
-
-# ------------------------------------------------
-# 6. HRMS (converted from CSV earlier)
-# ------------------------------------------------
-con.execute("CREATE TABLE hrms2 AS SELECT * FROM hrms ORDER BY ACCTNOC")
-
-# ------------------------------------------------
-# 7. MERGE HRMS + CUSTACCT
-# ------------------------------------------------
+# ---------------------------
+# Step 3: Array-like columns W1-W20
+# We assign row numbers per CUSTNO and pivot F1 into W1-W10
+# ---------------------------
 con.execute("""
-    CREATE TABLE mergefound AS
-    SELECT *
-    FROM hrms2 h
-    INNER JOIN custacct2 c USING(ACCTNOC)
+CREATE OR REPLACE TABLE temp2 AS
+WITH numbered AS (
+    SELECT *,
+           ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY F1) AS rn
+    FROM temp_sorted
+)
+SELECT
+    CUSTNO,
+    RECTYPE,
+    BRANCH,
+    FILECODE,
+    STAFFNO,
+    STAFFNAME,
+    COALESCE(MAX(CASE WHEN rn=1 THEN F1 END),0) AS W1,
+    COALESCE(MAX(CASE WHEN rn=2 THEN F1 END),0) AS W2,
+    COALESCE(MAX(CASE WHEN rn=3 THEN F1 END),0) AS W3,
+    COALESCE(MAX(CASE WHEN rn=4 THEN F1 END),0) AS W4,
+    COALESCE(MAX(CASE WHEN rn=5 THEN F1 END),0) AS W5,
+    COALESCE(MAX(CASE WHEN rn=6 THEN F1 END),0) AS W6,
+    COALESCE(MAX(CASE WHEN rn=7 THEN F1 END),0) AS W7,
+    COALESCE(MAX(CASE WHEN rn=8 THEN F1 END),0) AS W8,
+    COALESCE(MAX(CASE WHEN rn=9 THEN F1 END),0) AS W9,
+    COALESCE(MAX(CASE WHEN rn=10 THEN F1 END),0) AS W10,
+    0 AS W11,
+    0 AS W12,
+    0 AS W13,
+    0 AS W14,
+    0 AS W15,
+    0 AS W16,
+    0 AS W17,
+    0 AS W18,
+    0 AS W19,
+    0 AS W20
+FROM numbered
+GROUP BY CUSTNO, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME
+ORDER BY CUSTNO
 """)
 
-con.execute("""
-    CREATE TABLE mergexmtch AS
-    SELECT *
-    FROM hrms2 h
-    LEFT JOIN custacct2 c USING(ACCTNOC)
-    WHERE c.CUSTNO IS NULL
-""")
+# ---------------------------
+# Step 4: Export Parquet
+# ---------------------------
+con.execute(f"COPY temp2 TO '{output_parquet}' (FORMAT PARQUET)")
 
-# ------------------------------------------------
-# 8. NOTFOUND output (same fixed width as SAS)
-# ------------------------------------------------
-rows = con.execute("""
-    SELECT 
-        ORGCODE,
-        STAFFNO,
-        STAFFNAME,
-        ACCTNOC,
-        NEWIC,
-        OLDIC,
-        BRANCHCODE
-    FROM mergexmtch
-    ORDER BY ORGCODE, STAFFNAME, ACCTNOC
-""").fetchall()
+# ---------------------------
+# Step 5: Export fixed-width TXT
+# ---------------------------
+# Use DuckDB string formatting to mimic SAS PUT Z3. and fixed-width columns
+query_txt = """
+SELECT
+    lpad(CUSTNO,11,' ') ||
+    lpad(RECTYPE,1,' ') ||
+    lpad(BRANCH,7,' ') ||
+    lpad(W1,3,'0') || lpad(W2,3,'0') || lpad(W3,3,'0') || lpad(W4,3,'0') || lpad(W5,3,'0') ||
+    lpad(W6,3,'0') || lpad(W7,3,'0') || lpad(W8,3,'0') || lpad(W9,3,'0') || lpad(W10,3,'0') ||
+    lpad(W11,3,'0') || lpad(W12,3,'0') || lpad(W13,3,'0') || lpad(W14,3,'0') || lpad(W15,3,'0') ||
+    lpad(W16,3,'0') || lpad(W17,3,'0') || lpad(W18,3,'0') || lpad(W19,3,'0') || lpad(W20,3,'0') ||
+    lpad(FILECODE,1,' ') ||
+    lpad(STAFFNO,9,' ') ||
+    lpad(STAFFNAME,40,' ')
+FROM temp2
+"""
 
-with open(NOTFND, "w") as f:
-    for r in rows:
-        f.write(
-            f"{r[0]:<3}"
-            f"{r[1]:<9}"
-            f"{r[2]:<40}"
-            f"{r[3]:<11}"
-            f"{r[4]:<12}"
-            f"{r[5]:<10}"
-            f"{r[6]:<3}"
-            "\n"
-        )
+# Fetch as Python list and write to file
+result = con.execute(query_txt).fetchall()
+with open(output_txt, 'w') as f:
+    for row in result:
+        f.write(row[0] + '\n')
 
-# ------------------------------------------------
-# 9. DPTEAM output
-# ------------------------------------------------
-rows = con.execute("""
-    SELECT STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC, STAFFNAME, BRANCHCODE
-    FROM mergefound
-    ORDER BY STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC
-""").fetchall()
-
-with open(DPFILE, "w") as f:
-    for r in rows:
-        f.write(
-            f"{r[0]:<9}"
-            f"{r[1]:<20}"
-            f"{r[2]:<5}"
-            f"{r[3]:<11}"
-            f"{r[4]:<1}"
-            f"{r[5]:<40}"
-            f"{r[6]:<3}"
-            "\n"
-        )
-
-# ------------------------------------------------
-# 10. UPDATE output (C01–C20 + forced 002)
-# ------------------------------------------------
-
-def write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname):
-    f.write(
-        f" {custno:<11}"
-        f"{code:0>3}"
-        f"{rectype:<1}"
-        f"{branch:<7}"
-        f"{filecode:<1}"
-        f"{staffno:<9}"
-        f"{staffname:<40}\n"
-    )
-
-rows = con.execute("""
-    SELECT
-        CUSTNO, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME,
-        C01,C02,C03,C04,C05,C06,C07,C08,C09,C10,
-        C11,C12,C13,C14,C15,C16,C17,C18,C19,C20
-    FROM mergefound
-""").fetchall()
-
-with open(OUTFILE, "w") as f:
-    for r in rows:
-        custno, rectype, branch, filecode, staffno, staffname = r[:6]
-        codes = r[6:]
-
-        # SAS always outputs 002
-        write_update_line(f, custno, 2, rectype, branch, filecode, staffno, staffname)
-
-        # C01 – C20 same SAS logic (no loop in SAS)
-        for code in codes:
-            if code not in (0, None):
-                write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname)
-
-# ------------------------------------------------
-# 11. Optional Parquet Output for UPDATE
-# ------------------------------------------------
-update_table = con.execute("""
-    SELECT * FROM mergefound
-""").arrow()
-
-pq.write_table(update_table, OUT_PARQUET)
-
-print("Completed CICUSCD5 conversion successfully.")
+con.close()
