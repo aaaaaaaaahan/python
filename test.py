@@ -2,56 +2,217 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//*-------------------------------------------------------------------**
-//*- GET LISTING OF ACCOUNT PER STAFF                                 **
-//*-------------------------------------------------------------------**
-//SASPGRM  EXEC SAS609
-//CUSTFILE DD DISP=SHR,DSN=CIS.CUST.DAILY
-//STAFFACC DD DISP=SHR,DSN=CICUSCD5.UPDATE.DP.TEMP
-//DPFILE   DD DSN=CICUSCD5.UPDATE.DP,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-OPTIONS NOCENTER;
-   DATA CUST;
-   FORMAT ACCTNOC $11. ;
-   KEEP CUSTNO ACCTNOC ACCTCODE JOINTACC;
-   SET CUSTFILE.CUSTDLY;
-   IF ACCTCODE = 'DP';
-   RUN;
-   PROC SORT  DATA=CUST ;BY CUSTNO;RUN;
-   PROC PRINT DATA=CUST (OBS=05);TITLE 'CUST';RUN;
+//CIHRCDP1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB65417
+//*---------------------------------------------------------------------
+//DELETE   EXEC PGM=IEFBR14
+//DELE1    DD DSN=CIS.HRCCUST.DPACCTS.GOOD,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DELE2    DD DSN=CIS.HRCCUST.DPACCTS.CLOSED,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DELE3    DD DSN=CIS.HRCCUST.DPACCTS.GOOD.PBB,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DELE4    DD DSN=CIS.HRCCUST.DPACCTS.GOOD.PIBB,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*---------------------------------------------------------------------
+//* PROCESSES STARTS HERE
+//*---------------------------------------------------------------------
+//ALLACCT  EXEC SAS609,REGION=4M,WORK='50000,50000'
+//IEFRDER   DD DUMMY
+//*OUTPUT FROM JOB CIHRCALL
+//HRCSTDP   DD DISP=SHR,DSN=CIS.HRCCUST.DPACCTS
+//*OUTPUT FROM JOB DPEX2000/2001
+//DPFILE    DD DISP=SHR,DSN=DPTRBLGS
+//OUTDPGOD  DD DSN=CIS.HRCCUST.DPACCTS.GOOD,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
+//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
+//OUTDPBAD  DD DSN=CIS.HRCCUST.DPACCTS.CLOSED,
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
+//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,800)
+//SYSIN     DD *
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+ /*----------------------------------------------------------------*/
+ /*    HIGH RISK CUSTOMERS WITH DP ACCT DECLARATION                */
+ /*----------------------------------------------------------------*/
+  DATA CISDP;
+      INFILE HRCSTDP;
+      INPUT  @01   BANKNUM            $3.
+             @04   CUSTBRCH           5.
+             @09   CUSTNO             $11.
+             @20   CUSTNAME           $40.
+             @60   RACE               $1.
+             @61   CITIZENSHIP        $2.
+             @63   INDORG             $1.
+             @64   PRIMSEC            $1.
+             @65   CUSTLASTDATECC     $2.
+             @67   CUSTLASTDATEYY     $2.
+             @69   CUSTLASTDATEMM     $2.
+             @71   CUSTLASTDATEDD     $2.
+             @73   ALIASKEY           $3.
+             @76   ALIAS              $20.
+             @96   HRCCODES           $60.
+             @156  ACCTCODE           $5.
+             @161  ACCTNO             20.;
+  RUN;
+  PROC SORT DATA=CISDP; BY ACCTNO; RUN;
+ /*----------------------------------------------------------------*/
+ /*    DEPOSIT TRIAL BALANCE FILE DECLARATION                      */
+ /*    GET PBB AND PIBB ACCOUNT THEN ONLY SPLIT BY COST CENTRE     */
+ /*    GET ALL ACTIVE ACCOUNTS(DP,SA,CA,VOSTRO,NOSTRO,FCY)         */
+ /*    EXCLUDE ZERO BALANCE ACCTS AND PURGED/CLOSED ACCTS          */
+ /*----------------------------------------------------------------*/
+  DATA DPDATA;
+      INFILE DPFILE;
+      FORMAT TMPDATE 8. OPDATE 8. CLDATE 8. OYYYY 4. OMM Z2. ODD Z2.
+             TMPACCT $10.;
+      INPUT @03  BANKNO       PD2.
+            @24  REPTNO       PD3.
+            @27  FMTCODE      PD2. @;
+      IF (REPTNO = 1001 AND
+         (FMTCODE IN (1,5,10,11,19,20,21,22))) THEN DO;
+         INPUT @106 BRANCH    PD4.
+               @110 ACCTNO    PD6.
+               @158 CLSDATE   PD6.
+               @164 OPENDATE  PD6.
+               @319 LEDBAL    PD7.
+               @716 ACCSTAT   $1.
+               @830 COSTCTR   PD4.;
+         TMPACCT = PUT(ACCTNO,Z10.);
+         CLDATE  = TRIM(SUBSTR(CLSDATE,1,9));
+         IF OPENDATE NE 0 AND BRANCH NE 0 THEN DO;
+            OPDATE  = TRIM(SUBSTR(OPENDATE,1,9));
+            OMM     = SUBSTR(PUT(OPDATE,Z8.),1,2);
+            ODD     = SUBSTR(PUT(OPDATE,Z8.),3,2);
+            OYYYY   = SUBSTR(PUT(OPDATE,Z8.),5,4);
+            TMPDATE = PUT(OYYYY,Z4.) || PUT(OMM,Z2.) || PUT(ODD,Z2.) ;
+            OPDATE  = PUT(TMPDATE,8.);
+         END;
+         ELSE DO;
+            OPDATE  = 0;
+         END;
+         OUTPUT;
+      END;
+  RUN;
 
-DATA STAFFACC;
-  INFILE STAFFACC;
-   KEEP STAFFNO CUSTNO STAFFNAME BRANCHCODE;
-     INPUT @01 STAFFNO        $9.
-           @10 CUSTNO         $11.
-           @30 ACCTCODE       $5.
-           @35 ACCTNOC        $11.
-           @55 JOINTACC       $1.
-           @56 STAFFNAME      $40.
-           @96 BRANCHCODE     $03.;
-RUN;
-PROC SORT  DATA=STAFFACC NODUPKEY; BY CUSTNO; RUN;
-PROC PRINT DATA=STAFFACC(OBS=5);TITLE 'STAFF ACCT';RUN;
+  /****IF PRODUCTION CAN USE SAS 9.1 ABOVE VERSION, DUPOUT*****/
+  /*PROC SORT DATA=DPDATA NODUPKEY DUPOUT=DPDUPS; BY ACCTNO; RUN;*/
+  PROC SORT DATA=DPDATA NODUPKEY; BY ACCTNO; RUN;
+  PROC PRINT DATA=DPDATA(OBS=10);TITLE 'DEPOSIT ACCOUNT DETAILS ';
+  RUN;
 
-DATA MERGE;
-   MERGE   CUST (IN=S)  STAFFACC(IN=T); BY CUSTNO;
-   IF T;
-RUN;
-PROC SORT  DATA=MERGE ;BY CUSTNO ACCTNOC;RUN;
+  DATA GOODDP BADDP;
+      MERGE DPDATA(IN=A) CISDP(IN=B); BY ACCTNO;
+      IF A AND B THEN DO;
+         IF SUBSTR(TMPACCT,1,1) IN (1,3) THEN DO;
+           IF ACCSTAT NE 'C' AND ACCSTAT NE 'B' AND ACCSTAT NE 'P' AND
+              ACCSTAT NE 'Z' THEN
+               OUTPUT GOODDP;
+           ELSE DO;
+               OUTPUT BADDP;
+           END;
+         END;
+         ELSE DO;
+           IF (ACCSTAT NE 'C' AND ACCSTAT NE 'B' AND ACCSTAT NE 'P' AND
+               ACCSTAT NE 'Z' ) OR LEDBAL NE 0  THEN
+               OUTPUT GOODDP;
+           ELSE DO;
+               OUTPUT BADDP;
+           END;
+         END;
+      END;
+  RUN;
 
-DATA OUT;
-   FILE DPFILE;
-   SET MERGE;
-        PUT @01 STAFFNO        $9.
-            @10 CUSTNO         $20.
-            @30 ACCTCODE       $5.
-            @35 ACCTNOC        $11.
-            @55 JOINTACC       $1.
-            @56 STAFFNAME      $40.
-            @96 BRANCHCODE     $03.;
-RUN;
+  PROC SORT DATA=GOODDP; BY CUSTNO ACCTNO; RUN;
+  PROC SORT DATA=BADDP NODUPKEY; BY CUSTNO ACCTNO; RUN;
+
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT GOOD AND BAD DP ACCTS DATASET FOR REPORTING PURPOSE   */
+ /*----------------------------------------------------------------*/
+  DATA TEMPOUT;
+  SET GOODDP;
+  FILE OUTDPGOD;
+     PUT @01   BANKNUM            $3.
+         @04   CUSTBRCH           Z5.
+         @09   CUSTNO             $11.
+         @20   CUSTNAME           $40.
+         @60   RACE               $1.
+         @61   CITIZENSHIP        $2.
+         @63   INDORG             $1.
+         @64   PRIMSEC            $1.
+         @65   CUSTLASTDATECC     $2.
+         @67   CUSTLASTDATEYY     $2.
+         @69   CUSTLASTDATEMM     $2.
+         @71   CUSTLASTDATEDD     $2.
+         @73   ALIASKEY           $3.
+         @76   ALIAS              $20.
+         @96   HRCCODES           $60.
+         @156  BRANCH             Z7.
+         @163  ACCTCODE           $5.
+         @168  ACCTNO             20.
+         @188  OPDATE             8.
+         @196  LEDBAL             Z13.
+         @209  ACCSTAT            $1.
+         @210  COSTCTR            Z4.;
+  RETURN;
+  RUN;
+  DATA TEMPOUT1;
+  SET BADDP;
+  FILE OUTDPBAD;
+     PUT @01   BANKNUM            $3.
+         @04   CUSTBRCH           Z5.
+         @09   CUSTNO             $11.
+         @20   CUSTNAME           $40.
+         @60   RACE               $1.
+         @61   CITIZENSHIP        $2.
+         @63   INDORG             $1.
+         @64   PRIMSEC            $1.
+         @65   CUSTLASTDATECC     $2.
+         @67   CUSTLASTDATEYY     $2.
+         @69   CUSTLASTDATEMM     $2.
+         @71   CUSTLASTDATEDD     $2.
+         @73   ALIASKEY           $3.
+         @76   ALIAS              $20.
+         @96   HRCCODES           $60.
+         @156  BRANCH             Z7.
+         @163  ACCTCODE           $5.
+         @168  ACCTNO             20.
+         @188  OPDATE             8.
+         @196  LEDBAL             Z13.
+         @209  ACCSTAT            $1.
+         @210  COSTCTR            Z4.;
+  RETURN;
+  RUN;
+//*--------------------------------------------------------------------
+//* SORT FILE TO SEPARATE CONVENTIONAL AND ISLAMIC ACCOUNTS
+//* FOR DEPOSIT ACCOUNTS ONLY
+//*--------------------------------------------------------------------
+//COVISLDP EXEC PGM=SORT                                                00170000
+//SYSOUT   DD SYSOUT=*                                                  00170000
+//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
+//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
+//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
+//SORTIN   DD DISP=SHR,DSN=CIS.HRCCUST.DPACCTS.GOOD
+//DPCONV   DD DSN=CIS.HRCCUST.DPACCTS.GOOD.PBB,               00170000
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB),
+//            SPACE=(CYL,(5,10),RLSE)
+//DPPIBB   DD DSN=CIS.HRCCUST.DPACCTS.GOOD.PIBB,              00170000
+//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB),
+//            SPACE=(CYL,(5,10),RLSE)
+//SYSIN  DD *
+ SORT FIELDS=COPY
+ OUTFIL INCLUDE=(210,1,CH,NE,C'3'),FNAMES=DPCONV
+ OUTFIL INCLUDE=(210,1,CH,EQ,C'3'),FNAMES=DPPIBB
