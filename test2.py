@@ -1,106 +1,205 @@
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
+from pyarrow import csv
+import os
 
-# ===================================================================
-# Path Setup
-# ===================================================================
+# ==========================================
+# CONFIG — change these paths for your run
+# ==========================================
+HRCSTDP_PARQUET = host_parquet_path("HRCSTDP")      # CIS.HRCCUST.DPACCTS
+DPFILE_PARQUET  = host_parquet_path("DPTRBLGS")     # DPFILE
+OUT_GOOD_PARQ   = parquet_output_path("DP.GOOD.parquet")
+OUT_BAD_PARQ    = parquet_output_path("DP.BAD.parquet")
+OUT_PBB_PARQ    = parquet_output_path("DP.GOOD.PBB.parquet")
+OUT_PIBB_PARQ   = parquet_output_path("DP.GOOD.PIBB.parquet")
 
-custfile_parquet = host_parquet_path("CUSTDLY")       # CIS.CUST.DAILY
-staffacc_parquet = host_parquet_path("STAFFACC")      # CICUSCD5.UPDATE.DP.TEMP
-
-output_parquet = parquet_output_path("CICUSCD5_UPDATE_DP")
-output_txt = csv_output_path("CICUSCD5_UPDATE_DP.txt")
-
-# ===================================================================
-# DuckDB Connection
-# ===================================================================
+OUT_GOOD_TXT    = csv_output_path("DP.GOOD.txt")
+OUT_BAD_TXT     = csv_output_path("DP.BAD.txt")
+OUT_PBB_TXT     = csv_output_path("DP.GOOD.PBB.txt")
+OUT_PIBB_TXT    = csv_output_path("DP.GOOD.PIBB.txt")
 
 con = duckdb.connect()
 
-# ===================================================================
-# Step 1 — CUST dataset (SAS: DATA CUST)
-# ===================================================================
-
-con.execute("""
-    CREATE OR REPLACE TEMP TABLE CUST AS
-    SELECT 
-        CUSTNO,
-        CAST(ACCTNOC AS VARCHAR) AS ACCTNOC,
-        ACCTCODE,
-        JOINTACC
-    FROM read_parquet($1)
-    WHERE ACCTCODE = 'DP'
-    ORDER BY CUSTNO
-""", [custfile_parquet])
-
-# ===================================================================
-# Step 2 — STAFFACC dataset (SAS INPUT + NODUPKEY)
-# ===================================================================
-
-# STAFFACC parquet already contains fields:
-# STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC, STAFFNAME, BRANCHCODE
-
-con.execute("""
-    CREATE OR REPLACE TEMP TABLE STAFFACC AS
-    SELECT *
-    FROM (
-        SELECT *, 
-               ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) AS rn
-        FROM read_parquet($1)
-    )
-    WHERE rn = 1
-    ORDER BY CUSTNO
-""", [staffacc_parquet])
-
-# ===================================================================
-# Step 3 — SAS MERGE logic
-# MERGE CUST(IN=S) STAFFACC(IN=T) BY CUSTNO; IF T;
-# Equivalent: Keep ONLY STAFFACC (right side)
-# ===================================================================
-
-con.execute("""
-    CREATE OR REPLACE TEMP TABLE MERGE AS
-    SELECT 
-        s.STAFFNO,
-        s.CUSTNO,
-        s.ACCTCODE,
-        s.ACCTNOC,
-        s.JOINTACC,
-        s.STAFFNAME,
-        s.BRANCHCODE
-    FROM STAFFACC s
-    LEFT JOIN CUST c USING (CUSTNO)
-    WHERE s.CUSTNO IS NOT NULL
-    ORDER BY CUSTNO, ACCTNOC
+# ========================================================
+# 1) LOAD HRCSTDP & DPFILE (already-parquet assumption)
+# ========================================================
+con.execute(f"""
+    CREATE TABLE HRCSTDP AS 
+    SELECT * FROM read_parquet('{HRCSTDP_PARQUET}');
 """)
 
-# ===================================================================
-# Step 4 — Output MERGE to Parquet
-# ===================================================================
+con.execute(f"""
+    CREATE TABLE DPFILE AS 
+    SELECT * FROM read_parquet('{DPFILE_PARQUET}');
+""")
 
-merge_arrow = con.execute("SELECT * FROM MERGE").arrow()
-pq.write_table(merge_arrow, output_parquet)
+# ========================================================
+# 2) CISDP — SAS fixed-col input rewritten using DuckDB
+# ========================================================
+# Assumption: parquet already contains correct columns
+# Otherwise, use substr() to slice fields
+con.execute("""
+    CREATE TABLE CISDP AS 
+    SELECT
+        BANKNUM,
+        CUSTBRCH,
+        CUSTNO,
+        CUSTNAME,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
+        PRIMSEC,
+        CUSTLASTDATECC,
+        CUSTLASTDATEYY,
+        CUSTLASTDATEMM,
+        CUSTLASTDATEDD,
+        ALIASKEY,
+        ALIAS,
+        HRCCODES,
+        ACCTCODE,
+        ACCTNO
+    FROM HRCSTDP
+    ORDER BY ACCTNO;
+""")
 
-# ===================================================================
-# Step 5 — Output fixed-width TXT (SAS PUT @nn)
-# ===================================================================
+# ========================================================
+# 3) DPDATA — SAS INPUT with conditional fields
+# ========================================================
+con.execute("""
+    CREATE TABLE DPDATA AS
+    SELECT
+        BANKNO,
+        REPTNO,
+        FMTCODE,
+        BRANCH,
+        ACCTNO,
+        CLSDATE,
+        OPENDATE,
+        LEDBAL,
+        ACCSTAT,
+        COSTCTR,
+        -- SAS: TMPACCT = PUT(ACCTNO,Z10.)
+        LPAD(ACCTNO::VARCHAR, 10, '0') AS TMPACCT
+    FROM DPFILE
+    WHERE REPTNO = 1001
+      AND FMTCODE IN (1,5,10,11,19,20,21,22)
+      AND BRANCH <> 0
+      AND OPENDATE <> 0
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ACCTNO ORDER BY ACCTNO) = 1
+    ORDER BY ACCTNO;
+""")
 
-def fw(s, length):
-    s = "" if s is None else str(s)
-    return s.ljust(length)[:length]
+# ========================================================
+# 4) MERGE → GOODDP / BADDP  (SAS MERGE logic)
+# ========================================================
+con.execute("""
+    CREATE TABLE MERGED AS
+    SELECT
+        A.*,
+        B.BANKNUM, B.CUSTBRCH, B.CUSTNO, B.CUSTNAME, B.RACE,
+        B.CITIZENSHIP, B.INDORG, B.PRIMSEC,
+        B.CUSTLASTDATECC, B.CUSTLASTDATEYY, B.CUSTLASTDATEMM, B.CUSTLASTDATEDD,
+        B.ALIASKEY, B.ALIAS, B.HRCCODES, B.ACCTCODE
+    FROM DPDATA A
+    JOIN CISDP B USING (ACCTNO);
+""")
 
-with open(output_txt, "w") as f:
-    for row in merge_arrow.to_pylist():
-        line = (
-            fw(row["staffno"], 9) +
-            fw(row["custno"], 20) +
-            fw(row["acctcode"], 5) +
-            fw(row["acctnoc"], 11) +
-            fw(row["jointacc"], 1) +
-            fw(row["staffname"], 40) +
-            fw(row["branchcode"], 3)
+# GOOD / BAD based on SAS conditions
+con.execute("""
+    CREATE TABLE GOODDP AS
+    SELECT *
+    FROM MERGED
+    WHERE
+        (
+            SUBSTR(TMPACCT, 1, 1) IN ('1', '3')
+            AND ACCSTAT NOT IN ('C', 'B', 'P', 'Z')
         )
-        f.write(line + "\n")
+        OR
+        (
+            SUBSTR(TMPACCT, 1, 1) NOT IN ('1','3')
+            AND (ACCSTAT NOT IN ('C','B','P','Z') OR LEDBAL <> 0)
+        )
+    ORDER BY CUSTNO, ACCTNO;
+""")
 
-print("DONE — DuckDB processed everything (Parquet + TXT written).")
+con.execute("""
+    CREATE TABLE BADDP AS
+    SELECT *
+    FROM MERGED
+    EXCEPT
+    SELECT * FROM GOODDP;
+""")
+
+# ========================================================
+# 5) PBB / PIBB SPLIT (SAS SORT OUTFIL)
+#    OUTFIL:
+#    - IF FIELD 210 != '3' → PBB (conventional)
+#    - IF FIELD 210 == '3' → PIBB (Islamic)
+# ========================================================
+con.execute("""
+    CREATE TABLE GOOD_PBB AS
+    SELECT * FROM GOODDP
+    WHERE COSTCTR <> 3;     -- matches SAS INCLUDE=(210,1,CH,NE,'3')
+""")
+
+con.execute("""
+    CREATE TABLE GOOD_PIBB AS
+    SELECT * FROM GOODDP
+    WHERE COSTCTR = 3;      -- matches SAS INCLUDE=(210,1,CH,EQ,'3')
+""")
+
+# ========================================================
+# 6) WRITE OUTPUTS (PARQUET & TXT FIXED WIDTH)
+# ========================================================
+def write_parquet(table_name, out_path):
+    tbl = con.execute(f"SELECT * FROM {table_name}").arrow()
+    pq.write_table(tbl, out_path)
+
+def write_fixed_width(table_name, out_path):
+    df = con.execute(f"SELECT * FROM {table_name}").df()
+
+    def fw(row):
+        return (
+            f"{row['BANKNUM']:>3}"
+            f"{int(row['CUSTBRCH']):05d}"
+            f"{row['CUSTNO']:<11}"
+            f"{row['CUSTNAME']:<40}"
+            f"{row['RACE']}"
+            f"{row['CITIZENSHIP']:<2}"
+            f"{row['INDORG']}"
+            f"{row['PRIMSEC']}"
+            f"{row['CUSTLASTDATECC']}"
+            f"{row['CUSTLASTDATEYY']}"
+            f"{row['CUSTLASTDATEMM']}"
+            f"{row['CUSTLASTDATEDD']}"
+            f"{row['ALIASKEY']:<3}"
+            f"{row['ALIAS']:<20}"
+            f"{row['HRCCODES']:<60}"
+            f"{int(row['BRANCH']):07d}"
+            f"{row['ACCTCODE']:<5}"
+            f"{int(row['ACCTNO']):020d}"
+            f"{int(row['OPENDATE']):08d}"
+            f"{int(row['LEDBAL']):013d}"
+            f"{row['ACCSTAT']}"
+            f"{int(row['COSTCTR']):04d}"
+        )
+
+    with open(out_path, "w") as f:
+        for _, r in df.iterrows():
+            f.write(fw(r) + "\n")
+
+
+# PARQUET output
+write_parquet("GOODDP", OUT_GOOD_PARQ)
+write_parquet("BADDP", OUT_BAD_PARQ)
+write_parquet("GOOD_PBB", OUT_PBB_PARQ)
+write_parquet("GOOD_PIBB", OUT_PIBB_PARQ)
+
+# TXT output (fixed width matching SAS PUT)
+write_fixed_width("GOODDP", OUT_GOOD_TXT)
+write_fixed_width("BADDP", OUT_BAD_TXT)
+write_fixed_width("GOOD_PBB", OUT_PBB_TXT)
+write_fixed_width("GOOD_PIBB", OUT_PIBB_TXT)
+
+print("CIHRCDP1 Python version completed successfully.")
