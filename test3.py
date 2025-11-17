@@ -33,6 +33,9 @@ con.execute(f"""
     ORDER BY CUSTNO
 """)
 
+print("Cust Daily:")
+print(con.execute("SELECT * FROM cust LIMIT 500").fetchdf())
+
 # ------------------------------------------------
 # 3. Sort HRC (C01–C20 from HRCCODES)
 # ------------------------------------------------
@@ -66,6 +69,9 @@ con.execute(f"""
     ORDER BY CUSTNO
 """)
 
+print("Custcode:")
+print(con.execute("SELECT * FROM hrc_sorted LIMIT 500").fetchdf())
+
 # ------------------------------------------------
 # 4. Merge HRC + CUST → CUSTACCT
 # ------------------------------------------------
@@ -78,16 +84,23 @@ con.execute("""
 """)
 con.execute("CREATE TABLE custacct2 AS SELECT * FROM custacct ORDER BY ACCTNOC")
 
+print("HRC + Cust Daily:")
+print(con.execute("SELECT * FROM custacct2 LIMIT 500").fetchdf())
+
 # ------------------------------------------------
 # 5. HRMS (converted from CSV earlier)
 # ------------------------------------------------
 con.execute(f"""CREATE TABLE hrms2 AS 
     SELECT
         *,
+        'B' AS FILECODE,
         ACCTNO AS ACCTNOC
     FROM read_parquet('{host_parquet_path("HCMS_STAFF_TAG.parquet")}') 
     ORDER BY ACCTNOC
 """)
+
+print("Staff Tag:")
+print(con.execute("SELECT * FROM hrms2 LIMIT 500").fetchdf())
 
 # ------------------------------------------------
 # 6. MERGE HRMS + CUSTACCT
@@ -99,6 +112,9 @@ con.execute("""
     INNER JOIN custacct2 c USING(ACCTNOC)
 """)
 
+print("Merge Found:")
+print(con.execute("SELECT * FROM mergefound LIMIT 500").fetchdf())
+
 con.execute("""
     CREATE TABLE mergexmtch AS
     SELECT *
@@ -107,11 +123,14 @@ con.execute("""
     WHERE c.CUSTNO IS NULL
 """)
 
+print("Merge X Found:")
+print(con.execute("SELECT * FROM mergexmtch LIMIT 500").fetchdf())
+
 # ------------------------------------------------
 # 7. TXT, CSV & Parquet OUTPUT (3 files)
 # ------------------------------------------------
 files = {
-    "NOTFND": """
+    "CICUSCD5_NOTFND": """
         SELECT 
             ORGCODE,
             STAFFNO,
@@ -119,21 +138,25 @@ files = {
             ACCTNOC,
             NEWIC,
             OLDIC,
-            BRANCHCODE
+            BRANCHCODE, 
+            {year} AS year,
+            {month} AS month,
+            {day} AS day
         FROM mergexmtch
         ORDER BY ORGCODE, STAFFNAME, ACCTNOC
     """.format(year=year,month=month,day=day),
-    "DPFILE": """
+    "CICUSCD5_UPDATE_DP_TEMP": """
         SELECT 
-            STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC, STAFFNAME, BRANCHCODE
+            STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC, STAFFNAME, BRANCHCODE, {year} AS year, {month} AS month, {day} AS day
         FROM mergefound
         ORDER BY STAFFNO, CUSTNO, ACCTCODE, ACCTNOC, JOINTACC
     """.format(year=year,month=month,day=day),
-    "OUTFILE": """
+    "CICUSCD5_UPDATE": """
         SELECT
             CUSTNO, RECTYPE, BRANCH, FILECODE, STAFFNO, STAFFNAME,
             C01,C02,C03,C04,C05,C06,C07,C08,C09,C10,
-            C11,C12,C13,C14,C15,C16,C17,C18,C19,C20
+            C11,C12,C13,C14,C15,C16,C17,C18,C19,C20,
+            {year} AS year, {month} AS month, {day} AS day
         FROM mergefound
     """.format(year=year,month=month,day=day)
 }
@@ -143,7 +166,7 @@ for name, query in files.items():
     txt_path = csv_output_path(f"{name}_{report_date}").replace(".csv", ".txt")
     df = con.execute(query).fetchdf()
     with open(txt_path, "w", encoding="utf-8") as f:
-        if name == "OUTFILE":
+        if name == "CICUSCD5_UPDATE":
             def write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname):
                 f.write(
                     f" {custno:<11}"
@@ -164,7 +187,7 @@ for name, query in files.items():
                         write_update_line(f, custno, code, rectype, branch, filecode, staffno, staffname)
         else:
             for _, row in df.iterrows():
-                if name == "NOTFND":
+                if name == "CICUSCD5_NOTFND":
                     line = (
                         f"{str(row['ORGCODE']).ljust(3)}"
                         f"{str(row['STAFFNO']).ljust(9)}"
