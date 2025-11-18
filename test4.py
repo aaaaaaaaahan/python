@@ -1,92 +1,127 @@
-#!/usr/bin/env python3
-"""
-Clean Parquet files (string columns) after converter output.
-Removes nulls, SUB, control chars, trims spaces, empty -> space.
-Overwrites the original Parquet files ONLY if cleaning is needed.
-Logs all actions.
-"""
+import duckdb
+from CIS_PY_READER import host_parquet_path, get_hive_parquet, parquet_output_path, csv_output_path
+import datetime
 
-import re
-from pathlib import Path
-import pyarrow as pa
-import pyarrow.parquet as pq
-import pandas as pd
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
 
-# -------------------------
-# CONFIG
-# -------------------------
-INPUT_PARQUET_FOLDER = Path("/host/cis/parquet/sas_parquet_test_jkh")
-LOG_FILE = Path("/host/cis/logs/parquet_clean_log.txt")
+# ==========================================
+# 1) CONFIG
+# ==========================================
+con = duckdb.connect()
+hrcstdp = get_hive_parquet('CIS_HRCCUST_DPACCTS')
 
-# -------------------------
-# Cleaning function
-# -------------------------
-def clean_column_string_after(s):
-    """
-    Clean a string: remove unwanted characters, trim spaces.
-    Replace None or pd.NA with a space.
-    """
-    if s is None or s is pd.NA:
-        return " "  # replace missing with space
+# ========================================================
+# 2) CISDP — SAS fixed-col input rewritten using DuckDB
+# ========================================================
+# Assumption: parquet already contains correct columns
+# Otherwise, use substr() to slice fields
+con.execute(f"""
+    CREATE TABLE CISDP AS 
+    SELECT
+        BANKNUM,
+        CUSTBRCH,
+        CUSTNO,
+        CUSTNAME,
+        RACE,
+        CITIZENSHIP,
+        INDORG,
+        PRIMSEC,
+        CUSTLASTDATECC,
+        CUSTLASTDATEYY,
+        CUSTLASTDATEMM,
+        CUSTLASTDATEDD,
+        ALIASKEY,
+        ALIAS,
+        HRCCODES,
+        ACCTCODE,
+        ACCTNO
+    FROM read_parquet('{hrcstdp[0]}')
+    ORDER BY ACCTNO
+""")
 
-    # Remove unwanted characters
-    s_clean = re.sub(r"[\x41\x00\x1A\x01-\x1F\x7F]", "", str(s))
-    s_clean = s_clean.strip()
+# ========================================================
+# 3) DPDATA — SAS INPUT with conditional fields
+# ========================================================
+con.execute(f"""
+    CREATE TABLE DPDATA AS
+    SELECT
+        CAST(BANKNO AS INTEGER) AS BANKNO,
+        CAST(REPTNO AS INTEGER) AS REPTNO,
+        CAST(FMTCODE AS INTEGER) AS FMTCODE,
+        LPAD(CAST(CAST(BRANCH AS INT) AS VARCHAR),3,'0') AS BRANCH,
+        LPAD(CAST(CAST(ACCTNO AS BIGINT) AS VARCHAR),11,'0') AS ACCTNO,
+        CLOSEDT  AS CLSDATE,
+        REOPENDT AS OPENDATE,
+        LEDGBAL  AS LEDBAL,
+        OPENIND  AS ACCSTAT,
+        COSTCTR,
+        -- SAS: TMPACCT = PUT(ACCTNO,Z10.)
+        LPAD(ACCTNO::VARCHAR, 10, '0') AS TMPACCT
+    FROM '{host_parquet_path("DPTRBLGS_CIS.parquet")}'
+    WHERE REPTNO = 1001
+      AND FMTCODE IN (1,5,10,11,19,20,21,22)
+      AND BRANCH <> 0
+      AND OPENDATE <> 0
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ACCTNO ORDER BY ACCTNO) = 1
+    ORDER BY ACCTNO
+""")
 
-    # If empty after cleaning, replace with space
-    if not s_clean:
-        return " "
+# ========================================================
+# 4) MERGE → GOODDP / BADDP  (SAS MERGE logic)
+# ========================================================
+con.execute("""
+    CREATE TABLE MERGED AS
+    SELECT
+        A.*,
+        B.BANKNUM, B.CUSTBRCH, B.CUSTNO, B.CUSTNAME, B.RACE,
+        B.CITIZENSHIP, B.INDORG, B.PRIMSEC,
+        B.CUSTLASTDATECC, B.CUSTLASTDATEYY, B.CUSTLASTDATEMM, B.CUSTLASTDATEDD,
+        B.ALIASKEY, B.ALIAS, B.HRCCODES, B.ACCTCODE
+    FROM DPDATA A
+    JOIN CISDP B USING (ACCTNO);
+""")
 
-    return s_clean
+# GOOD / BAD based on SAS conditions
+con.execute("""
+    CREATE TABLE GOODDP AS
+    SELECT *
+    FROM MERGED
+    WHERE
+        (
+            SUBSTR(TMPACCT, 1, 1) IN ('1', '3')
+            AND ACCSTAT NOT IN ('C', 'B', 'P', 'Z')
+        )
+        OR
+        (
+            SUBSTR(TMPACCT, 1, 1) NOT IN ('1','3')
+            AND (ACCSTAT NOT IN ('C','B','P','Z') OR LEDBAL <> 0)
+        )
+    ORDER BY CUSTNO, ACCTNO;
+""")
 
-def is_column_clean(series):
-    """
-    Check if a string column is clean (no unwanted characters).
-    """
-    for val in series.dropna():
-        if re.search(r"[\x41\x00\x1A\x01-\x1F\x7F]", str(val)):
-            return False
-    return True
+con.execute("""
+    CREATE TABLE BADDP AS
+    SELECT *
+    FROM MERGED
+    EXCEPT
+    SELECT * FROM GOODDP;
+""")
 
-# -------------------------
-# Process all Parquet files
-# -------------------------
-parquet_files = list(INPUT_PARQUET_FOLDER.glob("*.parquet"))
+# ========================================================
+# 5) PBB / PIBB SPLIT (SAS SORT OUTFIL)
+#    OUTFIL:
+#    - IF FIELD 210 != '3' → PBB (conventional)
+#    - IF FIELD 210 == '3' → PIBB (Islamic)
+# ========================================================
+con.execute("""
+    CREATE TABLE GOOD_PBB AS
+    SELECT * FROM GOODDP
+    WHERE COSTCTR <> 3;     -- matches SAS INCLUDE=(210,1,CH,NE,'3')
+""")
 
-if not parquet_files:
-    print(f"No Parquet files found in {INPUT_PARQUET_FOLDER}")
-else:
-    with open(LOG_FILE, "w") as log:
-        for input_file in parquet_files:
-            print(f"Checking: {input_file.name}")
-
-            # Read Parquet into Pandas
-            table = pq.read_table(str(input_file))
-            df = table.to_pandas()
-
-            string_cols = df.select_dtypes(include="object").columns
-            cleaning_needed = any(not is_column_clean(df[col]) for col in string_cols)
-
-            if not cleaning_needed:
-                # Still replace any pd.NA or None with space if present
-                for col in string_cols:
-                    if df[col].isna().any():
-                        df[col] = df[col].fillna(" ")
-                        cleaning_needed = True
-
-                if not cleaning_needed:
-                    log.write(f"SKIPPED (clean): {input_file.name}\n")
-                    print(f"⏭ Skipped (already clean): {input_file.name}")
-                    continue
-
-            # Clean string columns
-            for col in string_cols:
-                df[col] = df[col].apply(clean_column_string_after)
-                df[col] = df[col].fillna(" ")  # ensure no <NA> remains
-
-            # Overwrite Parquet
-            pq.write_table(pa.Table.from_pandas(df), str(input_file))
-            log.write(f"CLEANED: {input_file.name}\n")
-            print(f"✅ Cleaned and overwritten: {input_file.name}")
-
-    print("Processing complete. Log saved to:", LOG_FILE)
+con.execute("""
+    CREATE TABLE GOOD_PIBB AS
+    SELECT * FROM GOODDP
+    WHERE COSTCTR = 3;      -- matches SAS INCLUDE=(210,1,CH,EQ,'3')
+""")
