@@ -1,12 +1,12 @@
 # -------------------------------
-# Process data: increment PERIOD_OVERDUEX only if numeric
+# Process data: increment only numeric PERIOD_OVERDUEX, else keep as string
 # -------------------------------
 con.execute(f"""
     CREATE TABLE processed AS
     SELECT *,
            CASE
                WHEN TRY_CAST(PERIOD_OVERDUEX AS INTEGER) IS NOT NULL
-               THEN CAST(PERIOD_OVERDUEX AS INTEGER) + 1
+               THEN CAST(CAST(PERIOD_OVERDUEX AS INTEGER) + 1 AS VARCHAR)
                ELSE PERIOD_OVERDUEX
            END AS PERIOD_OVERDUE
     FROM pending
