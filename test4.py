@@ -1,127 +1,79 @@
-import duckdb
-from CIS_PY_READER import host_parquet_path, get_hive_parquet, parquet_output_path, csv_output_path
-import datetime
-
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-
-# ==========================================
-# 1) CONFIG
-# ==========================================
-con = duckdb.connect()
-hrcstdp = get_hive_parquet('CIS_HRCCUST_DPACCTS')
-
-# ========================================================
-# 2) CISDP — SAS fixed-col input rewritten using DuckDB
-# ========================================================
-# Assumption: parquet already contains correct columns
-# Otherwise, use substr() to slice fields
-con.execute(f"""
-    CREATE TABLE CISDP AS 
-    SELECT
-        BANKNUM,
-        CUSTBRCH,
-        CUSTNO,
-        CUSTNAME,
-        RACE,
-        CITIZENSHIP,
-        INDORG,
-        PRIMSEC,
-        CUSTLASTDATECC,
-        CUSTLASTDATEYY,
-        CUSTLASTDATEMM,
-        CUSTLASTDATEDD,
-        ALIASKEY,
-        ALIAS,
-        HRCCODES,
-        ACCTCODE,
-        ACCTNO
-    FROM read_parquet('{hrcstdp[0]}')
-    ORDER BY ACCTNO
-""")
-
-# ========================================================
-# 3) DPDATA — SAS INPUT with conditional fields
-# ========================================================
-con.execute(f"""
-    CREATE TABLE DPDATA AS
-    SELECT
-        CAST(BANKNO AS INTEGER) AS BANKNO,
-        CAST(REPTNO AS INTEGER) AS REPTNO,
-        CAST(FMTCODE AS INTEGER) AS FMTCODE,
-        LPAD(CAST(CAST(BRANCH AS INT) AS VARCHAR),3,'0') AS BRANCH,
-        LPAD(CAST(CAST(ACCTNO AS BIGINT) AS VARCHAR),11,'0') AS ACCTNO,
-        CLOSEDT  AS CLSDATE,
-        REOPENDT AS OPENDATE,
-        LEDGBAL  AS LEDBAL,
-        OPENIND  AS ACCSTAT,
-        COSTCTR,
-        -- SAS: TMPACCT = PUT(ACCTNO,Z10.)
-        LPAD(ACCTNO::VARCHAR, 10, '0') AS TMPACCT
-    FROM '{host_parquet_path("DPTRBLGS_CIS.parquet")}'
-    WHERE REPTNO = 1001
-      AND FMTCODE IN (1,5,10,11,19,20,21,22)
-      AND BRANCH <> 0
-      AND OPENDATE <> 0
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY ACCTNO ORDER BY ACCTNO) = 1
-    ORDER BY ACCTNO
-""")
-
-# ========================================================
-# 4) MERGE → GOODDP / BADDP  (SAS MERGE logic)
-# ========================================================
-con.execute("""
-    CREATE TABLE MERGED AS
-    SELECT
-        A.*,
-        B.BANKNUM, B.CUSTBRCH, B.CUSTNO, B.CUSTNAME, B.RACE,
-        B.CITIZENSHIP, B.INDORG, B.PRIMSEC,
-        B.CUSTLASTDATECC, B.CUSTLASTDATEYY, B.CUSTLASTDATEMM, B.CUSTLASTDATEDD,
-        B.ALIASKEY, B.ALIAS, B.HRCCODES, B.ACCTCODE
-    FROM DPDATA A
-    JOIN CISDP B USING (ACCTNO);
-""")
-
-# GOOD / BAD based on SAS conditions
-con.execute("""
-    CREATE TABLE GOODDP AS
-    SELECT *
-    FROM MERGED
-    WHERE
-        (
-            SUBSTR(TMPACCT, 1, 1) IN ('1', '3')
-            AND ACCSTAT NOT IN ('C', 'B', 'P', 'Z')
-        )
-        OR
-        (
-            SUBSTR(TMPACCT, 1, 1) NOT IN ('1','3')
-            AND (ACCSTAT NOT IN ('C','B','P','Z') OR LEDBAL <> 0)
-        )
-    ORDER BY CUSTNO, ACCTNO;
-""")
-
-con.execute("""
-    CREATE TABLE BADDP AS
-    SELECT *
-    FROM MERGED
-    EXCEPT
-    SELECT * FROM GOODDP;
-""")
-
-# ========================================================
-# 5) PBB / PIBB SPLIT (SAS SORT OUTFIL)
-#    OUTFIL:
-#    - IF FIELD 210 != '3' → PBB (conventional)
-#    - IF FIELD 210 == '3' → PIBB (Islamic)
-# ========================================================
-con.execute("""
-    CREATE TABLE GOOD_PBB AS
-    SELECT * FROM GOODDP
-    WHERE COSTCTR <> 3;     -- matches SAS INCLUDE=(210,1,CH,NE,'3')
-""")
-
-con.execute("""
-    CREATE TABLE GOOD_PIBB AS
-    SELECT * FROM GOODDP
-    WHERE COSTCTR = 3;      -- matches SAS INCLUDE=(210,1,CH,EQ,'3')
-""")
+//CIBRABVB  JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
+//**********************************************************************
+//*--TO SORT AND MERGE BRANCH & HELPDESK FILES INTO PREFER FILE
+//*--SELECT ACTIVE BRANCHES (EXCLUDE HP CENTERS)
+//**********************************************************************
+//DELETE1  EXEC PGM=IEFBR14
+//DD1      DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.FILE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DD2      DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.COMBINE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DD3      DD DSN=RBP2.B033.EBANK.BRANCH.PREFER,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//**********************************************************************
+//* STEP1: SORT BRANCH & OFFICER FILES INTO ONE FILE
+//**********************************************************************
+//SORT1     EXEC PGM=SORT
+//SORTIN01  DD DSN=RBP2.B033.EBANK.BRANCH.OUT,DISP=SHR
+//SORTIN02  DD DSN=RBP2.B033.EBANK.OFFICER.OUT,DISP=SHR
+//SORTOUT   DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.FILE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=152,BLKSIZE=0,RECFM=FB)
+//SYSOUT    DD SYSOUT=*
+//SYSIN     DD *
+  SORT FIELDS=(1,10,CH,A,11,3,CH,A)
+/*
+//**********************************************************************
+//* STEP2: GET BRANCH ABBREVIATION (CIBRABRV) - KEEP IF NEEDED
+//**********************************************************************
+//STEP2    EXEC PGM=CIBRABRV
+//STEPLIB  DD DSN=RBP2.IB330P.LOAD,DISP=SHR
+//SYSUDUMP DD SYSOUT=*
+//SNAPRNT  DD SYSOUT=*
+//SNADUMP  DD SYSOUT=*
+//SYSPRINT DD SYSOUT=*
+//SYSABOUT DD SYSOUT=*
+//SYSDBOUT DD SYSOUT=*
+//SYSOUT   DD SYSOUT=*
+//SYSOUD   DD SYSOUT=*
+//SYSIN    DD *
+PBB
+//INFILE   DD DISP=SHR,DSN=RBP2.B033.EBANK.BRANCH.OFFICER.FILE
+//BRFILE   DD DISP=SHR,DSN=RBP2.B134.PFB.OA.BRANCH
+//OUTFILE  DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.COMBINE,
+//         DISP=(NEW,CATLG,DELETE),
+//         SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
+//         DCB=(LRECL=154,BLKSIZE=0,RECFM=FB)
+/*
+//**********************************************************************
+//* STEP3: MERGE WITH HELPDESK & GENERATE PREFER FILE USING ICETOOL
+//**********************************************************************
+//BRANCHSORT EXEC PGM=SORT
+//SORTIN    DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.COMBINE,DISP=SHR
+//SORTOUT   DD DSN=&&BRANCHS,DISP=(,PASS)
+//SYSOUT    DD SYSOUT=*
+//SYSIN     DD *
+  SORT FIELDS=(9,3,CH,A)
+/*
+//HELPDESKS EXEC PGM=SORT
+//SORTIN    DD DSN=RBP2.B033.PBB.BRANCH.HELPDESK,DISP=SHR
+//SORTOUT   DD DSN=&&HELPDSK,DISP=(,PASS)
+//SYSOUT    DD SYSOUT=*
+//SYSIN     DD *
+  SORT FIELDS=(1,3,CH,A)
+/*
+//MERGE     EXEC PGM=SORT
+//SORTIN01  DD DSN=&&BRANCHS,DISP=OLD
+//SORTIN02  DD DSN=&&HELPDSK,DISP=OLD
+//SORTOUT   DD DSN=RBP2.B033.EBANK.BRANCH.PREFER,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(TRK,(10,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SYSOUT    DD SYSOUT=*
+//SYSIN     DD *
+  MERGE FIELDS=(9,3,CH,A,12,30,CH,A)
+  INCLUDE COND=(12,30,CH,NE,C'')  /* Only include if HELPDESK exists */
+  OUTREC FIELDS=(1:1,1,2:2,7,9:9,3,12:12,20,32:32,35,67:67,35,102:102,35,
+                  137:137,11,148:148,3,151:151,4)
+/*
