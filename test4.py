@@ -1,36 +1,49 @@
-input_file = "your_as400_file.txt"
-output_file = "clean_file.txt"
+import os
 
-# =========================
-# BAD BYTES (complete list)
-# =========================
-BAD_BYTES = (
-    set(range(0x00, 0x20))       # control chars 00–1F
-    | {0x0D, 0x1A, 0x25, 0xFF}   # common SUB / CR / invalid
-    | {0x4A, 0x4F, 0x5A, 0x5F, 0x6A, 0x6E}  # EBCDIC weird chars
-    | {0x85, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96}  # SAS special chars
-)
+input_file = "input_from_ftp.txt"  # Change this
+output_file = "cleaned_output"     # Extension added automatically
 
-# read raw bytes
+# List of bytes that cause SUB/unreadable symbols
+BAD_BYTES = set(range(0x00, 0x20)) | {0x0D, 0x1A, 0x25, 0xFF} | {0x4A, 0x4F, 0x5A, 0x5F, 0x6A, 0x6E} | {0x85, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96}
+
+# -------------------------------------------------------------
+# READ FILE
+# -------------------------------------------------------------
 with open(input_file, "rb") as f:
     data = f.read()
 
-# replace bad bytes with space (0x40 in EBCDIC, 0x20 in ASCII)
-cleaned = bytearray()
-for b in data:
-    if b in BAD_BYTES:
-        cleaned.append(0x40)    # EBCDIC space (safer)
-    else:
-        cleaned.append(b)
+# -------------------------------------------------------------
+# DETECT TYPE: binary or text (heuristic)
+# -------------------------------------------------------------
+# If >5% of bytes are non-printable, treat as binary
+non_printable = sum(1 for b in data if b < 0x20 or b > 0x7E)
+if non_printable / len(data) > 0.05:
+    file_type = "binary"
+else:
+    file_type = "text"
 
-# decode EBCDIC → UTF-8 correctly
-try:
-    text = cleaned.decode("cp1140")
-except:
-    text = cleaned.decode("cp037")
+print(f"Detected file type: {file_type}")
 
-# save clean readable file
-with open(output_file, "w", encoding="utf-8") as f:
-    f.write(text)
+# -------------------------------------------------------------
+# CLEAN FILE
+# -------------------------------------------------------------
+if file_type == "text":
+    # Remove bad bytes and decode from EBCDIC to UTF-8
+    cleaned_bytes = bytes(b if b not in BAD_BYTES else 0x40 for b in data)  # EBCDIC space
+    try:
+        cleaned_text = cleaned_bytes.decode("cp1140")
+    except:
+        cleaned_text = cleaned_bytes.decode("cp037")
+    
+    output_file += ".txt"
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(cleaned_text)
 
-print("Done. Clean file saved:", output_file)
+else:  # binary
+    # Remove bad bytes, keep as bytes
+    cleaned_bytes = bytes(b for b in data if b not in BAD_BYTES)
+    output_file += ".bin"
+    with open(output_file, "wb") as f:
+        f.write(cleaned_bytes)
+
+print(f"Done. Clean file saved as: {output_file}")
