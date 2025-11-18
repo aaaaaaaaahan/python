@@ -1,221 +1,76 @@
-//CIHRCDP1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB65417
-//*---------------------------------------------------------------------
-//* ESMR 2010-3600 LIST OF HIGH RISK CUSTOMERS
-//* PICK RELATED DP ACCOUNTS(EXCLUDE ZERO BALANCE AND CLOSED STATUS)
-//* (1) SA AND CA(MYR/FCY) TO EXCLUDE CLOSED ACCT STATUS ONLY
-//* (2) OTHER DP ACCTS TO EXCLUDE ZERO BALANCE AND CLOSED ACCT STATUS
-//* SPLIT BY COST CENTRE TO DIFFERENTIATE PBB AND PIBB ACCOUNTS
-//*---------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DELE1    DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE2    DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.CLOSED,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE3    DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD.PBB,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DELE4    DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD.PIBB,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//* PROCESSES STARTS HERE
-//*---------------------------------------------------------------------
-//ALLACCT  EXEC SAS609,REGION=4M,WORK='50000,50000'
-//IEFRDER   DD DUMMY
-//*OUTPUT FROM JOB CIHRCALL
-//HRCSTDP   DD DISP=SHR,DSN=RBP2.B033.CIS.HRCCUST.DPACCTS
-//*OUTPUT FROM JOB DPEX2000/2001
-//DPFILE    DD DISP=SHR,DSN=RBP2.B033.DPTRBLGS
-//OUTDPGOD  DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//OUTDPBAD  DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.CLOSED,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SORTWK01  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK02  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK03  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK04  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK05  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK06  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK07  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SORTWK08  DD UNIT=SYSDA,SPACE=(CYL,800)
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- /*----------------------------------------------------------------*/
- /*    HIGH RISK CUSTOMERS WITH DP ACCT DECLARATION                */
- /*----------------------------------------------------------------*/
-  DATA CISDP;
-      INFILE HRCSTDP;
-      INPUT  @01   BANKNUM            $3.
-             @04   CUSTBRCH           5.
-             @09   CUSTNO             $11.
-             @20   CUSTNAME           $40.
-             @60   RACE               $1.
-             @61   CITIZENSHIP        $2.
-             @63   INDORG             $1.
-             @64   PRIMSEC            $1.
-             @65   CUSTLASTDATECC     $2.
-             @67   CUSTLASTDATEYY     $2.
-             @69   CUSTLASTDATEMM     $2.
-             @71   CUSTLASTDATEDD     $2.
-             @73   ALIASKEY           $3.
-             @76   ALIAS              $20.
-             @96   HRCCODES           $60.
-             @156  ACCTCODE           $5.
-             @161  ACCTNO             20.;
-  RUN;
-  PROC SORT DATA=CISDP; BY ACCTNO; RUN;
- /*----------------------------------------------------------------*/
- /*    DEPOSIT TRIAL BALANCE FILE DECLARATION                      */
- /*    GET PBB AND PIBB ACCOUNT THEN ONLY SPLIT BY COST CENTRE     */
- /*    GET ALL ACTIVE ACCOUNTS(DP,SA,CA,VOSTRO,NOSTRO,FCY)         */
- /*    EXCLUDE ZERO BALANCE ACCTS AND PURGED/CLOSED ACCTS          */
- /*----------------------------------------------------------------*/
-  DATA DPDATA;
-      INFILE DPFILE;
-      FORMAT TMPDATE 8. OPDATE 8. CLDATE 8. OYYYY 4. OMM Z2. ODD Z2.
-             TMPACCT $10.;
-      INPUT @03  BANKNO       PD2.
-            @24  REPTNO       PD3.
-            @27  FMTCODE      PD2. @;
-      IF (REPTNO = 1001 AND
-         (FMTCODE IN (1,5,10,11,19,20,21,22))) THEN DO;
-         INPUT @106 BRANCH    PD4.
-               @110 ACCTNO    PD6.
-               @158 CLSDATE   PD6.
-               @164 OPENDATE  PD6.
-               @319 LEDBAL    PD7.
-               @716 ACCSTAT   $1.
-               @830 COSTCTR   PD4.;
-         TMPACCT = PUT(ACCTNO,Z10.);
-         CLDATE  = TRIM(SUBSTR(CLSDATE,1,9));
-         IF OPENDATE NE 0 AND BRANCH NE 0 THEN DO;
-            OPDATE  = TRIM(SUBSTR(OPENDATE,1,9));
-            OMM     = SUBSTR(PUT(OPDATE,Z8.),1,2);
-            ODD     = SUBSTR(PUT(OPDATE,Z8.),3,2);
-            OYYYY   = SUBSTR(PUT(OPDATE,Z8.),5,4);
-            TMPDATE = PUT(OYYYY,Z4.) || PUT(OMM,Z2.) || PUT(ODD,Z2.) ;
-            OPDATE  = PUT(TMPDATE,8.);
-         END;
-         ELSE DO;
-            OPDATE  = 0;
-         END;
-         OUTPUT;
-      END;
-  RUN;
+# ----------------------------
+# OUTPUT TO PARQUET, CSV, TXT
+# ----------------------------
 
-  /****IF PRODUCTION CAN USE SAS 9.1 ABOVE VERSION, DUPOUT*****/
-  /*PROC SORT DATA=DPDATA NODUPKEY DUPOUT=DPDUPS; BY ACCTNO; RUN;*/
-  PROC SORT DATA=DPDATA NODUPKEY; BY ACCTNO; RUN;
-  PROC PRINT DATA=DPDATA(OBS=10);TITLE 'DEPOSIT ACCOUNT DETAILS ';
-  RUN;
+# Dictionary of tables to output
+output_tables = {
+    "GOODDP": "GOODDP",
+    "BADDP": "BADDP",
+    "GOOD_PBB": "GOOD_PBB",
+    "GOOD_PIBB": "GOOD_PIBB"
+}
 
-  DATA GOODDP BADDP;
-      MERGE DPDATA(IN=A) CISDP(IN=B); BY ACCTNO;
-      IF A AND B THEN DO;
-         IF SUBSTR(TMPACCT,1,1) IN (1,3) THEN DO;
-           IF ACCSTAT NE 'C' AND ACCSTAT NE 'B' AND ACCSTAT NE 'P' AND
-              ACCSTAT NE 'Z' THEN
-               OUTPUT GOODDP;
-           ELSE DO;
-               OUTPUT BADDP;
-           END;
-         END;
-         ELSE DO;
-           IF (ACCSTAT NE 'C' AND ACCSTAT NE 'B' AND ACCSTAT NE 'P' AND
-               ACCSTAT NE 'Z' ) OR LEDBAL NE 0  THEN
-               OUTPUT GOODDP;
-           ELSE DO;
-               OUTPUT BADDP;
-           END;
-         END;
-      END;
-  RUN;
-
-  PROC SORT DATA=GOODDP; BY CUSTNO ACCTNO; RUN;
-  PROC SORT DATA=BADDP NODUPKEY; BY CUSTNO ACCTNO; RUN;
-
- /*----------------------------------------------------------------*/
- /*   OUTPUT GOOD AND BAD DP ACCTS DATASET FOR REPORTING PURPOSE   */
- /*----------------------------------------------------------------*/
-  DATA TEMPOUT;
-  SET GOODDP;
-  FILE OUTDPGOD;
-     PUT @01   BANKNUM            $3.
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  BRANCH             Z7.
-         @163  ACCTCODE           $5.
-         @168  ACCTNO             20.
-         @188  OPDATE             8.
-         @196  LEDBAL             Z13.
-         @209  ACCSTAT            $1.
-         @210  COSTCTR            Z4.;
-  RETURN;
-  RUN;
-  DATA TEMPOUT1;
-  SET BADDP;
-  FILE OUTDPBAD;
-     PUT @01   BANKNUM            $3.
-         @04   CUSTBRCH           Z5.
-         @09   CUSTNO             $11.
-         @20   CUSTNAME           $40.
-         @60   RACE               $1.
-         @61   CITIZENSHIP        $2.
-         @63   INDORG             $1.
-         @64   PRIMSEC            $1.
-         @65   CUSTLASTDATECC     $2.
-         @67   CUSTLASTDATEYY     $2.
-         @69   CUSTLASTDATEMM     $2.
-         @71   CUSTLASTDATEDD     $2.
-         @73   ALIASKEY           $3.
-         @76   ALIAS              $20.
-         @96   HRCCODES           $60.
-         @156  BRANCH             Z7.
-         @163  ACCTCODE           $5.
-         @168  ACCTNO             20.
-         @188  OPDATE             8.
-         @196  LEDBAL             Z13.
-         @209  ACCSTAT            $1.
-         @210  COSTCTR            Z4.;
-  RETURN;
-  RUN;
-//*--------------------------------------------------------------------
-//* SORT FILE TO SEPARATE CONVENTIONAL AND ISLAMIC ACCOUNTS
-//* FOR DEPOSIT ACCOUNTS ONLY
-//*--------------------------------------------------------------------
-//COVISLDP EXEC PGM=SORT                                                00170000
-//SYSOUT   DD SYSOUT=*                                                  00170000
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(100,100))                          00170000
-//SORTIN   DD DISP=SHR,DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD
-//DPCONV   DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD.PBB,               00170000
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB),
-//            SPACE=(CYL,(5,10),RLSE)
-//DPPIBB   DD DSN=RBP2.B033.CIS.HRCCUST.DPACCTS.GOOD.PIBB,              00170000
-//            DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB),
-//            SPACE=(CYL,(5,10),RLSE)
-//SYSIN  DD *
- SORT FIELDS=COPY
- OUTFIL INCLUDE=(210,1,CH,NE,C'3'),FNAMES=DPCONV
- OUTFIL INCLUDE=(210,1,CH,EQ,C'3'),FNAMES=DPPIBB
-
+for name, table in output_tables.items():
+    # Query with date columns
+    query = f"""
+        SELECT *,
+            {year} AS year,
+            {month} AS month,
+            {day} AS day
+        FROM {table}
+    """
+    
+    # Paths
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+    txt_path = csv_output_path(f"{name}_{batch_date}").replace(".csv", ".txt")
+    
+    # ----------------------------
+    # COPY to Parquet with partitioning
+    # ----------------------------
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
+    """)
+    
+    # ----------------------------
+    # COPY to CSV with header
+    # ----------------------------
+    con.execute(f"""
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
+    """)
+    
+    # ----------------------------
+    # Fixed-width TXT following SAS PUT layout
+    # ----------------------------
+    df_txt = con.execute(query).fetchdf()
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row.get('BANKNUM','')).rjust(3,'0')}"                  # @01 BANKNUM Z3.
+                f"{str(row.get('CUSTBRCH','')).rjust(5,'0')}"                # @04 CUSTBRCH Z5.
+                f"{str(row.get('CUSTNO','')).ljust(11)}"                     # @09 CUSTNO $11.
+                f"{str(row.get('CUSTNAME','')).ljust(40)}"                   # @20 CUSTNAME $40.
+                f"{str(row.get('RACE','')).ljust(1)}"                        # @60 RACE $1.
+                f"{str(row.get('CITIZENSHIP','')).ljust(2)}"                 # @61 CITIZENSHIP $2.
+                f"{str(row.get('INDORG','')).ljust(1)}"                      # @63 INDORG $1.
+                f"{str(row.get('PRIMSEC','')).ljust(1)}"                     # @64 PRIMSEC $1.
+                f"{str(row.get('CUSTLASTDATECC','')).rjust(2,'0')}"          # @65 CUSTLASTDATECC Z2.
+                f"{str(row.get('CUSTLASTDATEYY','')).rjust(2,'0')}"          # @67 CUSTLASTDATEYY Z2.
+                f"{str(row.get('CUSTLASTDATEMM','')).rjust(2,'0')}"          # @69 CUSTLASTDATEMM Z2.
+                f"{str(row.get('CUSTLASTDATEDD','')).rjust(2,'0')}"          # @71 CUSTLASTDATEDD Z2.
+                f"{str(row.get('ALIASKEY','')).rjust(3,'0')}"                # @73 ALIASKEY Z3.
+                f"{str(row.get('ALIAS','')).ljust(20)}"                      # @76 ALIAS $20.
+                f"{str(row.get('HRCCODES','')).ljust(60)}"                   # @96 HRCCODES $60.
+                f"{str(row.get('BRANCH','')).rjust(7,'0')}"                  # @156 BRANCH Z7.
+                f"{str(row.get('ACCTCODE','')).ljust(5)}"                    # @163 ACCTCODE $5.
+                f"{str(row.get('ACCTNO','')).ljust(20)}"                     # @168 ACCTNO 20.
+                f"{str(row.get('OPENDATE','')).rjust(8,'0')}"                # @188 OPDATE 8.
+                f"{str(row.get('LEDBAL','')).rjust(13,'0')}"                 # @196 LEDBAL Z13.
+                f"{str(row.get('ACCSTAT','')).ljust(1)}"                     # @209 ACCSTAT $1.
+                f"{str(row.get('COSTCTR','')).rjust(4,'0')}"                 # @210 COSTCTR Z4.
+            )
+            f.write(line + "\n")
