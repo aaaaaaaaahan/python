@@ -1,79 +1,58 @@
-//CIBRABVB  JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID
-//**********************************************************************
-//*--TO SORT AND MERGE BRANCH & HELPDESK FILES INTO PREFER FILE
-//*--SELECT ACTIVE BRANCHES (EXCLUDE HP CENTERS)
-//**********************************************************************
-//DELETE1  EXEC PGM=IEFBR14
-//DD1      DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.FILE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD2      DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.COMBINE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD3      DD DSN=RBP2.B033.EBANK.BRANCH.PREFER,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//**********************************************************************
-//* STEP1: SORT BRANCH & OFFICER FILES INTO ONE FILE
-//**********************************************************************
-//SORT1     EXEC PGM=SORT
-//SORTIN01  DD DSN=RBP2.B033.EBANK.BRANCH.OUT,DISP=SHR
-//SORTIN02  DD DSN=RBP2.B033.EBANK.OFFICER.OUT,DISP=SHR
-//SORTOUT   DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.FILE,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=152,BLKSIZE=0,RECFM=FB)
-//SYSOUT    DD SYSOUT=*
-//SYSIN     DD *
-  SORT FIELDS=(1,10,CH,A,11,3,CH,A)
-/*
-//**********************************************************************
-//* STEP2: GET BRANCH ABBREVIATION (CIBRABRV) - KEEP IF NEEDED
-//**********************************************************************
-//STEP2    EXEC PGM=CIBRABRV
-//STEPLIB  DD DSN=RBP2.IB330P.LOAD,DISP=SHR
-//SYSUDUMP DD SYSOUT=*
-//SNAPRNT  DD SYSOUT=*
-//SNADUMP  DD SYSOUT=*
-//SYSPRINT DD SYSOUT=*
-//SYSABOUT DD SYSOUT=*
-//SYSDBOUT DD SYSOUT=*
-//SYSOUT   DD SYSOUT=*
-//SYSOUD   DD SYSOUT=*
-//SYSIN    DD *
-PBB
-//INFILE   DD DISP=SHR,DSN=RBP2.B033.EBANK.BRANCH.OFFICER.FILE
-//BRFILE   DD DISP=SHR,DSN=RBP2.B134.PFB.OA.BRANCH
-//OUTFILE  DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.COMBINE,
-//         DISP=(NEW,CATLG,DELETE),
-//         SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
-//         DCB=(LRECL=154,BLKSIZE=0,RECFM=FB)
-/*
-//**********************************************************************
-//* STEP3: MERGE WITH HELPDESK & GENERATE PREFER FILE USING ICETOOL
-//**********************************************************************
-//BRANCHSORT EXEC PGM=SORT
-//SORTIN    DD DSN=RBP2.B033.EBANK.BRANCH.OFFICER.COMBINE,DISP=SHR
-//SORTOUT   DD DSN=&&BRANCHS,DISP=(,PASS)
-//SYSOUT    DD SYSOUT=*
-//SYSIN     DD *
-  SORT FIELDS=(9,3,CH,A)
-/*
-//HELPDESKS EXEC PGM=SORT
-//SORTIN    DD DSN=RBP2.B033.PBB.BRANCH.HELPDESK,DISP=SHR
-//SORTOUT   DD DSN=&&HELPDSK,DISP=(,PASS)
-//SYSOUT    DD SYSOUT=*
-//SYSIN     DD *
-  SORT FIELDS=(1,3,CH,A)
-/*
-//MERGE     EXEC PGM=SORT
-//SORTIN01  DD DSN=&&BRANCHS,DISP=OLD
-//SORTIN02  DD DSN=&&HELPDSK,DISP=OLD
-//SORTOUT   DD DSN=RBP2.B033.EBANK.BRANCH.PREFER,
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(TRK,(10,10),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
-//SYSOUT    DD SYSOUT=*
-//SYSIN     DD *
-  MERGE FIELDS=(9,3,CH,A,12,30,CH,A)
-  INCLUDE COND=(12,30,CH,NE,C'')  /* Only include if HELPDESK exists */
-  OUTREC FIELDS=(1:1,1,2:2,7,9:9,3,12:12,20,32:32,35,67:67,35,102:102,35,
-                  137:137,11,148:148,3,151:151,4)
-/*
+# ----------------------------
+# OUTPUT TO PARQUET, CSV, TXT
+# ----------------------------
+
+# Dictionary of tables to output
+output_tables = {
+    "GOODDP": "GOODDP",
+    "BADDP": "BADDP",
+    "GOOD_PBB": "GOOD_PBB",
+    "GOOD_PIBB": "GOOD_PIBB"
+}
+
+for name, table in output_tables.items():
+    # Query
+    query = f"""
+        SELECT *,
+            {year} AS year,
+            {month} AS month,
+            {day} AS day
+        FROM {table}
+    """
+    
+    # Paths
+    parquet_path = parquet_output_path(name)
+    csv_path = csv_output_path(name)
+    txt_path = csv_output_path(f"{name}_{batch_date}").replace(".csv", ".txt")
+    
+    # COPY to Parquet with partitioning
+    con.execute(f"""
+        COPY ({query})
+        TO '{parquet_path}'
+        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
+    """)
+    
+    # COPY to CSV with header
+    con.execute(f"""
+        COPY ({query})
+        TO '{csv_path}'
+        (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
+    """)
+    
+    # Fixed-width TXT
+    df_txt = con.execute(query).fetchdf()
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for _, row in df_txt.iterrows():
+            line = (
+                f"{str(row.get('LOAD_DATE','')).ljust(10)}"
+                f"{str(row.get('BANKNUM','')).ljust(5)}"
+                f"{str(row.get('CUSTBRCH','')).ljust(3)}"
+                f"{str(row.get('ACCTNO','')).ljust(11)}"
+                f"{str(row.get('ACCSTAT','')).ljust(1)}"
+                f"{str(row.get('LEDBAL','')).rjust(12)}"
+                f"{str(row.get('COSTCTR','')).ljust(3)}"
+                f"{str(row.get('year')).rjust(4)}"
+                f"{str(row.get('month')).rjust(2,'0')}"
+                f"{str(row.get('day')).rjust(2,'0')}"
+            )
+            f.write(line + "\n")
