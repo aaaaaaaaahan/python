@@ -70,4 +70,23 @@ else:
             if not cleaning_needed:
                 # Still replace any pd.NA or None with space if present
                 for col in string_cols:
-                    if df[col].isna().an
+                    if df[col].isna().any():
+                        df[col] = df[col].fillna(" ")
+                        cleaning_needed = True
+
+                if not cleaning_needed:
+                    log.write(f"SKIPPED (clean): {input_file.name}\n")
+                    print(f"⏭ Skipped (already clean): {input_file.name}")
+                    continue
+
+            # Clean string columns
+            for col in string_cols:
+                df[col] = df[col].apply(clean_column_string_after)
+                df[col] = df[col].fillna(" ")  # ensure no <NA> remains
+
+            # Overwrite Parquet
+            pq.write_table(pa.Table.from_pandas(df), str(input_file))
+            log.write(f"CLEANED: {input_file.name}\n")
+            print(f"✅ Cleaned and overwritten: {input_file.name}")
+
+    print("Processing complete. Log saved to:", LOG_FILE)
