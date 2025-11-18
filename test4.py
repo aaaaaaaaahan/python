@@ -1,49 +1,51 @@
 import os
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+import logging
 
-input_file = "input_from_ftp.txt"  # Change this
-output_file = "cleaned_output"     # Extension added automatically
+# Set up logging
+logging.basicConfig(
+    filename='data_cleaner.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-# List of bytes that cause SUB/unreadable symbols
-BAD_BYTES = set(range(0x00, 0x20)) | {0x0D, 0x1A, 0x25, 0xFF} | {0x4A, 0x4F, 0x5A, 0x5F, 0x6A, 0x6E} | {0x85, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96}
-
-# -------------------------------------------------------------
-# READ FILE
-# -------------------------------------------------------------
-with open(input_file, "rb") as f:
-    data = f.read()
-
-# -------------------------------------------------------------
-# DETECT TYPE: binary or text (heuristic)
-# -------------------------------------------------------------
-# If >5% of bytes are non-printable, treat as binary
-non_printable = sum(1 for b in data if b < 0x20 or b > 0x7E)
-if non_printable / len(data) > 0.05:
-    file_type = "binary"
-else:
-    file_type = "text"
-
-print(f"Detected file type: {file_type}")
-
-# -------------------------------------------------------------
-# CLEAN FILE
-# -------------------------------------------------------------
-if file_type == "text":
-    # Remove bad bytes and decode from EBCDIC to UTF-8
-    cleaned_bytes = bytes(b if b not in BAD_BYTES else 0x40 for b in data)  # EBCDIC space
+def process_parquet_file(file_path, output_folder):
     try:
-        cleaned_text = cleaned_bytes.decode("cp1140")
-    except:
-        cleaned_text = cleaned_bytes.decode("cp037")
-    
-    output_file += ".txt"
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(cleaned_text)
+        # Read Parquet file
+        df = pd.read_parquet(file_path)
+        total_rows = len(df)
+        skipped_rows = 0
 
-else:  # binary
-    # Remove bad bytes, keep as bytes
-    cleaned_bytes = bytes(b for b in data if b not in BAD_BYTES)
-    output_file += ".bin"
-    with open(output_file, "wb") as f:
-        f.write(cleaned_bytes)
+        # Keep only rows that can convert to string safely
+        for col in df.select_dtypes(include='object').columns:
+            valid_mask = df[col].apply(lambda x: isinstance(x, str) or pd.isna(x))
+            skipped_rows += (~valid_mask).sum()
+            if (~valid_mask).any():
+                logging.warning(f"{file_path}: { (~valid_mask).sum() } invalid rows in column '{col}' skipped.")
+            df = df[valid_mask | pd.isna(df[col])]
 
-print(f"Done. Clean file saved as: {output_file}")
+        # Save cleaned Parquet
+        output_path = os.path.join(output_folder, os.path.basename(file_path))
+        table = pa.Table.from_pandas(df)
+        pq.write_table(table, output_path)
+
+        logging.info(f"{file_path}: Processed {len(df)} rows, skipped {skipped_rows} rows.")
+        print(f"Processed {file_path}, skipped {skipped_rows} rows.")
+
+    except Exception as e:
+        logging.error(f"Failed to process {file_path}: {e}")
+        print(f"Error processing {file_path}: {e}")
+
+def process_folder(input_folder, output_folder):
+    os.makedirs(output_folder, exist_ok=True)
+    for file_name in os.listdir(input_folder):
+        if file_name.endswith('.parquet'):
+            file_path = os.path.join(input_folder, file_name)
+            process_parquet_file(file_path, output_folder)
+
+# Example usage
+input_folder = 'sas_converted_parquet'
+output_folder = 'cleaned_parquet'
+process_folder(input_folder, output_folder)
