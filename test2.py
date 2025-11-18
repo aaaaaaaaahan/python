@@ -1,92 +1,106 @@
 import duckdb
-import pyarrow.parquet as pq
 import pyarrow as pa
-from pathlib import Path
+import pyarrow.parquet as pq
 
-# Paths for input and output Parquet files
-branch_file = "EBANK.BRANCH.OUT.parquet"
-officer_file = "EBANK.OFFICER.OUT.parquet"
-branch_officer_file = "EBANK.BRANCH.OFFICER.FILE.parquet"
-branch_officer_combine = "EBANK.BRANCH.OFFICER.COMBINE.parquet"
-helpdesk_file = "PBB.BRANCH.HELPDESK.parquet"
-branch_prefer_file = "EBANK.BRANCH.PREFER.parquet"
+# File paths (assumes input Parquet files already exist)
+branch_parquet = "EBANK.BRANCH.OFFICER.COMBINE.parquet"
+helpdesk_parquet = "PBB.BRANCH.HELPDESK.parquet"
+output_parquet = "EBANK.BRANCH.PREFER.parquet"
+output_txt = "EBANK.BRANCH.PREFER.txt"
 
-# Connect to DuckDB in memory
+# Connect to an in-memory DuckDB database
 con = duckdb.connect(database=':memory:')
 
-# Step 1: Concatenate branch and officer files (like SORT IN JCL)
+# -----------------------------
+# Step 1: Load Parquet files
+# -----------------------------
+# Load branch and helpdesk data into DuckDB tables
 con.execute(f"""
-    CREATE TABLE branch_officer AS
-    SELECT * FROM read_parquet('{branch_file}')
-    UNION ALL
-    SELECT * FROM read_parquet('{officer_file}')
+CREATE TABLE branch AS
+SELECT *
+FROM read_parquet('{branch_parquet}')
 """)
 
-# Optional: sort by first 10 chars + next 3 chars (equivalent to SORT FIELDS=(1,10,CH,A,11,3,CH,A))
-# Assuming columns have names 'col1', 'col2', ... if you want exact, map to real columns
-# con.execute("CREATE TABLE branch_officer_sorted AS SELECT * FROM branch_officer ORDER BY col1, col2")
-
-# Save concatenated result to Parquet
-con.execute(f"COPY (SELECT * FROM branch_officer) TO '{branch_officer_file}' (FORMAT PARQUET)")
-
-# Step 2: Read branch_officer and helpdesk files
 con.execute(f"""
-    CREATE TABLE branch AS
-    SELECT 
-        SUBSTRING(BANKINDC, 1, 1) AS BANKINDC,
-        SUBSTRING(BRANCHNO, 1, 7) AS BRANCHNO,
-        SUBSTRING(BRANCHABRV, 1, 3) AS BRANCHABRV,
-        SUBSTRING(PB_BRNAME, 1, 20) AS PB_BRNAME,
-        SUBSTRING(ADDRLINE1, 1, 35) AS ADDRLINE1,
-        SUBSTRING(ADDRLINE2, 1, 35) AS ADDRLINE2,
-        SUBSTRING(ADDRLINE3, 1, 35) AS ADDRLINE3,
-        SUBSTRING(PHONENO, 1, 11) AS PHONENO,
-        SUBSTRING(STATENO, 1, 3) AS STATENO,
-        SUBSTRING(BRANCHABRV2, 1, 4) AS BRANCHABRV2
-    FROM read_parquet('{branch_officer_file}')
+CREATE TABLE helpdesk AS
+SELECT *
+FROM read_parquet('{helpdesk_parquet}')
 """)
 
-con.execute(f"CREATE TABLE branch_sorted AS SELECT DISTINCT * FROM branch ORDER BY BRANCHABRV")
-
-con.execute(f"""
-    CREATE TABLE helpdesk AS
-    SELECT DISTINCT BRANCHABRV, HD_BRNAME
-    FROM read_parquet('{helpdesk_file}')
-""")
-
-# Step 3: Merge branch and helpdesk (equivalent to DATA ACTIVE; MERGE)
+# -----------------------------
+# Step 2: Deduplicate data
+# -----------------------------
+# Remove duplicate BRANCHABRV entries, similar to SAS PROC SORT NODUPKEY
 con.execute("""
-    CREATE TABLE active AS
-    SELECT b.*, h.HD_BRNAME
-    FROM branch_sorted b
-    JOIN helpdesk h
-    ON b.BRANCHABRV = h.BRANCHABRV
+CREATE TABLE branch_sorted AS
+SELECT DISTINCT ON (BRANCHABRV) *
+FROM branch
+ORDER BY BRANCHABRV
 """)
 
-# Sort final output by BRANCHNO
-con.execute("CREATE TABLE out_final AS SELECT * FROM active ORDER BY BRANCHNO")
+con.execute("""
+CREATE TABLE helpdesk_sorted AS
+SELECT DISTINCT ON (BRANCHABRV) *
+FROM helpdesk
+ORDER BY BRANCHABRV
+""")
 
-# Step 4: Save final output to Parquet and TXT
-con.execute(f"COPY (SELECT * FROM out_final) TO '{branch_prefer_file}' (FORMAT PARQUET)")
+# -----------------------------
+# Step 3: Merge datasets
+# -----------------------------
+# Replicate SAS DATA MERGE with IF B (keep only records present in helpdesk)
+con.execute("""
+CREATE TABLE active AS
+SELECT h.*
+FROM branch_sorted b
+RIGHT JOIN helpdesk_sorted h
+ON b.BRANCHABRV = h.BRANCHABRV
+""")
 
-# Save as fixed-width TXT similar to SAS PUT
-out_txt_path = Path(branch_prefer_file).with_suffix(".txt")
-with open(out_txt_path, "w") as f:
-    result = con.execute("SELECT * FROM out_final").fetchall()
-    for row in result:
-        # Map to original field widths
-        f.write(
-            f"{row['BANKINDC']:<1}"
-            f"{row['BRANCHNO']:<7}"
-            f"{row['BRANCHABRV']:<3}"
-            f"{row['PB_BRNAME']:<20}"
-            f"{row['ADDRLINE1']:<35}"
-            f"{row['ADDRLINE2']:<35}"
-            f"{row['ADDRLINE3']:<35}"
-            f"{row['PHONENO']:<11}"
-            f"{row['STATENO']:<3}"
-            f"{row['BRANCHABRV2']:<4}"
-            f"\n"
-        )
+# -----------------------------
+# Step 4: Sort final data
+# -----------------------------
+# Sort by BRANCHNO to match SAS PROC SORT
+con.execute("""
+CREATE TABLE out_table AS
+SELECT *
+FROM active
+ORDER BY BRANCHNO
+""")
 
-print("Process completed: Parquet and TXT output ready.")
+# -----------------------------
+# Step 5: Export to Parquet
+# -----------------------------
+con.execute(f"COPY out_table TO '{output_parquet}' (FORMAT PARQUET)")
+
+# -----------------------------
+# Step 6: Export to fixed-width TXT
+# -----------------------------
+# Define fixed-width columns matching original SAS layout
+col_specs = [
+    ('BANKINDC', 1),
+    ('BRANCHNO', 7),
+    ('BRANCHABRV', 3),
+    ('PB_BRNAME', 20),
+    ('ADDRLINE1', 35),
+    ('ADDRLINE2', 35),
+    ('ADDRLINE3', 35),
+    ('PHONENO', 11),
+    ('STATENO', 3),
+    ('BRANCHABRV2', 4),
+]
+
+# Fetch all rows from the final table
+out_rows = con.execute("SELECT * FROM out_table").fetchall()
+
+# Write rows to fixed-width text file
+with open(output_txt, 'w', encoding='utf-8') as f:
+    for row in out_rows:
+        line = ""
+        for i, (col, width) in enumerate(col_specs):
+            val = row[i] if row[i] is not None else ""  # Replace NULLs with empty string
+            val_str = str(val)[:width]  # Truncate if longer than column width
+            line += val_str.ljust(width)
+        f.write(line + "\n")
+
+print("Processing complete. Parquet and fixed-width TXT files generated successfully.")
