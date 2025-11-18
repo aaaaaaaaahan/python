@@ -3,51 +3,6 @@ duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
 //CIBRABVB  JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID     JOB81979
-//**********************************************************************
-//DELETE1  EXEC PGM=IEFBR14
-//DD1      DD DSN=EBANK.BRANCH.OFFICER.FILE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD2      DD DSN=EBANK.BRANCH.OFFICER.COMBINE,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//DD3      DD DSN=EBANK.BRANCH.PREFER,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
-//**********************************************************************
-//*  SORT BRANCH & OFFICER FILE INTO ONE FILE
-//**********************************************************************
-//STEP1    EXEC PGM=SORT
-//SORTIN   DD DISP=SHR,DSN=EBANK.BRANCH.OUT
-//         DD DISP=SHR,DSN=EBANK.OFFICER.OUT
-//SORTOUT  DD DSN=EBANK.BRANCH.OFFICER.FILE,
-//         DISP=(NEW,CATLG,DELETE),
-//         SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
-//         DCB=(LRECL=152,BLKSIZE=0,RECFM=FB)
-//SYSOUT   DD SYSOUT=*
-//SYSIN    DD *
- SORT FIELDS=(1,10,CH,A,11,3,CH,A)
-//*********************************************************************
-//*   TO GET THE BRANCH ABBREVIATION
-//*********************************************************************
-//STEP2    EXEC PGM=CIBRABRV
-//STEPLIB  DD DSN=RBP2.IB330P.LOAD,DISP=SHR
-//SYSUDUMP DD SYSOUT=*
-//SNAPRNT  DD SYSOUT=*
-//SNADUMP  DD SYSOUT=*
-//SYSPRINT DD SYSOUT=*
-//SYSABOUT DD SYSOUT=*
-//SYSDBOUT DD SYSOUT=*
-//SYSOUT   DD SYSOUT=*
-//SYSOUD   DD SYSOUT=*
-//SYSIN    DD *
-PBB
-//INFILE   DD DISP=SHR,DSN=EBANK.BRANCH.OFFICER.FILE
-//BRFILE   DD DISP=SHR,DSN=RBP2.B134.PFB.OA.BRANCH
-//OUTFILE  DD DSN=EBANK.BRANCH.OFFICER.COMBINE,
-//         DISP=(NEW,CATLG,DELETE),
-//         SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
-//         DCB=(LRECL=154,BLKSIZE=0,RECFM=FB)
-//*********************************************************************
-//*--ESMR 2014-2748 SELECT THE ACTIVE BRANCHES (EXCLUDE HP CENTERS)
-//*                 FOR PBE PREFERED BRANCH LISTING
 //*********************************************************************
 //EBKFILE  EXEC SAS609
 //BRANCH   DD DISP=SHR,DSN=EBANK.BRANCH.OFFICER.COMBINE
