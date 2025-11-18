@@ -2,9 +2,7 @@
 """
 Clean Parquet files (string columns) after converter output.
 Removes nulls, SUB, control chars, trims spaces, empty -> NULL.
-Automatically processes all Parquet files in a manually given folder.
-Writes cleaned Parquet to a specified folder with the same filename.
-Skips cleaning for files already clean, but still copies to output.
+Overwrites the original Parquet files.
 Logs all actions.
 """
 
@@ -17,11 +15,9 @@ import pandas as pd
 # -------------------------
 # CONFIG
 # -------------------------
-INPUT_PARQUET_FOLDER = Path("/host/cis/parquet/sas_parquet_test_jkh")        # input folder
-OUTPUT_CLEAN_FOLDER = Path("/host/cis/parquet/sas_parquet_test_jkh_clean") # output folder
+INPUT_PARQUET_FOLDER = Path("/host/cis/parquet/sas_parquet_test_jkh")
+OUTPUT_CLEAN_FOLDER = INPUT_PARQUET_FOLDER   # overwrite original files
 LOG_FILE = Path("/host/cis/logs/parquet_clean_log.txt")
-
-OUTPUT_CLEAN_FOLDER.mkdir(parents=True, exist_ok=True)
 
 # -------------------------
 # Cleaning function
@@ -34,7 +30,6 @@ def clean_column_string_after(s):
     return s_clean if s_clean else None
 
 def is_column_clean(series):
-    # Returns True if column has no control chars
     for val in series.dropna():
         if re.search(r"[\x00\x1A\x01-\x1F\x7F]", str(val)):
             return False
@@ -50,23 +45,16 @@ if not parquet_files:
 else:
     with open(LOG_FILE, "w") as log:
         for input_file in parquet_files:
-            output_file = OUTPUT_CLEAN_FOLDER / input_file.name
-            print(f"Processing: {input_file} -> {output_file}")
+            output_file = input_file  # overwrite same file
+            print(f"Processing (overwrite): {input_file}")
 
-            # Load Parquet to pandas
             table = pq.read_table(str(input_file))
             df = table.to_pandas()
 
-            # Check if cleaning is needed
             string_cols = df.select_dtypes(include="object").columns
-            cleaning_needed = False
-            for col in string_cols:
-                if not is_column_clean(df[col]):
-                    cleaning_needed = True
-                    break
+            cleaning_needed = any(not is_column_clean(df[col]) for col in string_cols)
 
             if cleaning_needed:
-                # Clean all string/object columns
                 for col in string_cols:
                     df[col] = df[col].apply(clean_column_string_after)
                 log.write(f"CLEANED: {input_file.name}\n")
@@ -75,7 +63,6 @@ else:
                 log.write(f"SKIPPED (already clean): {input_file.name}\n")
                 print(f"⏭ Skipped (already clean): {input_file.name}")
 
-            # Save to output folder
             pq.write_table(pa.Table.from_pandas(df), str(output_file))
 
     print("Processing complete. Log saved to:", LOG_FILE)
