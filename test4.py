@@ -2,7 +2,7 @@
 """
 Clean Parquet files (string columns) after converter output.
 Removes nulls, SUB, control chars, trims spaces, empty -> NULL.
-Overwrites the original Parquet files.
+Overwrites the original Parquet files ONLY if cleaning is needed.
 Logs all actions.
 """
 
@@ -16,7 +16,6 @@ import pandas as pd
 # CONFIG
 # -------------------------
 INPUT_PARQUET_FOLDER = Path("/host/cis/parquet/sas_parquet_test_jkh")
-OUTPUT_CLEAN_FOLDER = INPUT_PARQUET_FOLDER   # overwrite original files
 LOG_FILE = Path("/host/cis/logs/parquet_clean_log.txt")
 
 # -------------------------
@@ -45,8 +44,7 @@ if not parquet_files:
 else:
     with open(LOG_FILE, "w") as log:
         for input_file in parquet_files:
-            output_file = input_file  # overwrite same file
-            print(f"Processing (overwrite): {input_file}")
+            print(f"Checking: {input_file.name}")
 
             table = pq.read_table(str(input_file))
             df = table.to_pandas()
@@ -54,15 +52,17 @@ else:
             string_cols = df.select_dtypes(include="object").columns
             cleaning_needed = any(not is_column_clean(df[col]) for col in string_cols)
 
-            if cleaning_needed:
-                for col in string_cols:
-                    df[col] = df[col].apply(clean_column_string_after)
-                log.write(f"CLEANED: {input_file.name}\n")
-                print(f"✅ Cleaned: {input_file.name}")
-            else:
-                log.write(f"SKIPPED (already clean): {input_file.name}\n")
+            if not cleaning_needed:
+                log.write(f"SKIPPED (clean): {input_file.name}\n")
                 print(f"⏭ Skipped (already clean): {input_file.name}")
+                continue  # <-- TRUE SKIP, DO NOTHING
 
-            pq.write_table(pa.Table.from_pandas(df), str(output_file))
+            # If cleaning is needed, process and overwrite
+            for col in string_cols:
+                df[col] = df[col].apply(clean_column_string_after)
+
+            pq.write_table(pa.Table.from_pandas(df), str(input_file))
+            log.write(f"CLEANED: {input_file.name}\n")
+            print(f"✅ Cleaned and overwritten: {input_file.name}")
 
     print("Processing complete. Log saved to:", LOG_FILE)
