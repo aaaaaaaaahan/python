@@ -2,77 +2,103 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIBMSPEN JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB86639
-//*--------------------------------------------------------------------
-//INITDASD EXEC PGM=IEFBR14
-//DEL1     DD DSN=CIBMSYST.PENDING,
-//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
-//*---------------------------------------------------------------------
-//PENDING   EXEC SAS609
-//IEFRDER   DD DUMMY
-//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
-//CIBMSYST  DD DISP=SHR,DSN=UNLOAD.CIBMSYST.PENDING
-//OUTFILE   DD DSN=CIBMSYST.PENDING,
-//             DISP=(NEW,CATLG,DELETE),
-//             UNIT=SYSDA,SPACE=(CYL,(50,30),RLSE),
-//             DCB=(LRECL=100,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTION NOCENTER;
-  DATA DATE;
-     INFILE CTRLDATE;
-     INPUT @1   TODAYYY          4.
-           @5   TODAYMM          2.
-           @7   TODAYDD          2.;
-           TODAYDATE=MDY(TODAYMM,TODAYDD,TODAYYY);
-           CALL SYMPUT('TODAYDT', PUT(TODAYDATE,YYMMDD10.));
+//CIBRABVB  JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID     JOB81979
+//**********************************************************************
+//DELETE1  EXEC PGM=IEFBR14
+//DD1      DD DSN=EBANK.BRANCH.OFFICER.FILE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DD2      DD DSN=EBANK.BRANCH.OFFICER.COMBINE,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//DD3      DD DSN=EBANK.BRANCH.PREFER,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//**********************************************************************
+//*  SORT BRANCH & OFFICER FILE INTO ONE FILE
+//**********************************************************************
+//STEP1    EXEC PGM=SORT
+//SORTIN   DD DISP=SHR,DSN=EBANK.BRANCH.OUT
+//         DD DISP=SHR,DSN=EBANK.OFFICER.OUT
+//SORTOUT  DD DSN=EBANK.BRANCH.OFFICER.FILE,
+//         DISP=(NEW,CATLG,DELETE),
+//         SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
+//         DCB=(LRECL=152,BLKSIZE=0,RECFM=FB)
+//SYSOUT   DD SYSOUT=*
+//SYSIN    DD *
+ SORT FIELDS=(1,10,CH,A,11,3,CH,A)
+//*********************************************************************
+//*   TO GET THE BRANCH ABBREVIATION
+//*********************************************************************
+//STEP2    EXEC PGM=CIBRABRV
+//STEPLIB  DD DSN=RBP2.IB330P.LOAD,DISP=SHR
+//SYSUDUMP DD SYSOUT=*
+//SNAPRNT  DD SYSOUT=*
+//SNADUMP  DD SYSOUT=*
+//SYSPRINT DD SYSOUT=*
+//SYSABOUT DD SYSOUT=*
+//SYSDBOUT DD SYSOUT=*
+//SYSOUT   DD SYSOUT=*
+//SYSOUD   DD SYSOUT=*
+//SYSIN    DD *
+PBB
+//INFILE   DD DISP=SHR,DSN=EBANK.BRANCH.OFFICER.FILE
+//BRFILE   DD DISP=SHR,DSN=RBP2.B134.PFB.OA.BRANCH
+//OUTFILE  DD DSN=EBANK.BRANCH.OFFICER.COMBINE,
+//         DISP=(NEW,CATLG,DELETE),
+//         SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
+//         DCB=(LRECL=154,BLKSIZE=0,RECFM=FB)
+//*********************************************************************
+//*--ESMR 2014-2748 SELECT THE ACTIVE BRANCHES (EXCLUDE HP CENTERS)
+//*                 FOR PBE PREFERED BRANCH LISTING
+//*********************************************************************
+//EBKFILE  EXEC SAS609
+//BRANCH   DD DISP=SHR,DSN=EBANK.BRANCH.OFFICER.COMBINE
+//* EXCEL FILE FROM HELP DESK
+//HELPDESK DD DISP=SHR,DSN=PBB.BRANCH.HELPDESK
+//OUTFILE  DD DSN=EBANK.BRANCH.PREFER,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(TRK,(10,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+DATA BRANCH;
+   INFILE BRANCH;
+   INPUT @1     BANKINDC          $1.
+         @2     BRANCHNO          $7.
+         @9     BRANCHABRV        $3.
+         @12    PB_BRNAME         $20.
+         @32    ADDRLINE1         $35.
+         @67    ADDRLINE2         $35.
+         @102   ADDRLINE3         $35.
+         @137   PHONENO           $11.
+         @148   STATENO           $3.
+         @151   BRANCHABRV2       $4. ;
+RUN;
+PROC SORT  DATA=BRANCH NODUPKEY; BY BRANCHABRV;RUN;
+
+DATA HELPDESK;
+   INFILE HELPDESK;
+   INPUT @1  BRANCHABRV  $3.
+         @7  HD_BRNAME   $30.;
+RUN;
+PROC SORT  DATA=HELPDESK NODUPKEY; BY BRANCHABRV;RUN;
+
+DATA ACTIVE;
+   MERGE  BRANCH(IN=A) HELPDESK(IN=B);BY BRANCHABRV;
+   IF B;
+RUN;
+PROC SORT  DATA=ACTIVE; BY BRANCHNO  ;RUN;
+
+DATA OUT;
+  SET ACTIVE;
+  FILE OUTFILE;
+     PUT @1     BANKINDC          $1.
+         @2     BRANCHNO          $7.
+         @9     BRANCHABRV        $3.
+         @12    PB_BRNAME         $20.
+         @32    ADDRLINE1         $35.
+         @67    ADDRLINE2         $35.
+         @102   ADDRLINE3         $35.
+         @137   PHONENO           $11.
+         @148   STATENO           $3.
+         @151   BRANCHABRV2       $4. ;
+  RETURN;
   RUN;
-  PROC PRINT;RUN;
-  /*---------------------------------------------------------*/
-  /* DEFINE INPUT FILE                                       */
-  /*---------------------------------------------------------*/
-  DATA PENDING;
-    INFILE CIBMSYST;
-    INPUT @001 LOAD_DATE          $10.   /* BMS_LOAD_DATE       */
-          @011 BRANCHNO           $3.    /* BMS_BRANCH_NO       */
-          @014 APPL_CODE          $5.    /* BMS_APPL_CODE       */
-          @019 ACCTNOC            $20.   /* BMS_ACCT_NO         */
-          @039 PBB_NAME           $40.   /* BMS_PBB_NAME        */
-          @079 CATEGORY           $1.    /* BMS_CATEGORY        */
-          @080 MATCH_TYPE         $4.    /* BMS_MATCH_TYPE      */
-          @084 BRANCH_ABBR        $7.    /* BMS_BRANCH_ABBR     */
-          @091 ACCT_TYPE          $1.    /* BMS_ACCT_TYPE       */
-          @092 JIM_CODE           $3.    /* BMS_JIM_CODE        */
-          @095 BANKRUPTCY_NO      $20.   /* BMS_BANKRUPTCY_NO   */
-          @115 JIM_REFER_NO       $30.   /* BMS_JIM_REFER_NO    */
-          @145 ADJUDGE_DATE       $10.   /* BMS_ADJUDGE_DATE    */
-          @155 JIM_NAME           $70.   /* BMS_JIM_NAME        */
-          @225 NEWIC              $15.   /* BMS_ALIAS           */
-          @240 OLDIC              $10.   /* BMS_OLDIC           */
-          @250 LEDGERBAL1         $15.   /* BMS_CURRENT_BALANCE */
-          @265 ACCTSTATUS         $25.   /* BMS_ACTION_ORIGINAL */
-          @290 ACTION_TAKEN       $25.   /* BMS_ACTION_TAKEN    */
-          @315 ACTION_USERID      $10.   /* BMS_ACTION_USERID   */
-          @325 ACTION_DATE        $10.   /* BMS_ACTION_DATE     */
-          @335 ACTION_TIME        $08.   /* BMS_ACTION_TIME     */
-          @343 WAIVE_REMARKS      $40.   /* BMS_WAIVE_REMARKS   */
-          @383 BANKINDC           $1.    /* BMS_BANK_INDC       */
-          @384 PERIOD_OVERDUEX     3.;   /* BMS_PERIOD_OVERDUE  */
-          IF LOAD_DATE = "&TODAYDT" THEN DELETE;
-          PERIOD_OVERDUE = PERIOD_OVERDUEX + 1;
-        ;
-  RUN;
- /*----------------------------------------------------------------*/
- /*    OUTPUT FILE                                                 */
- /*----------------------------------------------------------------*/
- DATA OUT;
-    SET PENDING;
-    FILE OUTFILE;
-    PUT @001 LOAD_DATE          $10.    /* BMS_LOAD_DATE */
-        @011 BRANCHNO           $3.     /* BMS_BRANCH_NO */
-        @014 APPL_CODE          $5.     /* BMS_APPL_CODE */
-        @019 ACCTNOC            $20.    /* BMS_ACCT_NO   */
-        @039 PERIOD_OVERDUE     Z3.
-        ;
-   RETURN;
- RUN;
