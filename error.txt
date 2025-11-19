@@ -1,142 +1,136 @@
 error:
-line 99, in <module>
+line 19, in <module>
     con.execute(f"""
-duckdb.duckdb.BinderException: Binder Error: Referenced column "STAFFID" not found in FROM clause!
-Candidate bindings: "CUSTNAME", "CUSTCODEALL", "CUSTNO", "CUSTBRCH", "FILECODE"
+duckdb.duckdb.BinderException: Binder Error: Cannot mix values of type VARCHAR and INTEGER_LITERAL in BETWEEN clause - an explicit cast is required
 
-LINE 9:     STAFFID,
+LINE 7:          ACCTNO BETWEEN 1000000000 AND 1999999999 OR
 
 program:
 import duckdb
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
 
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
+DATE3 = batch_date.strftime("%Y%m%d")     # format YYYYMMDD
 
-# ============================
-# CONFIG
-# ============================
+# =============================================================================
+# DuckDB connection
+# =============================================================================
 con = duckdb.connect()
 cis = get_hive_parquet('CIS_CUST_DAILY')
 
-# ============================
-# STEP 1: LOAD PARQUET
-# ============================
-con.execute(f"""
-    CREATE TABLE CUST AS
-    SELECT * FROM read_parquet('{cis[0]}')
-""")
-
-# ============================
-# STEP 2: PROCESS HRC FIELDS
-# ============================
-hrc_list = [f"HRC{str(i).zfill(2)}" for i in range(1, 21)]
-# LPAD to 3 chars (Z3.), replace '002' -> '   '
-processed_hrc = ",\n".join([
-    f"CASE WHEN LPAD(CAST({h} AS VARCHAR),3,'0')='002' THEN '   ' ELSE LPAD(CAST({h} AS VARCHAR),3,'0') END AS {h}C"
-    for h in hrc_list
-])
-
-# ============================
-# STEP 3: FILTER BANK EMPLOYEES (any HRCxxC = '002')
-# ============================
-filter_condition = " OR ".join([f"LPAD(CAST({h} AS VARCHAR),3,'0')='002'" for h in hrc_list])
-
+# =============================================================================
+# LOAD CIS (CISFILE.CUSTDLY)
+# =============================================================================
 con.execute(f"""
     CREATE TABLE CIS AS
-    SELECT
-        CUSTNO,
-        INDORG,
-        CUSTBRCH,
-        CUSTNAME,
-        'A' AS FILECODE,
-        {processed_hrc},
-        '000' AS CODEFILLER
-    FROM CUST
-    WHERE {filter_condition}
-""")
-
-# ============================
-# STEP 4: CREATE CUSTCODEALL
-# ============================
-concat_fields = "||".join([f"{h}C" for h in hrc_list] + ["CODEFILLER"])
-con.execute(f"""
-    CREATE TABLE CIS2 AS
-    SELECT *,
-           REPLACE({concat_fields}, ' ', '') AS CUSTCODEALL
-    FROM CIS
-""")
-
-# ============================
-# STEP 5: REMOVE DUPLICATES BY CUSTNO
-# ============================
-con.execute("""
-    CREATE TABLE FINAL AS
     SELECT *
-    FROM CIS2
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY CUSTNO ORDER BY CUSTNO) = 1
+    EXCLUDE (ALIAS,ALIASKEY)
+    FROM read_parquet('{cis[0]}')
+    WHERE (
+         ACCTNO BETWEEN 1000000000 AND 1999999999 OR
+         ACCTNO BETWEEN 3000000000 AND 3999999999 OR
+         ACCTNO BETWEEN 4000000000 AND 4999999999 OR
+         ACCTNO BETWEEN 5000000000 AND 5999999999 OR
+         ACCTNO BETWEEN 6000000000 AND 6999999999 OR
+         ACCTNO BETWEEN 7000000000 AND 7999999999
+    )
+    ORDER BY CUSTNO
 """)
 
-# -----------------------------
-# 9. Write Parquet and CSV
-# -----------------------------
-out = """
-SELECT 
-    CUSTNO,
-    INDORG,
-    CUSTBRCH,
-    CUSTCODEALL,
-    FILECODE,
-    STAFFID,
-    CUSTNAME,  
-    {year} AS year,
-    {month} AS month,
-    {day} AS day
-FROM FINAL
-""".format(year=year,month=month,day=day)
 
-queries = {
-    "CICUSCD4_STAF002_INIT": out
-}
+# =============================================================================
+# LOAD HR FILE (WITH VALIDATION)
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE HR_RAW AS
+    SELECT *
+    FROM '{host_parquet_path("HCMS_STAFF_RESIGN.parquet")}'
+""")
 
-for name, query in queries.items():
-    parquet_path = parquet_output_path(name)
-    csv_path = csv_output_path(name)
+# Validate HEADER date (DATAINDC=0, HEADERDATE must match DATE3)
+hdr = con.execute("""
+    SELECT HEADERDATE 
+    FROM HR_RAW 
+    WHERE DATAINDC = '0'
+""").fetchone()
 
-    con.execute(f"""
-        COPY ({query})
-        TO '{parquet_path}'
-        (FORMAT PARQUET, PARTITION_BY (year, month, day), OVERWRITE_OR_IGNORE TRUE)
-    """)
+if hdr and hdr[0] != DATE3:
+    raise Exception(f"ABORT 77: HEADERDATE {hdr[0]} != REPORT DATE {DATE3}")
 
-    con.execute(f"""
-        COPY ({query})
-        TO '{csv_path}'
-        (FORMAT CSV, HEADER, DELIMITER ';', OVERWRITE_OR_IGNORE TRUE)
-    """)
+# Extract HR + OLD_IC
+con.execute("""
+    CREATE TABLE HR AS
+    SELECT *
+    FROM HR_RAW
+    WHERE DATAINDC = '1' AND REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
+""")
 
-# -----------------------------
-# 10. Write Fixed-width TXT (matching SAS positions)
-# -----------------------------
-txt_queries = {
-    "CICUSCD4_STAF002_INIT": out
-}
+con.execute(f"""
+    CREATE TABLE OLD_IC AS
+    SELECT *, '003 IC NOT 12 DIGIT      ' AS remarks
+    FROM HR_RAW
+    WHERE DATAINDC = '1' AND NOT REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
+""")
 
-for txt_name, txt_query in txt_queries.items():
-    txt_path = csv_output_path(f"{txt_name}_{report_date}").replace(".csv", ".txt")
-    df_txt = con.execute(txt_query).fetchdf()
+# Validate TRAILER (DATAINDC=9)
+trailer = con.execute("""
+    SELECT total_rec
+    FROM HR_RAW WHERE DATAINDC='9'
+""").fetchone()
 
-    with open(txt_path, "w", encoding="utf-8") as f:
-        for _, row in df_txt.iterrows():
-            line = (
-                f"{str(row['CUSTNO']).ljust(20)}"          # Z7. numeric
-                f"{str(row['INDORG']).ljust(1)}"
-                f"{str(row['CUSTBRCH']).ljust(7)}"
-                f"{str(row['CUSTCODEALL']).ljust(60)}"          # 20. numeric
-                f"{str(row['FILECODE']).ljust(1)}"
-                f"{str(row['STAFFID']).ljust(9)}" 
-                f"{str(row['CUSTNAME']).ljust(40)}"
-            )
-            f.write(line + "\n")
+count_hr = con.execute("SELECT COUNT(*) FROM HR").fetchone()[0]
+
+if trailer and int(trailer[0]) != count_hr:
+    raise Exception(f"ABORT 88: trailer count {trailer[0]} != HR count {count_hr}")
+
+
+# =============================================================================
+# LOAD ALS FILE
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE ALS AS
+    SELECT *
+    FROM '{host_parquet_path("ALLALIAS_FIX.parquet")}'
+    WHERE ALIASKEY = 'IC'
+""")
+
+
+# =============================================================================
+# MATCH 1: HR + ALS → RESULT1, NO_IC
+# =============================================================================
+con.execute("""
+    CREATE TABLE RESULT1 AS
+    SELECT hr.*, als.CUSTNO AS CUSTNO
+    FROM HR hr
+    JOIN ALS als USING (ALIAS)
+""")
+
+con.execute("""
+    CREATE TABLE NO_IC AS
+    SELECT hr.*, '001 STAFF IC NOT FOUND   ' AS REMARKS
+    FROM HR hr
+    LEFT JOIN ALS als USING (ALIAS)
+    WHERE als.ALIAS IS NULL
+""")
+
+
+# =============================================================================
+# MATCH 2: RESULT1 + CIS → MATCH2, NO_ACCT
+# =============================================================================
+con.execute("""
+    CREATE TABLE MATCH2 AS
+    SELECT r.*, c.CUSTNAME, c.ACCTCODE, c.ACCTNOC, c.PRISEC
+    FROM RESULT1 r
+    JOIN CIS c USING (CUSTNO)
+""")
+
+con.execute("""
+    CREATE TABLE NO_ACCT AS
+    SELECT r.*, '002 CIS WITH NO ACCOUNT  ' AS REMARKS
+    FROM RESULT1 r
+    LEFT JOIN CIS c USING (CUSTNO)
+    WHERE c.CUSTNO IS NULL
+""")
