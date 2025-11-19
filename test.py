@@ -2,173 +2,111 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIHRCAPD JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB41707
+//CICRDHRC JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB44392
 //*--------------------------------------------------------------------
-//DLY#REPT EXEC SAS609
-//* UNLOAD JOB FROM CIULHRCA
-//HRCUNLD  DD DISP=SHR,DSN=UNLOAD.CIHRCAPT.FB
-//DPTRBALS DD DISP=SHR,DSN=DPTRBLGS
-//CTRLDATE DD DISP=SHR,DSN=SRSCTRL1(0)
-//OUTFILE  DD DSN=HRCDAILY.ACCTLIST(+1),
-//            DISP=(NEW,CATLG,DELETE),SPACE=(CYL,(1,5),RLSE),
-//            UNIT=SYSDA,DCB=(LRECL=260,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SORTWK01 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK02 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK03 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK04 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK05 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SORTWK06 DD UNIT=SYSDA,SPACE=(CYL,(200,100))
-//SYSIN    DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
- /*----------------------------------------------------------------*/
- /*    GET SAS DATE AND TODAY REPORTING DATE                       */
- /*----------------------------------------------------------------*/
- DATA SRSDATE;
-    INFILE CTRLDATE;
-    INPUT @001  SRSYY    4.
-          @005  SRSMM    2.
-          @007  SRSDD    2.;
-          /* DISPLAY TODAY REPORTING DATE*/
-          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-          TODAY=PUT(TODAYSAS,YYMMDD10.);
-          CALL SYMPUT('TODAYDATE',TODAY);
-          CALL SYMPUT('YYYYMM',PUT(TODAYSAS,YYMMD7.));
-          CALL SYMPUT('YYYY',PUT(TODAYSAS,YEAR4.));
- RUN;
- PROC PRINT DATA=SRSDATE(OBS=5);TITLE 'DATE';RUN;
- /*----------------------------------------------------------------*/
- /*    INPUT FILE DATA DECLARATION                                 */
- /*----------------------------------------------------------------*/
- DATA HRCRECS;
-    INFILE HRCUNLD;
-    INPUT  @001  ALIAS             $40.
-           @041  BRCHCODE           $7.
-           @048  ACCTTYPE           $5.
-           @053  APPROVALSTATUS     $2.
-           @055  ACCTNOC           $20.
-           @075  CISNO             $20.
-           @095  CREATIONDATE      $10.
-           @105  PRIMARYJOINT      $40.
-           @145  CISJOINTID1       $40.
-           @185  CISJOINTID2       $40.
-           @225  CISJOINTID3       $40.
-           @265  CISJOINTID4       $40.
-           @305  CISJOINTID5       $40.
-           @345  CUSTTYPE           $1.
-           @346  CUSTNAME         $120.
-           @466  CUSTGENDER        $10.
-           @476  CUSTDOBDOR        $10.
-           @486  CUSTEMPLOYER     $120.
-           @606  CUSTADDR1         $40.
-           @646  CUSTADDR2         $40.
-           @686  CUSTADDR3         $40.
-           @726  CUSTADDR4         $40.
-           @766  CUSTADDR5         $40.
-           @806  CUSTPHONE         $15.
-           @821  CUSTPEP            $1.
-           @822  DTCORGUNIT        $10.
-           @832  DTCINDUSTRY       $10.
-           @842  DTCNATION         $10.
-           @852  DTCOCCUP          $10.
-           @862  DTCACCTTYPE       $10.
-           @872  DTCCOMPFORM       $10.
-           @882  DTCWEIGHTAGE       $1.
-           @883  DTCTOTAL           $5.
-           @888  DTCSCORE1          $5.
-           @893  DTCSCORE2          $5.
-           @898  DTCSCORE3          $5.
-           @903  DTCSCORE4          $5.
-           @908  DTCSCORE5          $5.
-           @913  DTCSCORE6          $5.
-           @918  ACCTPURPOSE        $5.
-           @923  ACCTREMARKS       $60.
-           @983  SOURCEFUND         $5.
-           @988  SOURCEDETAILS     $60.
-           @1048 PEPINFO          $150.
-           @1198 PEPWEALTH         $60.
-           @1258 PEPFUNDS          $60.
-           @1320 BRCHRECOMDETAILS $900.
-           @2220 BRCHEDITOPER       $8.
-           @2228 BRCHAPPROVEOPER    $8.
-           @2236 BRCHCOMMENTS     $150.
-           @2386 BRCHREWORK       $150.
-           @2536 HOVERIFYOPER       $8.
-           @2544 HOVERIFYDATE      $10.
-           @2554 HOVERIFYCOMMENTS $150.
-           @2704 HOVERIFYREMARKS  $150.
-           @2854 HOVERIFYREWORK   $150.
-           @3004 HOAPPROVEOPER      $8.
-           @3012 HOAPPROVEDATE     $10.
-           @3022 HOAPPROVEREMARKS $150.
-           @3172 HOCOMPLYREWORK   $150.
-           @3322 UPDATEDATE        $10.
-           @3332 UPDATETIME         $8.;
-           IF ACCTNOC =' ' THEN DELETE;
- RUN;
- PROC SORT  DATA=HRCRECS; BY ACCTNOC BRCHCODE;RUN;
- PROC PRINT DATA=HRCRECS(OBS=5);TITLE 'MASTER HRC RECORDS';RUN;
-
- /*----------------------------------------------------------------*/
- /*    INPUT FILE DATA DECLARATION FOR DPTRBALS                    */
- /*----------------------------------------------------------------*/
- DATA DEPOSIT;
-    INFILE DPTRBALS MISSOVER;
-    KEEP ACCTNOC OPENDATE NOTENOC;
-    FORMAT ACCTNOC $20. NOTENOC $5.;
-    INPUT @03  BANKNO       PD2.
-          @24  REPTNO       PD3.
-          @27  FMTCODE      PD2. @;
-
-    IF (REPTNO = 1001 AND (FMTCODE IN (1,10,22))) THEN DO;
-       INPUT @106   BRANCH      PD4.
-             @110   ACCTNO      PD6.
-             @164   OPENDATEX   PD6. ;
-             OPENDAY=PUT(OPENDATEX,Z11.);
-             OPENMM=SUBSTR(OPENDAY,1,2);
-             OPENDD=SUBSTR(OPENDAY,3,2);
-             OPENYY=SUBSTR(OPENDAY,5,4);
-             OPENDATE=COMPRESS(OPENYY||'-'||OPENMM||'-'||OPENDD);
-             ACCTNOC=PUT(ACCTNO,Z10.);
-             NOTENOC='';
-             IF ACCTNOC='' THEN DELETE;
-             IF OPENDATE NE "&TODAYDATE" THEN DELETE;
-    END;
- RUN;
- PROC SORT DATA=DEPOSIT NODUPKEY;BY ACCTNOC NOTENOC ;RUN;
- PROC PRINT DATA=DEPOSIT(OBS=10);TITLE 'DEPOSIT';RUN;
- /*----------------------------------------------------------------*/
- /*    MERGE TWO DATASETS TO GET DELETE BY HOE OR BRANCH STATUS    */
- /*----------------------------------------------------------------*/
- DATA MRGHRC;
-    MERGE HRCRECS(IN=A) DEPOSIT(IN=B); BY ACCTNOC;
-    IF A AND B;
- RUN;
- PROC SORT  DATA=MRGHRC; BY BRCHCODE ACCTNOC; RUN;
- PROC PRINT DATA=MRGHRC(OBS=20);TITLE 'ALL HRC RECORDS';RUN;
-
-DATA OUT;
-   SET MRGHRC;
-   FILE OUTFILE;
-   IF _N_ = 1 THEN
-   PUT  'BRANCH'                 ','
-        'ID NUMBER'              ','
-        'NAME'                   ','
-        'APPLICATION DATE'       ','
-        'TYPE OF ACCOUNT'        ','
-        'APPLICATION STATUS'     ','
-        'ACCOUNT NO'             ','
-        'ACCOUNT OPEN DATE'      ','
-        'CIS NO'                 ;
-   PUT BRCHCODE       ','
-       ALIAS          ','
-       CUSTNAME       ','
-       CREATIONDATE   ','
-       ACCTTYPE       ','
-       APPROVALSTATUS ','
-       ACCTNOC        ','
-       OPENDATE       ','
-       CISNO          ;
+//DELETE   EXEC PGM=IEFBR14
+//DEL1     DD DSN=UNICARD.HRC.ALLCUST,
+//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//*--------------------------------------------------------------------
+//RESCORP   EXEC SAS609
+//UNICARD   DD DISP=SHR,DSN=UNICARD.HRC.CIS33
+//          DD DISP=SHR,DSN=UNICARD.HRC.CIS34
+//          DD DISP=SHR,DSN=UNICARD.HRC.CIS54
+//          DD DISP=SHR,DSN=UNICARD.HRC.CIS55
+//CIS       DD DISP=SHR,DSN=CIS.CUST.DAILY
+//OUTHRC    DD DSN=UNICARD.HRC.ALLCUST,
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(10,10),RLSE),
+//             DCB=(LRECL=582,BLKSIZE=0,RECFM=FB)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
+DATA HRCUNICRD;
+  FORMAT ALIAS $37.;
+  INFILE UNICARD;
+  INPUT  @001  ALIAS               $12.
+         @013  BRCHCODE             $7.
+         @020  ACCTTYPE             $5.
+         @025  APPROVALSTATUS       $2.
+         @027  ACCTNO               16.
+         @043  CUSTTYPE             $1.
+         @044  CUSTNAME           $150.
+         @194  CUSTGENDER           $3.
+         @197  CUSTDOBDOR           $8.
+         @205  CUSTEMPLOYER        $30.
+         @235  CUSTADDR1           $30.
+         @265  CUSTADDR2           $30.
+         @295  CUSTADDR3           $30.
+         @325  CUSTADDR4           $30.
+         @355  CUSTADDR5           $30.
+         @385  CUSTPHONE           $12.
+         @397  DTCORGUNIT           $5.
+         @402  DTCNATION            $3.
+         @405  DTCOCCUP             $5.
+         @410  DTCACCTTYPE         $10.
+         @420  DTCWEIGHTAGE         $1.
+         @421  DTCTOTAL             4.1
+         @425  DTCSCORE1             4.
+         @429  DTCSCORE2             4.
+         @433  DTCSCORE3             4.
+         @437  DTCSCORE4             4.
+         @441  DTCSCORE5             4.
+         @445  DTCSCORE6             4.
+         @449  FATCA                $1.
+         @450  HOVERIFYREMARKS     $40.;
 RUN;
+PROC SORT  DATA=HRCUNICRD;BY ALIAS ACCTNO;RUN;
+PROC PRINT DATA=HRCUNICRD;TITLE 'HRC UNICARD';RUN;
+
+PROC SORT DATA=CIS.CUSTDLY(KEEP=ALIASKEY ALIAS CUSTNO ACCTNO)
+          OUT=CUST;BY ALIAS ACCTNO;
+   WHERE ALIAS NE '';
+RUN;
+PROC PRINT DATA=CUST (OBS=05);TITLE 'CUST';RUN;
+
+DATA MRGCUST;
+   MERGE HRCUNICRD(IN=A) CUST(IN=B);
+   BY ALIAS ACCTNO;
+   IF A AND B;
+RUN;
+PROC SORT  DATA=MRGCUST;BY CUSTNO;RUN;
+PROC PRINT DATA=MRGCUST(OBS=05);TITLE 'MERGEDCUST';RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA OUTPUT;
+  SET MRGCUST;
+  FILE OUTHRC;
+        PUT @001  ALIASKEY           $3.
+            @004  ALIAS             $12.
+            @016  BRCHCODE           $7.
+            @023  ACCTTYPE           $5.
+            @028  APPROVALSTATUS     $2.
+            @030  ACCTNO             16.
+            @046  CUSTNO            $20.
+            @066  CUSTTYPE           $1.
+            @067  CUSTNAME         $120.
+            @187  CUSTGENDER        $10.
+            @197  CUSTDOBDOR        $10.
+            @207  CUSTEMPLOYER     $120.
+            @327  CUSTADDR1         $30.
+            @357  CUSTADDR2         $30.
+            @387  CUSTADDR3         $30.
+            @417  CUSTADDR4         $30.
+            @447  CUSTADDR5         $30.
+            @477  CUSTPHONE         $12.
+            @489  DTCORGUNIT         $5.
+            @494  DTCNATION          $3.
+            @497  DTCOCCUP           $5.
+            @502  DTCACCTTYPE       $10.
+            @512  DTCWEIGHTAGE       $1.
+            @513  DTCTOTAL
+            @518  DTCSCORE1
+            @522  DTCSCORE2
+            @526  DTCSCORE3
+            @530  DTCSCORE4
+            @534  DTCSCORE5
+            @538  DTCSCORE6
+            @542  HOVERIFYREMARKS   $40.
+            @582  FATCA              $1.;
+RUN;
+PROC PRINT; RUN;
