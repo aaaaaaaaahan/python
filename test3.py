@@ -1,159 +1,128 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
 
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
+DATE3 = batch_date.strftime("%Y%m%d")     # format YYYYMMDD
 
-# ============================================================
-# 2) INPUT PARQUET FILES (assumed already converted)
-# ============================================================
-HRCUNLD_PARQUET = "HRCUNLD.parquet"
-DPTRBALS_PARQUET = "DPTRBALS.parquet"
-OUTPUT_TXT = "HRCDAILY_ACCTLIST.txt"
-OUTPUT_PARQUET = "HRCDAILY_ACCTLIST.parquet"
-
+# =============================================================================
+# DuckDB connection
+# =============================================================================
 con = duckdb.connect()
+cis = get_hive_parquet('CIS_CUST_DAILY')
 
-# ============================================================
-# 3) Load HRCUNLD (fixed-width schema reproduced exactly)
-# ============================================================
+# =============================================================================
+# LOAD CIS (CISFILE.CUSTDLY)
+# =============================================================================
 con.execute(f"""
-    CREATE TABLE HRCRECS AS
-    SELECT
-        ALIAS,
-        BRCHCODE,
-        ACCTTYPE,
-        APPROVALSTATUS,
-        ACCTNOC,
-        CISNO,
-        CREATIONDATE,
-        PRIMARYJOINT,
-        CISJOINTID1,
-        CISJOINTID2,
-        CISJOINTID3,
-        CISJOINTID4,
-        CISJOINTID5,
-        CUSTTYPE,
-        CUSTNAME,
-        CUSTGENDER,
-        CUSTDOBDOR,
-        CUSTEMPLOYER,
-        CUSTADDR1,
-        CUSTADDR2,
-        CUSTADDR3,
-        CUSTADDR4,
-        CUSTADDR5,
-        CUSTPHONE,
-        CUSTPEP,
-        DTCORGUNIT,
-        DTCINDUSTRY,
-        DTCNATION,
-        DTCOCCUP,
-        DTCACCTTYPE,
-        DTCCOMPFORM,
-        DTCWEIGHTAGE,
-        DTCTOTAL,
-        DTCSCORE1,
-        DTCSCORE2,
-        DTCSCORE3,
-        DTCSCORE4,
-        DTCSCORE5,
-        DTCSCORE6,
-        ACCTPURPOSE,
-        ACCTREMARKS,
-        SOURCEFUND,
-        SOURCEDETAILS,
-        PEPINFO,
-        PEPWEALTH,
-        PEPFUNDS,
-        BRCHRECOMDETAILS,
-        BRCHEDITOPER,
-        BRCHAPPROVEOPER,
-        BRCHCOMMENTS,
-        BRCHREWORK,
-        HOVERIFYOPER,
-        HOVERIFYDATE,
-        HOVERIFYCOMMENTS,
-        HOVERIFYREMARKS,
-        HOVERIFYREWORK,
-        HOAPPROVEOPER,
-        HOAPPROVEDATE,
-        HOAPPROVEREMARKS,
-        HOCOMPLYREWORK,
-        UPDATEDATE,
-        UPDATETIME
-    FROM '{host_parquet_path("UNLOAD_CIHRCAPT_FB.parquet")}'
-    WHERE ACCTNOC IS NOT NULL AND ACCTNOC <> ''
-    ORDER BY ACCTNOC, BRCHCODE
-""")
-
-print("Loaded HRCUNLD ✓")
-
-# ============================================================
-# 4) Load DPTRBALS with SAS logic
-# ============================================================
-con.execute(f"""
-    CREATE TABLE DEPOSIT AS
-    WITH RAW AS (
-        SELECT *,
-            CAST(REPTNO AS INTEGER) AS REPTNO, 
-            CAST(FMTCODE AS INTEGER) AS FMTCODE,
-            CAST(BANKNO AS INTEGER) AS BANKNO,
-            PAD(CAST(CAST(BRANCH AS INT) AS VARCHAR),3,'0') AS BRANCH,
-            LPAD(CAST(CAST(ACCTNO AS BIGINT) AS VARCHAR),11,'0') AS ACCTNO,
-            CAST(REOPENDT AS BIGINT) AS OPENDATE
-        FROM '{host_parquet_path("DPTRBLGS_CIS.parquet")}'
-    )
-    SELECT
-        LPAD(CAST(ACCTNO AS VARCHAR), 10, '0') AS ACCTNOC,
-        OPENDATE,
-        '' AS NOTENOC
-    FROM RAW
-    WHERE REPTNO = 1001
-      AND FMTCODE IN (1,10,22)
-      AND OPENDATE = '{batch_date}'
-""")
-
-print("Loaded DPTRBALS ✓")
-
-# ============================================================
-# 5) Merge (same as SAS MERGE BY ACCTNOC)
-# ============================================================
-con.execute("""
-    CREATE TABLE MRGHRC AS
+    CREATE TABLE CIS AS
     SELECT *
-    FROM HRCRECS H
-    JOIN DEPOSIT D USING (ACCTNOC)
-    ORDER BY BRCHCODE, ACCTNOC
+    EXCLUDE (ALIAS,ALIASKEY)
+    FROM read_parquet('{cis[0]}')
+    WHERE (
+         ACCTNO BETWEEN 1000000000 AND 1999999999 OR
+         ACCTNO BETWEEN 3000000000 AND 3999999999 OR
+         ACCTNO BETWEEN 4000000000 AND 4999999999 OR
+         ACCTNO BETWEEN 5000000000 AND 5999999999 OR
+         ACCTNO BETWEEN 6000000000 AND 6999999999 OR
+         ACCTNO BETWEEN 7000000000 AND 7999999999
+    )
+    ORDER BY CUSTNO
 """)
 
-print("Merged HRC + DEPOSIT ✓")
 
-# ============================================================
-# 6) Output TXT (same header as SAS PUT statement)
-# ============================================================
-header = (
-    "BRANCH,ID NUMBER,NAME,APPLICATION DATE,TYPE OF ACCOUNT,"
-    "APPLICATION STATUS,ACCOUNT NO,ACCOUNT OPEN DATE,CIS NO"
-)
+# =============================================================================
+# LOAD HR FILE (WITH VALIDATION)
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE HR_RAW AS
+    SELECT *
+    FROM '{host_parquet_path("HCMS_STAFF_RESIGN.parquet")}'
+""")
 
-out = con.execute("""
-    SELECT
-        BRCHCODE,
-        ALIAS,
-        CUSTNAME,
-        CREATIONDATE,
-        ACCTTYPE,
-        APPROVALSTATUS,
-        ACCTNOC,
-        OPENDATE,
-        CISNO
-    FROM MRGHRC
-""").fetchall()
+# Validate HEADER date (DATAINDC=0, HEADERDATE must match DATE3)
+hdr = con.execute("""
+    SELECT HEADERDATE 
+    FROM HR_RAW 
+    WHERE DATAINDC = '0'
+""").fetchone()
 
-# ============================================================
-# 7) Output Parquet
-# ============================================================
-print("DONE ✓")
+if hdr and hdr[0] != DATE3:
+    raise Exception(f"ABORT 77: HEADERDATE {hdr[0]} != REPORT DATE {DATE3}")
+
+# Extract HR + OLD_IC
+con.execute("""
+    CREATE TABLE HR AS
+    SELECT *
+    FROM HR_RAW
+    WHERE DATAINDC = '1' AND REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
+""")
+
+con.execute(f"""
+    CREATE TABLE OLD_IC AS
+    SELECT *, '003 IC NOT 12 DIGIT      ' AS remarks
+    FROM HR_RAW
+    WHERE DATAINDC = '1' AND NOT REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
+""")
+
+# Validate TRAILER (DATAINDC=9)
+trailer = con.execute("""
+    SELECT total_rec
+    FROM HR_RAW WHERE DATAINDC='9'
+""").fetchone()
+
+count_hr = con.execute("SELECT COUNT(*) FROM HR").fetchone()[0]
+
+if trailer and int(trailer[0]) != count_hr:
+    raise Exception(f"ABORT 88: trailer count {trailer[0]} != HR count {count_hr}")
+
+
+# =============================================================================
+# LOAD ALS FILE
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE ALS AS
+    SELECT *
+    FROM '{host_parquet_path("ALLALIAS_FIX.parquet")}'
+    WHERE ALIASKEY = 'IC'
+""")
+
+
+# =============================================================================
+# MATCH 1: HR + ALS → RESULT1, NO_IC
+# =============================================================================
+con.execute("""
+    CREATE TABLE RESULT1 AS
+    SELECT hr.*, als.CUSTNO AS CUSTNO
+    FROM HR hr
+    JOIN ALS als USING (ALIAS)
+""")
+
+con.execute("""
+    CREATE TABLE NO_IC AS
+    SELECT hr.*, '001 STAFF IC NOT FOUND   ' AS REMARKS
+    FROM HR hr
+    LEFT JOIN ALS als USING (ALIAS)
+    WHERE als.ALIAS IS NULL
+""")
+
+
+# =============================================================================
+# MATCH 2: RESULT1 + CIS → MATCH2, NO_ACCT
+# =============================================================================
+con.execute("""
+    CREATE TABLE MATCH2 AS
+    SELECT r.*, c.CUSTNAME, c.ACCTCODE, c.ACCTNOC, c.PRISEC
+    FROM RESULT1 r
+    JOIN CIS c USING (CUSTNO)
+""")
+
+con.execute("""
+    CREATE TABLE NO_ACCT AS
+    SELECT r.*, '002 CIS WITH NO ACCOUNT  ' AS REMARKS
+    FROM RESULT1 r
+    LEFT JOIN CIS c USING (CUSTNO)
+    WHERE c.CUSTNO IS NULL
+""")
