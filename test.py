@@ -2,111 +2,150 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CICRDHRC JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=8M,NOTIFY=&SYSUID       JOB44392
+//CIRESIGN JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB60564
 //*--------------------------------------------------------------------
-//DELETE   EXEC PGM=IEFBR14
-//DEL1     DD DSN=UNICARD.HRC.ALLCUST,
-//            DISP=(MOD,DELETE,DELETE),SPACE=(TRK,(0))
+//INITDASD EXEC PGM=IEFBR14
+//DEL1     DD DSN=CIS.EMPLOYEE.RESIGN,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
+//DEL2     DD DSN=CIS.EMPLOYEE.RESIGN.NOTFOUND,
+//            DISP=(MOD,DELETE,DELETE),UNIT=SYSDA,SPACE=(TRK,(0))
 //*--------------------------------------------------------------------
-//RESCORP   EXEC SAS609
-//UNICARD   DD DISP=SHR,DSN=UNICARD.HRC.CIS33
-//          DD DISP=SHR,DSN=UNICARD.HRC.CIS34
-//          DD DISP=SHR,DSN=UNICARD.HRC.CIS54
-//          DD DISP=SHR,DSN=UNICARD.HRC.CIS55
-//CIS       DD DISP=SHR,DSN=CIS.CUST.DAILY
-//OUTHRC    DD DSN=UNICARD.HRC.ALLCUST,
-//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//             SPACE=(CYL,(10,10),RLSE),
-//             DCB=(LRECL=582,BLKSIZE=0,RECFM=FB)
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-DATA HRCUNICRD;
-  FORMAT ALIAS $37.;
-  INFILE UNICARD;
-  INPUT  @001  ALIAS               $12.
-         @013  BRCHCODE             $7.
-         @020  ACCTTYPE             $5.
-         @025  APPROVALSTATUS       $2.
-         @027  ACCTNO               16.
-         @043  CUSTTYPE             $1.
-         @044  CUSTNAME           $150.
-         @194  CUSTGENDER           $3.
-         @197  CUSTDOBDOR           $8.
-         @205  CUSTEMPLOYER        $30.
-         @235  CUSTADDR1           $30.
-         @265  CUSTADDR2           $30.
-         @295  CUSTADDR3           $30.
-         @325  CUSTADDR4           $30.
-         @355  CUSTADDR5           $30.
-         @385  CUSTPHONE           $12.
-         @397  DTCORGUNIT           $5.
-         @402  DTCNATION            $3.
-         @405  DTCOCCUP             $5.
-         @410  DTCACCTTYPE         $10.
-         @420  DTCWEIGHTAGE         $1.
-         @421  DTCTOTAL             4.1
-         @425  DTCSCORE1             4.
-         @429  DTCSCORE2             4.
-         @433  DTCSCORE3             4.
-         @437  DTCSCORE4             4.
-         @441  DTCSCORE5             4.
-         @445  DTCSCORE6             4.
-         @449  FATCA                $1.
-         @450  HOVERIFYREMARKS     $40.;
-RUN;
-PROC SORT  DATA=HRCUNICRD;BY ALIAS ACCTNO;RUN;
-PROC PRINT DATA=HRCUNICRD;TITLE 'HRC UNICARD';RUN;
+//*- MATCH STAFF IC AGAINST CIS RECORDS
+//*--------------------------------------------------------------------
+//STATS#01 EXEC SAS609
+//ALSFILE  DD DISP=SHR,DSN=UNLOAD.ALLALIAS.FIX
+//*RFILE   DD DISP=SHR,DSN=HCMS.STAFF.RESIGN(0) *PRODUCTION*
+//* FIXED FILE FOR UAT TESTING
+//*RFILE   DD DISP=SHR,DSN=HCMS.STAFF.RESIGN.G0002V00
+//*        DD DISP=SHR,DSN=HCMS.STAFF.RESIGN.G0003V00
+//*        DD DISP=SHR,DSN=HCMS.STAFF.RESIGN.G0004V00
+//HRFILE   DD DISP=SHR,DSN=HCMS.STAFF.RESIGN(0)
+//CISFILE  DD DISP=SHR,DSN=CIS.CUST.DAILY
+//NOTFOUND DD DSN=CIS.EMPLOYEE.RESIGN.NOTFOUND,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//OUTFILE  DD DSN=CIS.EMPLOYEE.RESIGN,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(10,10),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
 
-PROC SORT DATA=CIS.CUSTDLY(KEEP=ALIASKEY ALIAS CUSTNO ACCTNO)
-          OUT=CUST;BY ALIAS ACCTNO;
-   WHERE ALIAS NE '';
+OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
+OPTIONS NODATE NONUMBER NOCENTER;
+TITLE;
+DATA SRSDATE;
+     /* DISPLAY TODAY REPORTING DATE*/
+     TODAYSAS=TODAY();
+     CALL SYMPUT('DATE3',PUT(TODAYSAS,YYMMDDN8.));
 RUN;
-PROC PRINT DATA=CUST (OBS=05);TITLE 'CUST';RUN;
+PROC PRINT;FORMAT TODAYSAS YYMMDDN8.; RUN;
 
-DATA MRGCUST;
-   MERGE HRCUNICRD(IN=A) CUST(IN=B);
-   BY ALIAS ACCTNO;
-   IF A AND B;
+DATA CIS;
+   DROP ALIAS ALIASKEY;
+   SET CISFILE.CUSTDLY;
+   IF ((1000000000 =< ACCTNO =< 1999999999) OR
+       (3000000000 =< ACCTNO =< 3999999999) OR
+       (4000000000 =< ACCTNO =< 4999999999) OR
+       (5000000000 =< ACCTNO =< 5999999999) OR     /*194587*/
+       (6000000000 =< ACCTNO =< 6999999999) OR
+       (7000000000 =< ACCTNO =< 7999999999) );
 RUN;
-PROC SORT  DATA=MRGCUST;BY CUSTNO;RUN;
-PROC PRINT DATA=MRGCUST(OBS=05);TITLE 'MERGEDCUST';RUN;
- /*----------------------------------------------------------------*/
- /*   OUTPUT DETAIL REPORT                                         */
- /*----------------------------------------------------------------*/
-DATA OUTPUT;
-  SET MRGCUST;
-  FILE OUTHRC;
-        PUT @001  ALIASKEY           $3.
-            @004  ALIAS             $12.
-            @016  BRCHCODE           $7.
-            @023  ACCTTYPE           $5.
-            @028  APPROVALSTATUS     $2.
-            @030  ACCTNO             16.
-            @046  CUSTNO            $20.
-            @066  CUSTTYPE           $1.
-            @067  CUSTNAME         $120.
-            @187  CUSTGENDER        $10.
-            @197  CUSTDOBDOR        $10.
-            @207  CUSTEMPLOYER     $120.
-            @327  CUSTADDR1         $30.
-            @357  CUSTADDR2         $30.
-            @387  CUSTADDR3         $30.
-            @417  CUSTADDR4         $30.
-            @447  CUSTADDR5         $30.
-            @477  CUSTPHONE         $12.
-            @489  DTCORGUNIT         $5.
-            @494  DTCNATION          $3.
-            @497  DTCOCCUP           $5.
-            @502  DTCACCTTYPE       $10.
-            @512  DTCWEIGHTAGE       $1.
-            @513  DTCTOTAL
-            @518  DTCSCORE1
-            @522  DTCSCORE2
-            @526  DTCSCORE3
-            @530  DTCSCORE4
-            @534  DTCSCORE5
-            @538  DTCSCORE6
-            @542  HOVERIFYREMARKS   $40.
-            @582  FATCA              $1.;
+PROC SORT  DATA=CIS; BY CUSTNO ;RUN;
+
+DATA HR OLD_IC;
+   INFILE HRFILE;
+      RETAIN X;
+      INPUT @1   DATAINDC     $1.
+            @2   TOTAL_REC    $6.
+            @2   HEADERDATE   $8.
+            @2   ORGID        $13.
+            @15  STAFFID      $9.
+            @24  HRNAME       $40.
+            @64  ALIAS        $12.;
+      IF DATAINDC = '0' THEN DO;
+         IF HEADERDATE NE  &DATE3  THEN ABORT 77;
+      END;
+
+      IF DATAINDC = '1' THEN DO;
+      X+1;
+      IF VERIFY(ALIAS,'1234567890') = 0 THEN DO;
+         OUTPUT HR;
+      END;
+      IF VERIFY(ALIAS,'1234567890') > 0 THEN DO;
+         REMARKS='003 IC NOT 12 DIGIT      ';
+         OUTPUT OLD_IC;
+      END;
+      END;
+
+      IF DATAINDC = '9' AND TOTAL_REC NE 0 THEN DO;
+         TOTAL_REC_NUM = TOTAL_REC * 1;
+         IF TOTAL_REC_NUM NE X THEN ABORT 88;
+      END;
+
 RUN;
-PROC PRINT; RUN;
+PROC SORT  DATA=HR; BY ALIAS ;RUN;
+
+DATA ALS;
+   INFILE ALSFILE;
+      INPUT @5   CUSTNO      $11.
+            @89  ALIASKEY    $03.
+            @92  ALIAS       $12.;
+      IF ALIASKEY = 'IC';
+RUN;
+PROC SORT  DATA=ALS NODUPKEY; BY CUSTNO;RUN;
+PROC SORT  DATA=ALS ; BY ALIAS;RUN;
+
+DATA RESULT1 NO_IC;
+     MERGE HR(IN=F) ALS(IN=G); BY ALIAS;
+     IF F AND G THEN OUTPUT RESULT1;
+     IF (F AND NOT G) THEN DO;
+        REMARKS='001 STAFF IC NOT FOUND   ';
+        OUTPUT NO_IC;
+     END;
+RUN;
+PROC SORT  DATA=RESULT1; BY CUSTNO ;RUN;
+PROC PRINT DATA=RESULT1;TITLE 'RESULT 1';RUN;
+
+DATA MATCH2 NO_ACCT;
+     MERGE RESULT1(IN=S) CIS(IN=T); BY CUSTNO;
+     IF S AND T THEN OUTPUT MATCH2;
+     IF S AND NOT T THEN DO;
+        REMARKS='002 CIS WITH NO ACCOUNT  ';
+        OUTPUT NO_ACCT;
+     END;
+RUN;
+
+PROC SORT  DATA=MATCH2; BY STAFFID ;RUN;
+PROC SORT  DATA=NO_IC; BY REMARKS STAFFID;RUN;
+PROC SORT  DATA=NO_ACCT; BY REMARKS STAFFID;RUN;
+PROC SORT  DATA=OLD_IC; BY REMARKS STAFFID;RUN;
+DATA OUT1;
+  SET NO_IC NO_ACCT OLD_IC;BY REMARKS STAFFID;
+  FILE NOTFOUND;
+     IF REMARKS NE '';
+     PUT @1   REMARKS      $25.
+         @26  ORGID        $13.
+         @40  STAFFID      $9.
+         @50  ALIAS        $15.
+         @65  HRNAME       $40.
+         @105 CUSTNO       $11.;
+  RUN;
+
+DATA OUT2;
+  SET MATCH2;BY STAFFID;
+  FILE OUTFILE;
+     IF PRISEC = 901 THEN PRIMSEC = 'P';
+     IF PRISEC = 902 THEN PRIMSEC = 'S';
+     PUT @01   STAFFID           $10.
+         @11   CUSTNO            $11.
+         @22   HRNAME            $40.
+         @62   CUSTNAME          $40.
+         @102  ALIASKEY          $03.
+         @105  ALIAS             $15.
+         @120  PRIMSEC           $1.
+         @121  ACCTCODE          $5.
+         @126  ACCTNOC           $20.;
+  RETURN;
+  RUN;
