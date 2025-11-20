@@ -1,114 +1,141 @@
 import duckdb
+from CIS_PY_READER import get_hive_parquet, csv_output_path
+import datetime
 
-# =========================
-# 1) INPUT FILES (Parquet assumed)
-# =========================
-custcode_path = "CUSTCODE.parquet"      # contains CUSTNO + HRCCODES(60)
-resigned_path = "RESIGNED.parquet"      # STAFFID, CUSTNO, HRNAME
-updfile_path_parquet = "EMPLOYEE_RESIGN_RMV.parquet"
-updfile_path_txt = "EMPLOYEE_RESIGN_RMV.txt"
+# -----------------------------
+# SET REPORT DATE
+# -----------------------------
+today = datetime.date.today()
+batch_date = today - datetime.timedelta(days=1)
+report_date_str = batch_date.strftime("%d-%m-%Y")
 
+# -----------------------------
+# INPUT FILES (assumed Parquet)
+# -----------------------------
+infile1 = get_hive_parquet("CIS.EMPLOYEE.RESIGN.NOTFOUND")[0]
+infile2 = get_hive_parquet("CIS.EMPLOYEE.RESIGN")[0]
+infile3 = get_hive_parquet("CUSTCODE.EMPL.ERR")[0]
+
+# -----------------------------
+# CONNECT DUCKDB
+# -----------------------------
 con = duckdb.connect()
 
-# =========================
-# 2) Extract CODE01-CODE20 from HRCCODES
-# =========================
-code_extract = ",\n    ".join([
-    f"SUBSTRING(HRCCODES, {(i-1)*3 + 1}, 3) AS CODE{i:02}" for i in range(1, 21)
-])
-
-# Filter rows where any CODE = '002'
+# -----------------------------
+# CREATE TEMP TABLES
+# -----------------------------
 con.execute(f"""
-    CREATE OR REPLACE TABLE custcode AS
-    SELECT CUSTNO,
-           HRCCODES,
-           {code_extract}
-    FROM read_parquet('{custcode_path}')
-    WHERE POSITION('002' IN HRCCODES) > 0
+CREATE TABLE TEMP1 AS
+SELECT
+    REMARKS,
+    ORGID,
+    STAFFID,
+    ALIAS,
+    HRNAME,
+    CUSTNO
+FROM read_parquet('{infile1}')
 """)
 
-# =========================
-# 3) Read RESIGNED
-# =========================
 con.execute(f"""
-    CREATE OR REPLACE TABLE resigned AS
-    SELECT DISTINCT *
-    FROM read_parquet('{resigned_path}')
+CREATE TABLE TEMP2 AS
+SELECT
+    CASE WHEN HRNAME <> CUSTNAME THEN '004 NAME DISCREPANCY     ' ELSE '' END AS REMARKS,
+    STAFFID,
+    CUSTNO,
+    HRNAME,
+    CUSTNAME,
+    ALIASKEY,
+    ALIAS,
+    PRIMSEC,
+    ACCTCODE,
+    ACCTNOC
+FROM read_parquet('{infile2}')
+WHERE HRNAME <> CUSTNAME
 """)
 
-# =========================
-# 4) Merge tables on CUSTNO
-# =========================
+con.execute(f"""
+CREATE TABLE TEMP3 AS
+SELECT
+    '005 FAILED TO REMOVE TAG ' AS REMARKS,
+    CUSTNO
+FROM read_parquet('{infile3}')
+""")
+
+# -----------------------------
+# COMBINE ALL RECORDS
+# -----------------------------
 con.execute("""
-    CREATE OR REPLACE TABLE merge1 AS
-    SELECT a.*, b.STAFFID, b.HRNAME
-    FROM custcode a
-    INNER JOIN resigned b USING(CUSTNO)
+CREATE TABLE ALLREC AS
+SELECT * FROM TEMP1
+UNION ALL
+SELECT * FROM TEMP2
+UNION ALL
+SELECT * FROM TEMP3
 """)
 
-# =========================
-# 5) Shift CODE columns (exactly like SAS)
-# =========================
-shift_cases = []
-for i in range(1, 20):
-    next_codes = ", ".join([f"CODE{j:02}" for j in range(i+1, 21)] + ["'000'"])
-    shift_cases.append(
-        f"CASE WHEN CODE{i:02} = '002' THEN {next_codes} ELSE CODE{i:02} END AS CODE{i:02}"
-    )
-shift_sql = ",\n    ".join(shift_cases)
-shift_sql += ",\n    CODE20"
-
-con.execute(f"""
-    CREATE OR REPLACE TABLE shift1 AS
-    SELECT CUSTNO,
-           {shift_sql},
-           STAFFID,
-           HRNAME
-    FROM merge1
+# REMOVE DUPLICATES
+con.execute("""
+CREATE TABLE ALLREC_NODUP AS
+SELECT DISTINCT *
+FROM ALLREC
 """)
 
-# =========================
-# 6) Rebuild HRCCODES from shifted CODE columns
-# =========================
-con.execute(f"""
-    CREATE OR REPLACE TABLE shift1_final AS
-    SELECT
-        CUSTNO,
-        CONCAT(
-            CODE01, CODE02, CODE03, CODE04, CODE05,
-            CODE06, CODE07, CODE08, CODE09, CODE10,
-            CODE11, CODE12, CODE13, CODE14, CODE15,
-            CODE16, CODE17, CODE18, CODE19, CODE20
-        ) AS HRCCODES,
-        STAFFID,
-        HRNAME
-    FROM shift1
-""")
+# -----------------------------
+# FETCH ALL RECORDS
+# -----------------------------
+records = con.execute("SELECT * FROM ALLREC_NODUP").fetchall()
 
-# =========================
-# 7) Output Parquet
-# =========================
-con.execute(f"COPY shift1_final TO '{updfile_path_parquet}' (FORMAT PARQUET)")
+# -----------------------------
+# OUTPUT DETAILED TXT REPORT
+# -----------------------------
+report_path = csv_output_path(f"CIS_EMPLOYEE_REPORT_{report_date_str}").replace(".csv", ".txt")
 
-# =========================
-# 8) Output TXT (fixed-width exactly like SAS)
-# Line 1: CUSTNO (11) + HRCCODES (60)
-# Line 2: STAFFID (10) + HRNAME (40)
-# =========================
-con.execute(f"""
-    CREATE OR REPLACE TABLE txt_output AS
-    SELECT
-        CUSTNO || HRCCODES AS LINE1,
-        STAFFID || RPAD(HRNAME, 40, ' ') AS LINE2
-    FROM shift1_final
-    ORDER BY CUSTNO
-""")
+with open(report_path, "w") as rpt:
+    pagecnt = 0
+    linecnt = 0
+    grcust = 0
+    current_remarks = None
 
-# Union lines vertically for TXT export
-con.execute(f"""
-    COPY (
-        SELECT LINE1 AS line FROM txt_output
-        UNION ALL
-        SELECT LINE2 AS line FROM txt_output
-    ) TO '{updfile_path_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
-""")
+    def new_page_header():
+        nonlocal pagecnt, linecnt
+        pagecnt += 1
+        linecnt = 9
+        rpt.write(f"REPORT ID   : HRD RESIGN{'':25}PUBLIC BANK BERHAD{'':5}PAGE : {pagecnt}\n")
+        rpt.write(f"PROGRAM ID  : CIRESIRP{'':65}REPORT DATE : {report_date_str}\n")
+        rpt.write(f"BRANCH      : 0000000{'':15}EXCEPTION REPORT FOR RESIGNED STAFF\n")
+        rpt.write(" "*46 + "===================================\n")
+        rpt.write(f"{'STAFFID':<10}{'ALIAS':<16}{'HR NAME / CIS NAME':<40}"
+                  f"{'REMARKS':<25}{'CUSTNO':<11}{'ACCTCODE':<6}{'ACCTNOC':<20}\n")
+        rpt.write(f"{'='*9:<10}{'='*15:<16}{'='*40:<40}{'='*25:<25}"
+                  f"{'='*11:<11}{'='*6:<6}{'='*20:<20}\n")
+
+    new_page_header()
+
+    for rec in records:
+        # Adjust columns based on record length
+        linecnt += 1
+        grcust += 1
+
+        staffid = rec[2] if len(rec) > 2 else ''
+        alias = rec[3] if len(rec) > 3 else ''
+        hrname = rec[4] if len(rec) > 4 else ''
+        remarks = rec[0] if len(rec) > 0 else ''
+        custno = rec[5] if len(rec) > 5 else ''
+        acctcode = rec[8] if len(rec) > 8 else ''
+        acctnoc = rec[9] if len(rec) > 9 else ''
+        custname = rec[4] if len(rec) > 4 else ''
+
+        rpt.write(f"{staffid:<10}{alias:<16}{hrname:<40}{remarks:<25}"
+                  f"{custno:<11}{acctcode:<6}{acctnoc:<20}\n")
+
+        # print CUSTNAME for NAME DISCREPANCY
+        if remarks.strip() == '004 NAME DISCREPANCY':
+            rpt.write(f"{'':27}{custname:<40}\n")
+            linecnt += 1
+
+        if linecnt >= 40:
+            new_page_header()
+
+    rpt.write(f"\nTOTAL RECORDS = {grcust}\n")
+
+print("Detailed employee report TXT generated.")
