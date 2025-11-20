@@ -1,135 +1,68 @@
 error:
 line 19, in <module>
     con.execute(f"""
-duckdb.duckdb.ConversionException: Conversion Error: Could not convert string 'T813870010125107' to INT64 when casting from source column ACCTNO
+duckdb.duckdb.CatalogException: Catalog Error: Scalar Function with name makedate does not exist!
+Did you mean "make_date"?
 
-LINE 7:          CAST(ACCTNO AS BIGINT) BETWEEN 1000000000 AND 1999999999 OR
+LINE 4:        MAKEDATE(UPDTYY, UPDTMM, UPDTDD) AS RECDT
+
 program:
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 import datetime
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path
 
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date.strftime("%d-%m-%Y")
-DATE3 = batch_date.strftime("%Y%m%d")     # format YYYYMMDD
+CURDD = year
+CURMM = month
+CURYY = year
 
-# =============================================================================
-# DuckDB connection
-# =============================================================================
+# -----------------------------
+# CONNECT DUCKDB
+# -----------------------------
 con = duckdb.connect()
-cis = get_hive_parquet('CIS_CUST_DAILY')
 
-# =============================================================================
-# LOAD CIS (CISFILE.CUSTDLY)
-# =============================================================================
+# -----------------------------
+# CREATE DUCKDB TABLES FROM PARQUET
+# -----------------------------
 con.execute(f"""
-    CREATE TABLE CIS AS
-    SELECT *
-    EXCLUDE (ALIAS,ALIASKEY)
-    FROM read_parquet('{cis[0]}')
-    WHERE (
-         CAST(ACCTNO AS BIGINT) BETWEEN 1000000000 AND 1999999999 OR
-         CAST(ACCTNO AS BIGINT) BETWEEN 3000000000 AND 3999999999 OR
-         CAST(ACCTNO AS BIGINT) BETWEEN 4000000000 AND 4999999999 OR
-         CAST(ACCTNO AS BIGINT) BETWEEN 5000000000 AND 5999999999 OR
-         CAST(ACCTNO AS BIGINT) BETWEEN 6000000000 AND 6999999999 OR
-         CAST(ACCTNO AS BIGINT) BETWEEN 7000000000 AND 7999999999
-    )
-    ORDER BY CUSTNO
+CREATE OR REPLACE TABLE PHONE AS
+SELECT *,
+       MAKEDATE(UPDTYY, UPDTMM, UPDTDD) AS RECDT
+FROM '{host_parquet_path("UNLOAD_CIPHONET_FB.parquet")}'
 """)
 
-
-# =============================================================================
-# LOAD HR FILE (WITH VALIDATION)
-# =============================================================================
+# -----------------------------
+# FILTER LOGIC (SAS IF &CURDD = UPDTDD AND &CURMM = UPDTMM THEN &CURYY > UPDTYY)
+# -----------------------------
 con.execute(f"""
-    CREATE TABLE HR_RAW AS
-    SELECT *
-    FROM '{host_parquet_path("HCMS_STAFF_RESIGN.parquet")}'
+CREATE OR REPLACE TABLE PHONE_FILTERED AS
+SELECT 
+    BANKNO,
+    APPLCODE,
+    CUSTNO,
+    PHONETYPE,
+    PHONEPAC,
+    PHONEPREV,
+    INDORG,
+    FIRSTDATE,
+    '0' AS PROMPTNO,
+    PROMTSOURCE,
+    PROMPTDATE, 
+    PROMPTTIME, 
+    UPDSOURCE,  
+    RECDT AS UPDDATE,    
+    UPDTIME,    
+    UPDOPER,    
+    TRXAPPLCODE,
+    TRXAPPLNO,  
+    NEWPHONE AS PHONENEW   
+FROM PHONE
+WHERE EXTRACT(DAY FROM RECDT) = {CURDD}
+  AND EXTRACT(MONTH FROM RECDT) = {CURMM}
+  AND EXTRACT(YEAR FROM RECDT) < {CURYY}
+ORDER BY CUSTNO
 """)
 
-# Validate HEADER date (DATAINDC=0, HEADERDATE must match DATE3)
-hdr = con.execute("""
-    SELECT HEADERDATE 
-    FROM HR_RAW 
-    WHERE DATAINDC = '0'
-""").fetchone()
-
-if hdr and hdr[0] != DATE3:
-    raise Exception(f"ABORT 77: HEADERDATE {hdr[0]} != REPORT DATE {DATE3}")
-
-# Extract HR + OLD_IC
-con.execute("""
-    CREATE TABLE HR AS
-    SELECT *
-    FROM HR_RAW
-    WHERE DATAINDC = '1' AND REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
-""")
-
-con.execute(f"""
-    CREATE TABLE OLD_IC AS
-    SELECT *, '003 IC NOT 12 DIGIT      ' AS remarks
-    FROM HR_RAW
-    WHERE DATAINDC = '1' AND NOT REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
-""")
-
-# Validate TRAILER (DATAINDC=9)
-trailer = con.execute("""
-    SELECT total_rec
-    FROM HR_RAW WHERE DATAINDC='9'
-""").fetchone()
-
-count_hr = con.execute("SELECT COUNT(*) FROM HR").fetchone()[0]
-
-if trailer and int(trailer[0]) != count_hr:
-    raise Exception(f"ABORT 88: trailer count {trailer[0]} != HR count {count_hr}")
-
-
-# =============================================================================
-# LOAD ALS FILE
-# =============================================================================
-con.execute(f"""
-    CREATE TABLE ALS AS
-    SELECT *
-    FROM '{host_parquet_path("ALLALIAS_FIX.parquet")}'
-    WHERE ALIASKEY = 'IC'
-""")
-
-
-# =============================================================================
-# MATCH 1: HR + ALS → RESULT1, NO_IC
-# =============================================================================
-con.execute("""
-    CREATE TABLE RESULT1 AS
-    SELECT hr.*, als.CUSTNO AS CUSTNO
-    FROM HR hr
-    JOIN ALS als USING (ALIAS)
-""")
-
-con.execute("""
-    CREATE TABLE NO_IC AS
-    SELECT hr.*, '001 STAFF IC NOT FOUND   ' AS REMARKS
-    FROM HR hr
-    LEFT JOIN ALS als USING (ALIAS)
-    WHERE als.ALIAS IS NULL
-""")
-
-
-# =============================================================================
-# MATCH 2: RESULT1 + CIS → MATCH2, NO_ACCT
-# =============================================================================
-con.execute("""
-    CREATE TABLE MATCH2 AS
-    SELECT r.*, c.CUSTNAME, c.ACCTCODE, c.ACCTNOC, c.PRISEC
-    FROM RESULT1 r
-    JOIN CIS c USING (CUSTNO)
-""")
-
-con.execute("""
-    CREATE TABLE NO_ACCT AS
-    SELECT r.*, '002 CIS WITH NO ACCOUNT  ' AS REMARKS
-    FROM RESULT1 r
-    LEFT JOIN CIS c USING (CUSTNO)
-    WHERE c.CUSTNO IS NULL
-""")
+print("CIS (first 5 rows):")
+print(con.execute("SELECT * FROM PHONE_FILTERED LIMIT 500").fetchdf())
