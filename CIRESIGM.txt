@@ -140,10 +140,7 @@ DATA OUT2;
          @126  ACCTNOC           $20.;
   RETURN;
   RUN;
-//*--------------------------------------------------------------------
-//*-REMOVE CODE 002 BANK EMPLOYEE (SOURCE : CICUSCCD)
-//*-    (FILTERING PROCESS-PREPARE FOR UPDATE)
-//*--------------------------------------------------------------------
+
 //FOR#UPDT EXEC SAS609
 //CUSTCODE DD DISP=SHR,DSN=CUSTCODE
 //RESIGNED DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGM
