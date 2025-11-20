@@ -24,7 +24,14 @@ SELECT
     STAFFID,
     ALIAS,
     HRNAME,
-    CUSTNO
+    CUSTNO,
+
+    -- FIXED: pad missing fields to match TEMP2
+    NULL AS CUSTNAME,
+    NULL AS ALIASKEY,
+    NULL AS PRIMSEC,
+    NULL AS ACCTCODE,
+    NULL AS ACCTNOC
 FROM read_parquet('{infile1[0]}')
 """)
 
@@ -32,12 +39,13 @@ con.execute(f"""
 CREATE TABLE TEMP2 AS
 SELECT
     CASE WHEN HRNAME <> CUSTNAME THEN '004 NAME DISCREPANCY     ' ELSE '' END AS REMARKS,
+    NULL AS ORGID,
     STAFFID,
-    CUSTNO,
+    ALIAS,
     HRNAME,
+    CUSTNO,
     CUSTNAME,
     ALIASKEY,
-    ALIAS,
     PRIMSEC,
     ACCTCODE,
     ACCTNOC
@@ -49,8 +57,17 @@ con.execute(f"""
 CREATE TABLE TEMP3 AS
 SELECT
     '005 FAILED TO REMOVE TAG ' AS REMARKS,
-    CUSTNO
-FROM '{host_parquet_path("CUSTCODE_EMPL_ERR.parquet")}'
+    NULL AS ORGID,
+    NULL AS STAFFID,
+    NULL AS ALIAS,
+    NULL AS HRNAME,
+    CUSTNO,
+    NULL AS CUSTNAME,
+    NULL AS ALIASKEY,
+    NULL AS PRIMSEC,
+    NULL AS ACCTCODE,
+    NULL AS ACCTNOC
+FROM read_parquet('{host_parquet_path("CUSTCODE_EMPL_ERR.parquet")}')
 """)
 
 # -----------------------------
@@ -94,40 +111,38 @@ with open(report_path, "w") as rpt:
         linecnt = 9
         rpt.write(f"REPORT ID   : HRD RESIGN{'':25}PUBLIC BANK BERHAD{'':5}PAGE : {pagecnt}\n")
         rpt.write(f"PROGRAM ID  : CIRESIRP{'':65}REPORT DATE : {report_date_str}\n")
-        rpt.write(f"BRANCH      : 0000000{'':15}EXCEPTION REPORT FOR RESIGNED STAFF\n")
+        rpt.write(f"BRANCH      : 0000000{'':25}EXCEPTION REPORT FOR RESIGNED STAFF\n")
         rpt.write(" "*46 + "===================================\n")
-        rpt.write(f"{'STAFFID':<10}{'ALIAS':<16}{'HR NAME / CIS NAME':<40}"
-                  f"{'REMARKS':<25}{'CUSTNO':<11}{'ACCTCODE':<6}{'ACCTNOC':<20}\n")
-        rpt.write(f"{'='*9:<10}{'='*15:<16}{'='*40:<40}{'='*25:<25}"
-                  f"{'='*11:<11}{'='*6:<6}{'='*20:<20}\n")
+        rpt.write(f"{'STAFFID':<10}{'ALIAS':<16}{'HR NAME / CIS NAME':<41}"
+                  f"{'REMARKS':<26}{'CUSTNO':<12}{'ACCTCODE':<9}{'ACCTNOC':<20}\n")
+        rpt.write(f"{'='*9:<10}{'='*15:<16}{'='*40:<41}{'='*25:<26}"
+                  f"{'='*11:<12}{'='*8:<9}{'='*20:<20}\n")
 
     new_page_header()
 
     for rec in records:
-        # Adjust columns based on record length
         linecnt += 1
         grcust += 1
 
-        staffid = rec[2] if len(rec) > 2 else ''
-        alias = rec[3] if len(rec) > 3 else ''
-        hrname = rec[4] if len(rec) > 4 else ''
-        remarks = rec[0] if len(rec) > 0 else ''
-        custno = rec[5] if len(rec) > 5 else ''
-        acctcode = rec[8] if len(rec) > 8 else ''
-        acctnoc = rec[9] if len(rec) > 9 else ''
-        custname = rec[4] if len(rec) > 4 else ''
+        # same your variable mapping
+        remarks = rec[0]
+        staffid = rec[2]
+        alias = rec[3]
+        hrname = rec[4]
+        custno = rec[5]
+        custname = rec[6]
+        acctcode = rec[9]
+        acctnoc = rec[10]
 
-        rpt.write(f"{staffid:<10}{alias:<16}{hrname:<40}{remarks:<25}"
-                  f"{custno:<11}{acctcode:<6}{acctnoc:<20}\n")
+        rpt.write(f"{(staffid or ''):<10}{(alias or ''):<16}{(hrname or ''):<41}{(remarks or ''):<26}"
+                  f"{(custno or ''):<12}{(acctcode or ''):<9}{(acctnoc or ''):<20}\n")
 
-        # print CUSTNAME for NAME DISCREPANCY
+        # NAME DISCREPANCY
         if remarks.strip() == '004 NAME DISCREPANCY':
-            rpt.write(f"{'':27}{custname:<40}\n")
+            rpt.write(f"{'':27}{(custname or ''):<40}\n")
             linecnt += 1
 
         if linecnt >= 40:
             new_page_header()
 
     rpt.write(f"\nTOTAL RECORDS = {grcust}\n")
-
-print("Detailed employee report TXT generated.")
