@@ -2,160 +2,96 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIRESIRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB02186
+//CIPHNRES JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB60896
 //*---------------------------------------------------------------------
-//REPORT    EXEC SAS609
+//* TO SELECT RECORDS TO RESET PROMPT INDICATOR
+//*---------------------------------------------------------------------
+//RESET   EXEC SAS609
 //IEFRDER   DD DUMMY
-//INFILE1   DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGN.NOTFOUND
-//INFILE2   DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGN
-//INFILE3   DD DISP=SHR,DSN=CUSTCODE.EMPL.ERR
 //CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
-//RPTFILE   DD DSN=CIS.EMPLOYEE.REPORT(+1),
-//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
-//             SPACE=(CYL,(50,50),RLSE),
-//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//CIPHONET  DD DISP=SHR,DSN=UNLOAD.CIPHONET.FB
+//OUTFILE   DD DSN=CIPHONET.RESET(+1),
+//             DISP=(NEW,CATLG,DELETE),
+//             UNIT=SYSDA,SPACE=(CYL,(100,50),RLSE),
+//             DCB=(LRECL=158,BLKSIZE=0,RECFM=FB)
 //SASLIST   DD SYSOUT=X
 //SYSIN     DD *
 OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
 OPTIONS NODATE NONUMBER NOCENTER;
 TITLE;
-
  /*----------------------------------------------------------------*/
- /*    SET DATES                                                   */
+ /*    DATA DECLARATION                                            */
  /*----------------------------------------------------------------*/
     DATA SRSDATE;
-          INFILE CTRLDATE;
-            INPUT @001  SRSYY    4.
-                  @005  SRSMM    2.
-                  @007  SRSDD    2.;
+       INFILE CTRLDATE;
+         INPUT @001  SRSYY    4.
+               @005  SRSMM    2.
+               @007  SRSDD    2.;
 
-          /* DISPLAY TODAY REPORTING DATE*/
-          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
-          CALL SYMPUT('DATE1',PUT(TODAYSAS,DDMMYY8.));
+      CURDT  = MDY(SRSMM,SRSDD,SRSYY);
+      CALL SYMPUT('CURDT',PUT(CURDT,8.));
+      CALL SYMPUT('CURDD',PUT(SRSDD,2.));
+      CALL SYMPUT('CURMM',PUT(SRSMM,2.));
+      CALL SYMPUT('CURYY',PUT(SRSYY,4.));
     RUN;
+ PROC PRINT DATA=SRSDATE(OBS=10);
+            TITLE 'DATE FORMAT ** MMDDYYYY **   ';RUN;
 
- /*----------------------------------------------------------------*/
- /*    SEND TO OUTPUT                                              */
- /*----------------------------------------------------------------*/
-DATA TEMP1;
-   INFILE INFILE1;
-       INPUT @1   REMARKS      $25.
-             @26  ORGID        $13.
-             @40  STAFFID      $9.
-             @50  ALIAS        $15.
-             @65  HRNAME       $40.
-             @105 CUSTNO       $11.;
-RUN;
-
-DATA TEMP2;
-   INFILE INFILE2;
-   FORMAT REMARKS $25.;
-      INPUT @01   STAFFID           $10.
-            @11   CUSTNO            $11.
-            @22   HRNAME            $40.
-            @62   CUSTNAME          $40.
-            @102  ALIASKEY          $03.
-            @105  ALIAS             $15.
-            @120  PRIMSEC           $1.
-            @121  ACCTCODE          $5.
-            @126  ACCTNOC           $20.;
-      IF HRNAME NE CUSTNAME;
-      IF HRNAME NE CUSTNAME THEN REMARKS='004 NAME DISCREPANCY     ';
-RUN;
-
-DATA TEMP3;
-   INFILE INFILE3;
-   FORMAT REMARKS $25.;
-      INPUT @01   CUSTNO            $11.;
-      REMARKS='005 FAILED TO REMOVE TAG ';
-RUN;
-
-DATA ALLREC;
-    SET TEMP1 TEMP2 TEMP3;
-RUN;
-
-PROC SORT DATA=ALLREC NODUPKEY;BY REMARKS STAFFID ALIAS ACCTNOC;
-PROC PRINT DATA=ALLREC;
-RUN;
+ DATA PHONE;
+    INFILE CIPHONET;
+       FORMAT PROMPTNO  PD1.;
+       INPUT @001  BANKNO             $3.
+             @004  APPLCODE           $5.
+             @009  CUSTNO             $11.
+             @029  PHONETYPE          $15.
+             @044  PHONEPAC           PD8.
+             @052  PHONEPREV          PD8.
+             @060  INDORG             $1.
+             @061  FIRSTDATE          $10.
+             @072  PROMTSOURCE        $5.
+             @077  PROMPTDATE         $10.
+             @087  PROMPTTIME         $10.
+             @095  UPDSOURCE          $5.
+             @100  UPDTYY              4.
+             @105  UPDTMM              2.
+             @108  UPDTDD              2.
+             @110  UPDTIME            $8.
+             @118  UPDOPER            $8.
+             @126  TRXAPPLCODE        $5.
+             @131  TRXAPPLNO          $20.
+             @151  PHONENEW           PD8.;
+             RECDT  = MDY(UPDTMM,UPDTDD,UPDTYY);
+             IF &CURDD = UPDTDD AND &CURMM = UPDTMM THEN DO;
+                IF &CURYY > UPDTYY THEN OUTPUT;
+             END;
+        /*   IF RECDT - &CURDT = 365 THEN OUTPUT; */
+ PROC PRINT DATA=PHONE(OBS=5);TITLE 'PHONE';RUN;
+ PROC SORT  DATA=PHONE; BY CUSTNO ; RUN;
  /*----------------------------------------------------------------*/
  /*   OUTPUT DETAIL REPORT                                         */
  /*----------------------------------------------------------------*/
-DATA _NULL_;
-  IF TRN=0 THEN DO;
-     FILE RPTFILE PRINT HEADER=NEWPAGE;
-     PUT _PAGE_;
-     PUT  /@044   '**********************************';
-     PUT  /@044   '*                                *';
-     PUT  /@044   '*       NO RECORDS TODAY         *';
-     PUT  /@044   '*                                *';
-     PUT  /@044   '**********************************';
-  END;
-
-  RETAIN TRN;
-
-  SET ALLREC NOBS=TRN END=EOF; BY REMARKS STAFFID ALIAS;
-  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
-  LINECNT = 0;
-  FORMAT BANKNAME $45.;
-
-  IF LINECNT >= 40 OR FIRST.REMARKS THEN DO;
-     PUT _PAGE_;
-     GRCUST= 0;
-     LINECNT + 5;
-  END;
-
-  IF REMARKS NE SPACES THEN DO;
-     LINECNT + 1;
-     GRCUST   + 1;
-
-       PUT @1    STAFFID           $9.
-           @11   ALIAS             $12.
-           @27   HRNAME            $40.
-           @68   REMARKS           $25.
-           @94   CUSTNO            $11.
-           @106  ACCTCODE          $5.
-           @111  ACCTNOC           $20.;
-       IF REMARKS='004 NAME DISCREPANCY     ' THEN DO;
-          PUT @27   CUSTNAME          $40.;
-       END;
-  END;
-
-  IF LAST.REMARKS THEN DO;
-     PUT  @1  'TOTAL RECORDS = '
-          @23  GRCUST      7.;
-     PAGECNT = 0;
-  END;
-
+DATA TEMPOUT;
+  SET PHONE;
+  FILE OUTFILE;
+     PROMPTNO = 0;
+     PUT @001  BANKNO             $3.
+         @004  APPLCODE           $5.
+         @009  CUSTNO             $11.
+         @029  PHONETYPE          $15.
+         @044  PHONEPAC           PD8.
+         @052  PHONEPREV          PD8.
+         @060  INDORG             $1.
+         @061  FIRSTDATE          $10.
+         @071  PROMPTNO           PD1.
+         @072  PROMTSOURCE        $5.
+         @077  PROMPTDATE         $10.
+         @087  PROMPTTIME         $10.
+         @095  UPDSOURCE          $5.
+         @100  UPDDATE            $10.
+         @110  UPDTIME            $10.
+         @118  UPDOPER            $8.
+         @126  TRXAPPLCODE        $5.
+         @131  TRXAPPLNO          $20.
+         @151  PHONENEW           PD8.;
   RETURN;
-
-  NEWPAGE :
-    PAGECNT+1;
-    LINECNT = 0;
-
-    BANKNAME = 'PUBLIC BANK BERHAD';
-    BRANCH   = '0000000';
-
-    PUT @1   'REPORT ID   : HRD RESIGN '
-        @55   BANKNAME
-        @94  'PAGE        : ' PAGECNT   4.
-       /@1   'PROGRAM ID  : CIRESIRP'
-        @94  'REPORT DATE : ' "&DATE1"
-       /@1   'BRANCH      : '  BRANCH    $7.
-        @46  'EXCEPTION REPORT FOR RESIGNED STAFF'
-       /@46  '===================================';
-
-    PUT   /@1    'STAFFID'
-           @11   'ALIAS'
-           @27   'HR NAME / CIS NAME'
-           @68   'REMARKS'
-           @94   'CUSTNO'
-           @106  'ACCTNO' ;
-    PUT    @1    '========='
-           @11   '==============='
-           @27   '========================================'
-           @68   '========================='
-           @94   '==========='
-           @106  '=========================';
-    LINECNT = 9;
-  RETURN;
-RUN;
+  RUN;
