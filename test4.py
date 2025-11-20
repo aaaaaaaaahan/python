@@ -25,6 +25,8 @@ SELECT
     ALIAS,
     HRNAME,
     CUSTNO,
+
+    -- FIXED: pad missing fields to match TEMP2
     NULL AS CUSTNAME,
     NULL AS ALIASKEY,
     NULL AS PRIMSEC,
@@ -69,7 +71,7 @@ FROM read_parquet('{host_parquet_path("CUSTCODE_EMPL_ERR.parquet")}')
 """)
 
 # -----------------------------
-# COMBINE + REMOVE DUP + SORT (MATCH SAS PROC SORT)
+# COMBINE ALL RECORDS + REMOVE DUP + SORT (missing in your original)
 # -----------------------------
 con.execute("""
 CREATE TABLE ALLREC_NODUP AS
@@ -84,17 +86,25 @@ FROM (
 ORDER BY REMARKS, STAFFID, ALIAS, ACCTNOC
 """)
 
-# FETCH
+# -----------------------------
+# FETCH ALL RECORDS
+# -----------------------------
 records = con.execute("SELECT * FROM ALLREC_NODUP").fetchall()
 
 # -----------------------------
-# OUTPUT
+# OUTPUT DETAILED TXT REPORT
 # -----------------------------
 report_path = csv_output_path(f"CIS_EMPLOYEE_REPORT_{report_date_str}").replace(".csv", ".txt")
 
 with open(report_path, "w") as rpt:
+    pagecnt = 0
+    linecnt = 0
+    grcust = 0
+    current_remarks = None
 
-    # IF NO RECORDS → print “NO RECORDS TODAY”
+    # -----------------------------
+    # ADD NO RECORDS TODAY BLOCK
+    # -----------------------------
     if len(records) == 0:
         rpt.write(" " * 44 + "**********************************\n")
         rpt.write(" " * 44 + "*                                *\n")
@@ -103,50 +113,37 @@ with open(report_path, "w") as rpt:
         rpt.write(" " * 44 + "**********************************\n")
         exit()
 
-    pagecnt = 0
-    linecnt = 0
-
     def new_page_header():
         nonlocal pagecnt, linecnt
         pagecnt += 1
         linecnt = 9
-
-        rpt.write(f"REPORT ID   : HRD RESIGN{'':25}PUBLIC BANK BERHAD{'':5}PAGE        : {pagecnt:4}\n")
+        rpt.write(f"REPORT ID   : HRD RESIGN{'':25}PUBLIC BANK BERHAD{'':5}PAGE : {pagecnt}\n")
         rpt.write(f"PROGRAM ID  : CIRESIRP{'':65}REPORT DATE : {report_date_str}\n")
         rpt.write(f"BRANCH      : 0000000{'':25}EXCEPTION REPORT FOR RESIGNED STAFF\n")
-        rpt.write(" " * 46 + "===================================\n")
-        rpt.write(
-            f"{'STAFFID':<9} {'ALIAS':<12} {'HR NAME / CIS NAME':<40}"
-            f"{'REMARKS':<25}{'CUSTNO':<11}{'ACCTCODE':<5}{'ACCTNOC':<20}\n"
-        )
-        rpt.write(
-            f"{'='*9:<9} {'='*15:<15} {'='*40:<40}"
-            f"{'='*25:<25}{'='*11:<11}{'='*5:<5}{'='*20:<20}\n"
-        )
+        rpt.write(" "*46 + "===================================\n")
+        rpt.write(f"{'STAFFID':<10}{'ALIAS':<16}{'HR NAME / CIS NAME':<41}"
+                  f"{'REMARKS':<26}{'CUSTNO':<12}{'ACCTCODE':<9}{'ACCTNOC':<20}\n")
+        rpt.write(f"{'='*9:<10}{'='*15:<16}{'='*40:<41}{'='*25:<26}"
+                  f"{'='*11:<12}{'='*8:<9}{'='*20:<20}\n")
 
-    # Start first page
     new_page_header()
 
-    current_remarks = None
-    grcust = 0
-
     # -----------------------------
-    # MAIN LOOP
+    # MAIN LOOP WITH MISSING SAS LOGIC ADDED
     # -----------------------------
     for rec in records:
-
         remarks = rec[0]
-        staffid = rec[2] or ""
-        alias = rec[3] or ""
-        hrname = rec[4] or ""
-        custno = rec[5] or ""
-        custname = rec[6] or ""
-        acctcode = rec[9] or ""
-        acctnoc = rec[10] or ""
+        staffid = rec[2]
+        alias = rec[3]
+        hrname = rec[4]
+        custno = rec[5]
+        custname = rec[6]
+        acctcode = rec[9]
+        acctnoc = rec[10]
 
-        # If new remarks group → print group total & new page
+        # IF REMARKS CHANGED → print group total & reset counter
         if current_remarks is not None and remarks != current_remarks:
-            rpt.write(f"{'TOTAL RECORDS = ':<23}{grcust:7}\n\n")
+            rpt.write(f"\nTOTAL RECORDS = {grcust}\n\n")
             grcust = 0
             new_page_header()
 
@@ -154,19 +151,17 @@ with open(report_path, "w") as rpt:
         grcust += 1
         linecnt += 1
 
-        # FIXED WIDTH MATCHING SAS
-        rpt.write(
-            f"{staffid:<9} {alias:<12} {hrname:<40}"
-            f"{remarks:<25}{custno:<11}{acctcode:<5}{acctnoc:<20}\n"
-        )
+        rpt.write(f"{(staffid or ''):<10}{(alias or ''):<16}{(hrname or ''):<41}"
+                  f"{(remarks or ''):<26}{(custno or ''):<12}{(acctcode or ''):<9}{(acctnoc or ''):<20}\n")
 
-        # NAME DISCREPANCY extra line
-        if remarks.strip() == "004 NAME DISCREPANCY":
-            rpt.write(f"{'':26}{custname:<40}\n")
+        # NAME DISCREPANCY extra line (keeping your original 27-space indent)
+        if remarks.strip() == '004 NAME DISCREPANCY':
+            rpt.write(f"{'':27}{(custname or ''):<40}\n")
             linecnt += 1
 
+        # PAGE BREAK
         if linecnt >= 40:
             new_page_header()
 
-    # FINAL GROUP TOTAL
-    rpt.write(f"{'TOTAL RECORDS = ':<23}{grcust:7}\n")
+    # FINAL TOTAL
+    rpt.write(f"\nTOTAL RECORDS = {grcust}\n")
