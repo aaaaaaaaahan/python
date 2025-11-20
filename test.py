@@ -2,279 +2,160 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//FOR#UPDT EXEC SAS609
-//CUSTCODE DD DISP=SHR,DSN=CUSTCODE
-//RESIGNED DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGN
-//UPDFILE  DD DSN=CIS.EMPLOYEE.RESIGN.RMV(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
-
+//CIRESIRP JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB02186
+//*---------------------------------------------------------------------
+//REPORT    EXEC SAS609
+//IEFRDER   DD DUMMY
+//INFILE1   DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGN.NOTFOUND
+//INFILE2   DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGN
+//INFILE3   DD DISP=SHR,DSN=CUSTCODE.EMPL.ERR
+//CTRLDATE  DD DISP=SHR,DSN=SRSCTRL1(0)
+//RPTFILE   DD DSN=CIS.EMPLOYEE.REPORT(+1),
+//             DISP=(NEW,CATLG,DELETE),UNIT=SYSDA,
+//             SPACE=(CYL,(50,50),RLSE),
+//             DCB=(LRECL=134,BLKSIZE=0,RECFM=FBA)
+//SASLIST   DD SYSOUT=X
+//SYSIN     DD *
 OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
 OPTIONS NODATE NONUMBER NOCENTER;
 TITLE;
-DATA CUSTCODE;
-   INFILE CUSTCODE;
-      INPUT @1   CUSTNO       $11.
-            @29  CODE01       $3.
-            @32  CODE02       $3.
-            @35  CODE03       $3.
-            @38  CODE04       $3.
-            @41  CODE05       $3.
-            @44  CODE06       $3.
-            @47  CODE07       $3.
-            @50  CODE08       $3.
-            @53  CODE09       $3.
-            @56  CODE10       $3.
-            @59  CODE11       $3.
-            @62  CODE12       $3.
-            @65  CODE13       $3.
-            @68  CODE14       $3.
-            @71  CODE15       $3.
-            @74  CODE16       $3.
-            @77  CODE17       $3.
-            @80  CODE18       $3.
-            @83  CODE19       $3.
-            @86  CODE20       $3.;
-      IF CODE01 = '002' OR CODE02 = '002' OR CODE03 = '002'
-      OR CODE04 = '002' OR CODE05 = '002' OR CODE06 = '002'
-      OR CODE07 = '002' OR CODE08 = '002' OR CODE09 = '002'
-      OR CODE10 = '002' OR CODE11 = '002' OR CODE12 = '002'
-      OR CODE13 = '002' OR CODE15 = '002' OR CODE16 = '002'
-      OR CODE17 = '002' OR CODE18 = '002' OR CODE19 = '002'
-      OR CODE20 = '002' ;
-RUN;
-PROC SORT  DATA=CUSTCODE; BY CUSTNO;RUN;
-PROC PRINT DATA=CUSTCODE(OBS=2);TITLE 'CUSTOMER CODE';RUN;
 
-DATA RESIGNED;
-   INFILE RESIGNED;
-     INPUT @01   STAFFID           $10.
-           @11   CUSTNO            $11.
-           @22   HRNAME            $40.
-           @62   CUSTNAME          $40.
-           @102  ALIASKEY          $03.
-           @105  ALIAS             $15.
-           @120  PRIMSEC           $1.
-           @121  ACCTCODE          $5.
-           @126  ACCTNOC           $20.;
-  RUN;
-PROC SORT  DATA=RESIGNED NODUPKEY; BY CUSTNO;RUN;
-PROC PRINT DATA=RESIGNED;TITLE 'RESIGNED STAFF';RUN;
+ /*----------------------------------------------------------------*/
+ /*    SET DATES                                                   */
+ /*----------------------------------------------------------------*/
+    DATA SRSDATE;
+          INFILE CTRLDATE;
+            INPUT @001  SRSYY    4.
+                  @005  SRSMM    2.
+                  @007  SRSDD    2.;
 
-DATA MERGE1;
-   MERGE CUSTCODE(IN=D) RESIGNED(IN=E); BY CUSTNO;
-   IF D AND E;
+          /* DISPLAY TODAY REPORTING DATE*/
+          TODAYSAS=MDY(SRSMM,SRSDD,SRSYY);
+          CALL SYMPUT('DATE1',PUT(TODAYSAS,DDMMYY8.));
+    RUN;
+
+ /*----------------------------------------------------------------*/
+ /*    SEND TO OUTPUT                                              */
+ /*----------------------------------------------------------------*/
+DATA TEMP1;
+   INFILE INFILE1;
+       INPUT @1   REMARKS      $25.
+             @26  ORGID        $13.
+             @40  STAFFID      $9.
+             @50  ALIAS        $15.
+             @65  HRNAME       $40.
+             @105 CUSTNO       $11.;
 RUN;
 
-DATA SHIFT1;
-   SET MERGE1;
-      IF CODE01 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 01 */
-         CODE01 = CODE02;
-         CODE02 = CODE03;
-         CODE03 = CODE04;
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE02 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 02 */
-         CODE02 = CODE03;
-         CODE03 = CODE04;
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE03 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 03 */
-         CODE03 = CODE04;
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE04 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 04 */
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE05 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 05 */
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE06 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 06 */
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE07 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 07 */
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE08 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 08 */
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE09 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 09 */
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE10 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 10 */
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
+DATA TEMP2;
+   INFILE INFILE2;
+   FORMAT REMARKS $25.;
+      INPUT @01   STAFFID           $10.
+            @11   CUSTNO            $11.
+            @22   HRNAME            $40.
+            @62   CUSTNAME          $40.
+            @102  ALIASKEY          $03.
+            @105  ALIAS             $15.
+            @120  PRIMSEC           $1.
+            @121  ACCTCODE          $5.
+            @126  ACCTNOC           $20.;
+      IF HRNAME NE CUSTNAME;
+      IF HRNAME NE CUSTNAME THEN REMARKS='004 NAME DISCREPANCY     ';
 RUN;
-PROC SORT  DATA=SHIFT1; BY CUSTNO;RUN;
-PROC PRINT DATA=SHIFT1;TITLE 'SHIFT CUSTOMER CODE';RUN;
 
-DATA UPD1;
-  SET SHIFT1;BY CUSTNO;
-  FILE UPDFILE;
-        PUT @1   CUSTNO       $11.
-            @29  CODE01       $3.
-            @32  CODE02       $3.
-            @35  CODE03       $3.
-            @38  CODE04       $3.
-            @41  CODE05       $3.
-            @44  CODE06       $3.
-            @47  CODE07       $3.
-            @50  CODE08       $3.
-            @53  CODE09       $3.
-            @56  CODE10       $3.
-            @59  CODE11       $3.
-            @62  CODE12       $3.
-            @65  CODE13       $3.
-            @68  CODE14       $3.
-            @71  CODE15       $3.
-            @74  CODE16       $3.
-            @77  CODE17       $3.
-            @80  CODE18       $3.
-            @83  CODE19       $3.
-            @86  CODE20       $3.
-            @89  STAFFID      $10.
-            @99  HRNAME       $40.;
+DATA TEMP3;
+   INFILE INFILE3;
+   FORMAT REMARKS $25.;
+      INPUT @01   CUSTNO            $11.;
+      REMARKS='005 FAILED TO REMOVE TAG ';
+RUN;
+
+DATA ALLREC;
+    SET TEMP1 TEMP2 TEMP3;
+RUN;
+
+PROC SORT DATA=ALLREC NODUPKEY;BY REMARKS STAFFID ALIAS ACCTNOC;
+PROC PRINT DATA=ALLREC;
+RUN;
+ /*----------------------------------------------------------------*/
+ /*   OUTPUT DETAIL REPORT                                         */
+ /*----------------------------------------------------------------*/
+DATA _NULL_;
+  IF TRN=0 THEN DO;
+     FILE RPTFILE PRINT HEADER=NEWPAGE;
+     PUT _PAGE_;
+     PUT  /@044   '**********************************';
+     PUT  /@044   '*                                *';
+     PUT  /@044   '*       NO RECORDS TODAY         *';
+     PUT  /@044   '*                                *';
+     PUT  /@044   '**********************************';
+  END;
+
+  RETAIN TRN;
+
+  SET ALLREC NOBS=TRN END=EOF; BY REMARKS STAFFID ALIAS;
+  FILE RPTFILE PRINT HEADER=NEWPAGE NOTITLE;
+  LINECNT = 0;
+  FORMAT BANKNAME $45.;
+
+  IF LINECNT >= 40 OR FIRST.REMARKS THEN DO;
+     PUT _PAGE_;
+     GRCUST= 0;
+     LINECNT + 5;
+  END;
+
+  IF REMARKS NE SPACES THEN DO;
+     LINECNT + 1;
+     GRCUST   + 1;
+
+       PUT @1    STAFFID           $9.
+           @11   ALIAS             $12.
+           @27   HRNAME            $40.
+           @68   REMARKS           $25.
+           @94   CUSTNO            $11.
+           @106  ACCTCODE          $5.
+           @111  ACCTNOC           $20.;
+       IF REMARKS='004 NAME DISCREPANCY     ' THEN DO;
+          PUT @27   CUSTNAME          $40.;
+       END;
+  END;
+
+  IF LAST.REMARKS THEN DO;
+     PUT  @1  'TOTAL RECORDS = '
+          @23  GRCUST      7.;
+     PAGECNT = 0;
+  END;
+
   RETURN;
-  RUN;
+
+  NEWPAGE :
+    PAGECNT+1;
+    LINECNT = 0;
+
+    BANKNAME = 'PUBLIC BANK BERHAD';
+    BRANCH   = '0000000';
+
+    PUT @1   'REPORT ID   : HRD RESIGN '
+        @55   BANKNAME
+        @94  'PAGE        : ' PAGECNT   4.
+       /@1   'PROGRAM ID  : CIRESIRP'
+        @94  'REPORT DATE : ' "&DATE1"
+       /@1   'BRANCH      : '  BRANCH    $7.
+        @46  'EXCEPTION REPORT FOR RESIGNED STAFF'
+       /@46  '===================================';
+
+    PUT   /@1    'STAFFID'
+           @11   'ALIAS'
+           @27   'HR NAME / CIS NAME'
+           @68   'REMARKS'
+           @94   'CUSTNO'
+           @106  'ACCTNO' ;
+    PUT    @1    '========='
+           @11   '==============='
+           @27   '========================================'
+           @68   '========================='
+           @94   '==========='
+           @106  '=========================';
+    LINECNT = 9;
+  RETURN;
+RUN;
