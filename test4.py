@@ -1,280 +1,132 @@
-//*--------------------------------------------------------------------
-//*-REMOVE CODE 002 BANK EMPLOYEE (SOURCE : CICUSCCD)
-//*-    (FILTERING PROCESS-PREPARE FOR UPDATE)
-//*--------------------------------------------------------------------
-//FOR#UPDT EXEC SAS609
-//CUSTCODE DD DISP=SHR,DSN=CUSTCODE
-//RESIGNED DD DISP=SHR,DSN=CIS.EMPLOYEE.RESIGN
-//UPDFILE  DD DSN=CIS.EMPLOYEE.RESIGN.RMV(+1),
-//            DISP=(NEW,CATLG,DELETE),
-//            SPACE=(CYL,(50,50),RLSE),UNIT=SYSDA,
-//            DCB=(LRECL=250,BLKSIZE=0,RECFM=FB)
-//SASLIST  DD SYSOUT=X
-//SYSIN    DD *
+import duckdb
+from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
+import datetime
 
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER NOCENTER;
-TITLE;
-DATA CUSTCODE;
-   INFILE CUSTCODE;
-      INPUT @1   CUSTNO       $11.
-            @29  CODE01       $3.
-            @32  CODE02       $3.
-            @35  CODE03       $3.
-            @38  CODE04       $3.
-            @41  CODE05       $3.
-            @44  CODE06       $3.
-            @47  CODE07       $3.
-            @50  CODE08       $3.
-            @53  CODE09       $3.
-            @56  CODE10       $3.
-            @59  CODE11       $3.
-            @62  CODE12       $3.
-            @65  CODE13       $3.
-            @68  CODE14       $3.
-            @71  CODE15       $3.
-            @74  CODE16       $3.
-            @77  CODE17       $3.
-            @80  CODE18       $3.
-            @83  CODE19       $3.
-            @86  CODE20       $3.;
-      IF CODE01 = '002' OR CODE02 = '002' OR CODE03 = '002'
-      OR CODE04 = '002' OR CODE05 = '002' OR CODE06 = '002'
-      OR CODE07 = '002' OR CODE08 = '002' OR CODE09 = '002'
-      OR CODE10 = '002' OR CODE11 = '002' OR CODE12 = '002'
-      OR CODE13 = '002' OR CODE15 = '002' OR CODE16 = '002'
-      OR CODE17 = '002' OR CODE18 = '002' OR CODE19 = '002'
-      OR CODE20 = '002' ;
-RUN;
-PROC SORT  DATA=CUSTCODE; BY CUSTNO;RUN;
-PROC PRINT DATA=CUSTCODE(OBS=2);TITLE 'CUSTOMER CODE';RUN;
+batch_date = (datetime.date.today() - datetime.timedelta(days=1))
+year, month, day = batch_date.year, batch_date.month, batch_date.day
+report_date = batch_date.strftime("%d-%m-%Y")
+DATE3 = batch_date.strftime("%Y%m%d")     # format YYYYMMDD
 
-DATA RESIGNED;
-   INFILE RESIGNED;
-     INPUT @01   STAFFID           $10.
-           @11   CUSTNO            $11.
-           @22   HRNAME            $40.
-           @62   CUSTNAME          $40.
-           @102  ALIASKEY          $03.
-           @105  ALIAS             $15.
-           @120  PRIMSEC           $1.
-           @121  ACCTCODE          $5.
-           @126  ACCTNOC           $20.;
-  RUN;
-PROC SORT  DATA=RESIGNED NODUPKEY; BY CUSTNO;RUN;
-PROC PRINT DATA=RESIGNED;TITLE 'RESIGNED STAFF';RUN;
+# =============================================================================
+# DuckDB connection
+# =============================================================================
+con = duckdb.connect()
+cis = get_hive_parquet('CIS_CUST_DAILY')
 
-DATA MERGE1;
-   MERGE CUSTCODE(IN=D) RESIGNED(IN=E); BY CUSTNO;
-   IF D AND E;
-RUN;
+# =============================================================================
+# LOAD CIS (CISFILE.CUSTDLY)
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE CIS AS
+    SELECT *
+    EXCLUDE (ALIAS,ALIASKEY)
+    FROM read_parquet('{cis[0]}')
+    WHERE (
+         ACCTNO BETWEEN '1000000000' AND '1999999999' OR
+         ACCTNO BETWEEN '3000000000' AND '3999999999' OR
+         ACCTNO BETWEEN '4000000000' AND '4999999999' OR
+         ACCTNO BETWEEN '5000000000' AND '5999999999' OR
+         ACCTNO BETWEEN '6000000000' AND '6999999999' OR
+         ACCTNO BETWEEN '7000000000' AND '7999999999'
+    )
+    ORDER BY CUSTNO
+""")
 
-DATA SHIFT1;
-   SET MERGE1;
-      IF CODE01 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 01 */
-         CODE01 = CODE02;
-         CODE02 = CODE03;
-         CODE03 = CODE04;
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE02 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 02 */
-         CODE02 = CODE03;
-         CODE03 = CODE04;
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE03 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 03 */
-         CODE03 = CODE04;
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE04 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 04 */
-         CODE04 = CODE05;
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE05 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 05 */
-         CODE05 = CODE06;
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE06 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 06 */
-         CODE06 = CODE07;
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE07 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 07 */
-         CODE07 = CODE08;
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE08 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 08 */
-         CODE08 = CODE09;
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE09 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 09 */
-         CODE09 = CODE10;
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-      IF CODE10 = '002' THEN DO;  /* BANK EMPLOYEE ON POSITION 10 */
-         CODE10 = CODE11;
-         CODE11 = CODE12;
-         CODE12 = CODE13;
-         CODE13 = CODE14;
-         CODE14 = CODE15;
-         CODE15 = CODE16;
-         CODE16 = CODE17;
-         CODE17 = CODE18;
-         CODE18 = CODE19;
-         CODE19 = CODE20;
-         CODE20 = '000';
-      END;
-RUN;
-PROC SORT  DATA=SHIFT1; BY CUSTNO;RUN;
-PROC PRINT DATA=SHIFT1;TITLE 'SHIFT CUSTOMER CODE';RUN;
 
-DATA UPD1;
-  SET SHIFT1;BY CUSTNO;
-  FILE UPDFILE;
-        PUT @1   CUSTNO       $11.
-            @29  CODE01       $3.
-            @32  CODE02       $3.
-            @35  CODE03       $3.
-            @38  CODE04       $3.
-            @41  CODE05       $3.
-            @44  CODE06       $3.
-            @47  CODE07       $3.
-            @50  CODE08       $3.
-            @53  CODE09       $3.
-            @56  CODE10       $3.
-            @59  CODE11       $3.
-            @62  CODE12       $3.
-            @65  CODE13       $3.
-            @68  CODE14       $3.
-            @71  CODE15       $3.
-            @74  CODE16       $3.
-            @77  CODE17       $3.
-            @80  CODE18       $3.
-            @83  CODE19       $3.
-            @86  CODE20       $3.
-            @89  STAFFID      $10.
-            @99  HRNAME       $40.;
-  RETURN;
-  RUN;
+# =============================================================================
+# LOAD HR FILE (WITH VALIDATION)
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE HR_RAW AS
+    SELECT *
+    FROM '{host_parquet_path("HCMS_STAFF_RESIGN.parquet")}'
+""")
+
+# Validate HEADER date (DATAINDC=0, HEADERDATE must match DATE3)
+hdr = con.execute("""
+    SELECT HEADERDATE 
+    FROM HR_RAW 
+    WHERE DATAINDC = '0'
+""").fetchone()
+
+if hdr and hdr[0] != DATE3:
+    raise Exception(f"ABORT 77: HEADERDATE {hdr[0]} != REPORT DATE {DATE3}")
+
+# Extract HR + OLD_IC
+con.execute("""
+    CREATE TABLE HR AS
+    SELECT *
+    FROM HR_RAW
+    WHERE DATAINDC = '1' AND REGEXP_MATCHES(ALIAS, '^[0-9]{12}$')
+""")
+
+con.execute(f"""
+    CREATE TABLE OLD_IC AS
+    SELECT *, '003 IC NOT 12 DIGIT      ' AS remarks
+    FROM HR_RAW
+    WHERE DATAINDC = '1' AND NOT REGEXP_MATCHES(ALIAS, '^[0-9]{12}$')
+""")
+
+# Validate TRAILER (DATAINDC=9)
+trailer = con.execute("""
+    SELECT total_rec
+    FROM HR_RAW WHERE DATAINDC='9'
+""").fetchone()
+
+count_hr = con.execute("SELECT COUNT(*) FROM HR").fetchone()[0]
+
+if trailer and int(trailer[0]) != count_hr:
+    raise Exception(f"ABORT 88: trailer count {trailer[0]} != HR count {count_hr}")
+
+
+# =============================================================================
+# LOAD ALS FILE
+# =============================================================================
+con.execute(f"""
+    CREATE TABLE ALS AS
+    SELECT *
+    FROM '{host_parquet_path("ALLALIAS_FIX.parquet")}'
+    WHERE ALIASKEY = 'IC'
+""")
+
+
+# =============================================================================
+# MATCH 1: HR + ALS → RESULT1, NO_IC
+# =============================================================================
+con.execute("""
+    CREATE TABLE RESULT1 AS
+    SELECT hr.*, als.CUSTNO AS CUSTNO
+    FROM HR hr
+    JOIN ALS als USING (ALIAS)
+""")
+
+con.execute("""
+    CREATE TABLE NO_IC AS
+    SELECT hr.*, '001 STAFF IC NOT FOUND   ' AS REMARKS
+    FROM HR hr
+    LEFT JOIN ALS als USING (ALIAS)
+    WHERE als.ALIAS IS NULL
+""")
+
+
+# =============================================================================
+# MATCH 2: RESULT1 + CIS → MATCH2, NO_ACCT
+# =============================================================================
+con.execute("""
+    CREATE TABLE MATCH2 AS
+    SELECT r.*, c.CUSTNAME, c.ACCTCODE, c.ACCTNOC, c.PRISEC
+    FROM RESULT1 r
+    JOIN CIS c
+    WHERE c.CUSTNO = r.CUSTNO
+""")
+
+con.execute("""
+    CREATE TABLE NO_ACCT AS
+    SELECT r.*, '002 CIS WITH NO ACCOUNT  ' AS REMARKS
+    FROM RESULT1 r
+    LEFT JOIN CIS c USING (CUSTNO)
+    WHERE c.CUSTNO IS NULL
+""")
+
+print("CIS (first 5 rows):")
+print(con.execute("SELECT * FROM RESULT1 LIMIT 500").fetchdf())
