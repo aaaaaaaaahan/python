@@ -25,8 +25,6 @@ SELECT
     ALIAS,
     HRNAME,
     CUSTNO,
-
-    -- FIXED: pad missing fields to match TEMP2
     NULL AS CUSTNAME,
     NULL AS ALIASKEY,
     NULL AS PRIMSEC,
@@ -71,7 +69,7 @@ FROM read_parquet('{host_parquet_path("CUSTCODE_EMPL_ERR.parquet")}')
 """)
 
 # -----------------------------
-# COMBINE ALL RECORDS + REMOVE DUP + SORT (missing in your original)
+# COMBINE ALL RECORDS + REMOVE DUP + SORT
 # -----------------------------
 con.execute("""
 CREATE TABLE ALLREC_NODUP AS
@@ -102,17 +100,6 @@ with open(report_path, "w") as rpt:
     grcust = 0
     current_remarks = None
 
-    # -----------------------------
-    # ADD NO RECORDS TODAY BLOCK
-    # -----------------------------
-    if len(records) == 0:
-        rpt.write(" " * 44 + "**********************************\n")
-        rpt.write(" " * 44 + "*                                *\n")
-        rpt.write(" " * 44 + "*       NO RECORDS TODAY         *\n")
-        rpt.write(" " * 44 + "*                                *\n")
-        rpt.write(" " * 44 + "**********************************\n")
-        exit()
-
     def new_page_header():
         nonlocal pagecnt, linecnt
         pagecnt += 1
@@ -126,11 +113,23 @@ with open(report_path, "w") as rpt:
         rpt.write(f"{'='*9:<10}{'='*15:<16}{'='*40:<41}{'='*25:<26}"
                   f"{'='*11:<12}{'='*8:<9}{'='*20:<20}\n")
 
-    new_page_header()
+    # -----------------------------
+    # HANDLE NO RECORDS TODAY
+    # -----------------------------
+    if len(records) == 0:
+        new_page_header()  # header included
+        rpt.write(" " * 44 + "**********************************\n")
+        rpt.write(" " * 44 + "*                                *\n")
+        rpt.write(" " * 44 + "*       NO RECORDS TODAY         *\n")
+        rpt.write(" " * 44 + "*                                *\n")
+        rpt.write(" " * 44 + "**********************************\n")
+        exit()
 
     # -----------------------------
-    # MAIN LOOP WITH MISSING SAS LOGIC ADDED
+    # NORMAL PROCESSING
     # -----------------------------
+    new_page_header()
+
     for rec in records:
         remarks = rec[0]
         staffid = rec[2]
@@ -154,7 +153,7 @@ with open(report_path, "w") as rpt:
         rpt.write(f"{(staffid or ''):<10}{(alias or ''):<16}{(hrname or ''):<41}"
                   f"{(remarks or ''):<26}{(custno or ''):<12}{(acctcode or ''):<9}{(acctnoc or ''):<20}\n")
 
-        # NAME DISCREPANCY extra line (keeping your original 27-space indent)
+        # NAME DISCREPANCY extra line (keep your original indent)
         if remarks.strip() == '004 NAME DISCREPANCY':
             rpt.write(f"{'':27}{(custname or ''):<40}\n")
             linecnt += 1
