@@ -1,128 +1,139 @@
 import duckdb
-from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
-import datetime
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date.strftime("%d-%m-%Y")
-DATE3 = batch_date.strftime("%Y%m%d")     # format YYYYMMDD
+# =========================
+# 1) INPUT FILES (Parquet assumed)
+# =========================
+custcode_path = "CUSTCODE.parquet"      # contains CUSTNO + HRCCODES(60)
+resigned_path = "RESIGNED.parquet"      # STAFFID, CUSTNO, HRNAME
+updfile_path_parquet = "EMPLOYEE_RESIGN_RMV.parquet"
+updfile_path_txt = "EMPLOYEE_RESIGN_RMV.txt"
 
-# =============================================================================
-# DuckDB connection
-# =============================================================================
 con = duckdb.connect()
-cis = get_hive_parquet('CIS_CUST_DAILY')
 
-# =============================================================================
-# LOAD CIS (CISFILE.CUSTDLY)
-# =============================================================================
+# =========================
+# 2) Extract CODE01-CODE20 from HRCCODES
+# =========================
 con.execute(f"""
-    CREATE TABLE CIS AS
-    SELECT *
-    EXCLUDE (ALIAS,ALIASKEY)
-    FROM read_parquet('{cis[0]}')
-    WHERE (
-         ACCTNO BETWEEN 1000000000 AND 1999999999 OR
-         ACCTNO BETWEEN 3000000000 AND 3999999999 OR
-         ACCTNO BETWEEN 4000000000 AND 4999999999 OR
-         ACCTNO BETWEEN 5000000000 AND 5999999999 OR
-         ACCTNO BETWEEN 6000000000 AND 6999999999 OR
-         ACCTNO BETWEEN 7000000000 AND 7999999999
-    )
-    ORDER BY CUSTNO
+CREATE OR REPLACE TABLE custcode AS
+SELECT
+    CUSTNO,
+    HRCCODES,
+    SUBSTRING(HRCCODES,1,3) AS CODE01,
+    SUBSTRING(HRCCODES,4,3) AS CODE02,
+    SUBSTRING(HRCCODES,7,3) AS CODE03,
+    SUBSTRING(HRCCODES,10,3) AS CODE04,
+    SUBSTRING(HRCCODES,13,3) AS CODE05,
+    SUBSTRING(HRCCODES,16,3) AS CODE06,
+    SUBSTRING(HRCCODES,19,3) AS CODE07,
+    SUBSTRING(HRCCODES,22,3) AS CODE08,
+    SUBSTRING(HRCCODES,25,3) AS CODE09,
+    SUBSTRING(HRCCODES,28,3) AS CODE10,
+    SUBSTRING(HRCCODES,31,3) AS CODE11,
+    SUBSTRING(HRCCODES,34,3) AS CODE12,
+    SUBSTRING(HRCCODES,37,3) AS CODE13,
+    SUBSTRING(HRCCODES,40,3) AS CODE14,
+    SUBSTRING(HRCCODES,43,3) AS CODE15,
+    SUBSTRING(HRCCODES,46,3) AS CODE16,
+    SUBSTRING(HRCCODES,49,3) AS CODE17,
+    SUBSTRING(HRCCODES,52,3) AS CODE18,
+    SUBSTRING(HRCCODES,55,3) AS CODE19,
+    SUBSTRING(HRCCODES,58,3) AS CODE20
+FROM read_parquet('{custcode_path}')
+WHERE STRPOS(HRCCODES, '002') > 0
 """)
 
-
-# =============================================================================
-# LOAD HR FILE (WITH VALIDATION)
-# =============================================================================
+# =========================
+# 3) Read RESIGNED
+# =========================
 con.execute(f"""
-    CREATE TABLE HR_RAW AS
-    SELECT *
-    FROM '{host_parquet_path("HCMS_STAFF_RESIGN.parquet")}'
+CREATE OR REPLACE TABLE resigned AS
+SELECT DISTINCT *
+FROM read_parquet('{resigned_path}')
 """)
 
-# Validate HEADER date (DATAINDC=0, HEADERDATE must match DATE3)
-hdr = con.execute("""
-    SELECT HEADERDATE 
-    FROM HR_RAW 
-    WHERE DATAINDC = '0'
-""").fetchone()
-
-if hdr and hdr[0] != DATE3:
-    raise Exception(f"ABORT 77: HEADERDATE {hdr[0]} != REPORT DATE {DATE3}")
-
-# Extract HR + OLD_IC
+# =========================
+# 4) Merge tables on CUSTNO
+# =========================
 con.execute("""
-    CREATE TABLE HR AS
-    SELECT *
-    FROM HR_RAW
-    WHERE DATAINDC = '1' AND REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
+CREATE OR REPLACE TABLE merge1 AS
+SELECT a.*, b.STAFFID, b.HRNAME
+FROM custcode a
+INNER JOIN resigned b USING(CUSTNO)
 """)
 
+# =========================
+# 5) Shift CODE columns (exactly like SAS)
+# =========================
+# Sequential shift CASE per column
+con.execute("""
+CREATE OR REPLACE TABLE shift1 AS
+SELECT
+    CUSTNO,
+    CASE WHEN CODE01='002' THEN CODE02 ELSE CODE01 END AS CODE01,
+    CASE WHEN CODE01='002' THEN CODE03 ELSE CODE02 END AS CODE02,
+    CASE WHEN CODE01='002' THEN CODE04 ELSE CODE03 END AS CODE03,
+    CASE WHEN CODE01='002' THEN CODE05 ELSE CODE04 END AS CODE04,
+    CASE WHEN CODE01='002' THEN CODE06 ELSE CODE05 END AS CODE05,
+    CASE WHEN CODE01='002' THEN CODE07 ELSE CODE06 END AS CODE06,
+    CASE WHEN CODE01='002' THEN CODE08 ELSE CODE07 END AS CODE07,
+    CASE WHEN CODE01='002' THEN CODE09 ELSE CODE08 END AS CODE08,
+    CASE WHEN CODE01='002' THEN CODE10 ELSE CODE09 END AS CODE09,
+    CASE WHEN CODE01='002' THEN CODE11 ELSE CODE10 END AS CODE10,
+    CASE WHEN CODE01='002' THEN CODE12 ELSE CODE11 END AS CODE11,
+    CASE WHEN CODE01='002' THEN CODE13 ELSE CODE12 END AS CODE12,
+    CASE WHEN CODE01='002' THEN CODE14 ELSE CODE13 END AS CODE13,
+    CASE WHEN CODE01='002' THEN CODE15 ELSE CODE14 END AS CODE14,
+    CASE WHEN CODE01='002' THEN CODE16 ELSE CODE15 END AS CODE15,
+    CASE WHEN CODE01='002' THEN CODE17 ELSE CODE16 END AS CODE16,
+    CASE WHEN CODE01='002' THEN CODE18 ELSE CODE17 END AS CODE17,
+    CASE WHEN CODE01='002' THEN CODE19 ELSE CODE18 END AS CODE18,
+    CASE WHEN CODE01='002' THEN CODE20 ELSE CODE19 END AS CODE19,
+    CASE WHEN CODE01='002' THEN '000' ELSE CODE20 END AS CODE20,
+    STAFFID,
+    HRNAME
+FROM merge1
+""")
+
+# =========================
+# 6) Rebuild HRCCODES from shifted CODE columns
+# =========================
+con.execute("""
+CREATE OR REPLACE TABLE shift1_final AS
+SELECT
+    CUSTNO,
+    CONCAT(
+        CODE01, CODE02, CODE03, CODE04, CODE05,
+        CODE06, CODE07, CODE08, CODE09, CODE10,
+        CODE11, CODE12, CODE13, CODE14, CODE15,
+        CODE16, CODE17, CODE18, CODE19, CODE20
+    ) AS HRCCODES,
+    STAFFID,
+    HRNAME
+FROM shift1
+""")
+
+# =========================
+# 7) Output Parquet
+# =========================
+con.execute(f"COPY shift1_final TO '{updfile_path_parquet}' (FORMAT PARQUET)")
+
+# =========================
+# 8) Output TXT (fixed-width exactly like SAS)
+# =========================
+con.execute("""
+CREATE OR REPLACE TABLE txt_output AS
+SELECT
+    CUSTNO || HRCCODES AS LINE1,
+    STAFFID || RPAD(HRNAME, 40, ' ') AS LINE2
+FROM shift1_final
+ORDER BY CUSTNO
+""")
+
+# Combine lines vertically for TXT export
 con.execute(f"""
-    CREATE TABLE OLD_IC AS
-    SELECT *, '003 IC NOT 12 DIGIT      ' AS remarks
-    FROM HR_RAW
-    WHERE DATAINDC = '1' AND NOT REGEXP_MATCH(ALIAS, '^[0-9]{12}$')
-""")
-
-# Validate TRAILER (DATAINDC=9)
-trailer = con.execute("""
-    SELECT total_rec
-    FROM HR_RAW WHERE DATAINDC='9'
-""").fetchone()
-
-count_hr = con.execute("SELECT COUNT(*) FROM HR").fetchone()[0]
-
-if trailer and int(trailer[0]) != count_hr:
-    raise Exception(f"ABORT 88: trailer count {trailer[0]} != HR count {count_hr}")
-
-
-# =============================================================================
-# LOAD ALS FILE
-# =============================================================================
-con.execute(f"""
-    CREATE TABLE ALS AS
-    SELECT *
-    FROM '{host_parquet_path("ALLALIAS_FIX.parquet")}'
-    WHERE ALIASKEY = 'IC'
-""")
-
-
-# =============================================================================
-# MATCH 1: HR + ALS → RESULT1, NO_IC
-# =============================================================================
-con.execute("""
-    CREATE TABLE RESULT1 AS
-    SELECT hr.*, als.CUSTNO AS CUSTNO
-    FROM HR hr
-    JOIN ALS als USING (ALIAS)
-""")
-
-con.execute("""
-    CREATE TABLE NO_IC AS
-    SELECT hr.*, '001 STAFF IC NOT FOUND   ' AS REMARKS
-    FROM HR hr
-    LEFT JOIN ALS als USING (ALIAS)
-    WHERE als.ALIAS IS NULL
-""")
-
-
-# =============================================================================
-# MATCH 2: RESULT1 + CIS → MATCH2, NO_ACCT
-# =============================================================================
-con.execute("""
-    CREATE TABLE MATCH2 AS
-    SELECT r.*, c.CUSTNAME, c.ACCTCODE, c.ACCTNOC, c.PRISEC
-    FROM RESULT1 r
-    JOIN CIS c USING (CUSTNO)
-""")
-
-con.execute("""
-    CREATE TABLE NO_ACCT AS
-    SELECT r.*, '002 CIS WITH NO ACCOUNT  ' AS REMARKS
-    FROM RESULT1 r
-    LEFT JOIN CIS c USING (CUSTNO)
-    WHERE c.CUSTNO IS NULL
+COPY (
+    SELECT LINE1 AS line FROM txt_output
+    UNION ALL
+    SELECT LINE2 AS line FROM txt_output
+) TO '{updfile_path_txt}' (FORMAT CSV, DELIMITER '', HEADER FALSE)
 """)
