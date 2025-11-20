@@ -1,215 +1,150 @@
-
 import duckdb
-from CIS_PY_READER import csv_output_path, get_hive_parquet
+from CIS_PY_READER import host_parquet_path, csv_output_path, get_hive_parquet
 import datetime
 
-# -----------------------------
-# SET DATES
-# -----------------------------
-batch_date = datetime.date.today() - datetime.timedelta(days=1)
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date.strftime("%d-%m-%Y")
+today = datetime.date.today()
+batch_date = today - datetime.timedelta(days=1)
+report_date_str = batch_date.strftime("%d-%m-%Y")
 
 # -----------------------------
-# CONNECT TO DUCKDB
+# CONNECT DUCKDB
 # -----------------------------
 con = duckdb.connect()
+infile1 = get_hive_parquet('CIS_EMPLOYEE_RESIGN_NOTFOUND')
+infile2 = get_hive_parquet('CIS_EMPLOYEE_RESIGN')
 
 # -----------------------------
-# GET INPUT FILES
-# -----------------------------
-eccris = get_hive_parquet('ECCRIS_BLANK_ADDR_POSTCODE')
-ccris = get_hive_parquet('CIS_CCRIS_ERROR')
-
-# -----------------------------
-# CONCAT INPUT FILES
+# CREATE TEMP TABLES
 # -----------------------------
 con.execute(f"""
-CREATE TABLE ERRFILE AS
-SELECT * FROM read_parquet('{eccris[0]}')
-UNION ALL
-SELECT * FROM read_parquet('{ccris[0]}')
+CREATE TABLE TEMP1 AS
+SELECT
+    REMARKS,
+    ORGID,
+    STAFFID,
+    ALIAS,
+    HRNAME,
+    CUSTNO,
+
+    -- FIXED: pad missing fields to match TEMP2
+    NULL AS CUSTNAME,
+    NULL AS ALIASKEY,
+    NULL AS PRIMSEC,
+    NULL AS ACCTCODE,
+    NULL AS ACCTNOC
+FROM read_parquet('{infile1[0]}')
 """)
 
+con.execute(f"""
+CREATE TABLE TEMP2 AS
+SELECT
+    CASE WHEN HRNAME <> CUSTNAME THEN '004 NAME DISCREPANCY     ' ELSE '' END AS REMARKS,
+    NULL AS ORGID,
+    STAFFID,
+    ALIAS,
+    HRNAME,
+    CUSTNO,
+    CUSTNAME,
+    ALIASKEY,
+    PRIMSEC,
+    ACCTCODE,
+    ACCTNOC
+FROM read_parquet('{infile2[0]}')
+WHERE HRNAME <> CUSTNAME
+""")
+
+con.execute(f"""
+CREATE TABLE TEMP3 AS
+SELECT
+    '005 FAILED TO REMOVE TAG ' AS REMARKS,
+    NULL AS ORGID,
+    NULL AS STAFFID,
+    NULL AS ALIAS,
+    NULL AS HRNAME,
+    CUSTNO,
+    NULL AS CUSTNAME,
+    NULL AS ALIASKEY,
+    NULL AS PRIMSEC,
+    NULL AS ACCTCODE,
+    NULL AS ACCTNOC
+FROM read_parquet('{host_parquet_path("CUSTCODE_EMPL_ERR.parquet")}')
+""")
+
+# -----------------------------
+# COMBINE ALL RECORDS
+# -----------------------------
 con.execute("""
-CREATE TABLE ERRFILE_SORTED AS
-SELECT *
-FROM ERRFILE
-ORDER BY BRANCH, CUSTNO, ACCTNOC;
+CREATE TABLE ALLREC AS
+SELECT * FROM TEMP1
+UNION ALL
+SELECT * FROM TEMP2
+UNION ALL
+SELECT * FROM TEMP3
 """)
 
-# -----------------------------
-# COLUMN INDEX
-# -----------------------------
-col_index = {
-    'BRANCH': 0,
-    'ACCTCODE': 1,
-    'ACCTNOC': 2,
-    'PRIMSEC': 3,
-    'CUSTNO': 4,
-    'ERRORCODE': 5,
-    'FIELDTYPE': 6,
-    'FIELDVALUE': 7,
-    'REMARKS': 8
-}
-
-error_codes = ['001','002','003','004','005','100']
-error_desc_map = {
-    '001': 'TOTAL UNKNOWN CITIZENSHIP',
-    '002': 'TOTAL BLANK ID (INDV)',
-    '003': 'TOTAL BLANK ID (ORG)',
-    '004': 'TOTAL BLANK DATE OF BIRTH',
-    '005': 'TOTAL BLANK DATE OF REG',
-    '100': 'TOTAL INVALID POSTCODE'
-}
+# REMOVE DUPLICATES
+con.execute("""
+CREATE TABLE ALLREC_NODUP AS
+SELECT DISTINCT *
+FROM ALLREC
+""")
 
 # -----------------------------
 # FETCH ALL RECORDS
 # -----------------------------
-records = con.execute("SELECT * FROM ERRFILE_SORTED").fetchall()
+records = con.execute("SELECT * FROM ALLREC_NODUP").fetchall()
 
 # -----------------------------
-# PART 1: DETAILED CENTRAL REPORT
+# OUTPUT DETAILED TXT REPORT
 # -----------------------------
-detailed_path = csv_output_path(f"CIS_HSEKEEP_CENTRAL_{report_date}").replace(".csv", ".txt")
+report_path = csv_output_path(f"CIS_EMPLOYEE_REPORT_{report_date_str}").replace(".csv", ".txt")
 
-with open(detailed_path, "w") as rpt_file:
-
-    branch = None
-    brcust = 0
-    grcust = 0
-    err_counts = {code:0 for code in error_codes}
-    linecnt = 0
+with open(report_path, "w") as rpt:
     pagecnt = 0
+    linecnt = 0
+    grcust = 0
+    current_remarks = None
 
-    def print_page_header(branch_val):
+    def new_page_header():
         global pagecnt, linecnt
         pagecnt += 1
-        linecnt = 9  # header lines
-        rpt_file.write(f"REPORT ID   : CIS HSEKEEP RPT{'':23}PUBLIC BANK BERHAD\n")
-        rpt_file.write(f"PROGRAM ID  : CIHKCTRL{'':55}REPORT DATE : {day}/{month}/{year}\n")
-        rpt_file.write(f"BRANCH      : {branch_val}\n")
-        rpt_file.write("MISSING FIELDS DETECTED IN CIS SYSTEM FOR DATA SCRUBBING\n")
-        rpt_file.write("="*56 + "\n")
-        rpt_file.write(f"{'ACCOUNT':<23}{'CUSTNO':<12}{'FIELD TYPE':<20}{'FIELD VALUE':<30}{'REMARKS':<40}\n")
-        rpt_file.write(f"{'=======':<23}{'======':<12}{'==========':<20}{'===========':<30}{'=======':<40}\n")
+        linecnt = 9
+        rpt.write(f"REPORT ID   : HRD RESIGN{'':25}PUBLIC BANK BERHAD{'':5}PAGE : {pagecnt}\n")
+        rpt.write(f"PROGRAM ID  : CIRESIRP{'':65}REPORT DATE : {report_date_str}\n")
+        rpt.write(f"BRANCH      : 0000000{'':15}EXCEPTION REPORT FOR RESIGNED STAFF\n")
+        rpt.write(" "*46 + "===================================\n")
+        rpt.write(f"{'STAFFID':<10}{'ALIAS':<16}{'HR NAME / CIS NAME':<40}"
+                  f"{'REMARKS':<25}{'CUSTNO':<11}{'ACCTCODE':<6}{'ACCTNOC':<20}\n")
+        rpt.write(f"{'='*9:<10}{'='*15:<16}{'='*40:<40}{'='*25:<25}"
+                  f"{'='*11:<11}{'='*6:<6}{'='*20:<20}\n")
+
+    new_page_header()
 
     for rec in records:
-        rec_branch = rec[col_index['BRANCH']]
-        if branch != rec_branch:
-            if branch is not None and brcust > 0:
-                for code, count in err_counts.items():
-                    if count != 0:
-                        rpt_file.write(f"{error_desc_map[code]:<45}{count:>9}\n")
-                rpt_file.write(f"{'TOTAL ERRORS':<45}{brcust:>9}\n\n")
-                err_counts = {code:0 for code in error_codes}
-                brcust = 0
-            branch = rec_branch
-            print_page_header(branch)
-
-        rpt_file.write(
-            f"{rec[col_index['ACCTCODE']]:<4}"
-            f"{rec[col_index['ACCTNOC']]:<19}"
-            f"{rec[col_index['CUSTNO']]:<12}"
-            f"{rec[col_index['FIELDTYPE']]:<20}"
-            f"{rec[col_index['FIELDVALUE']]:<30}"
-            f"{rec[col_index['REMARKS']]:<40}\n"
-        )
-
-        code = rec[col_index['ERRORCODE']]
-        if code in err_counts:
-            err_counts[code] += 1
-        brcust += 1
-        grcust += 1
         linecnt += 1
+        grcust += 1
 
-        if linecnt >= 52:
-            print_page_header(branch)
+        # same your variable mapping
+        remarks = rec[0]
+        staffid = rec[2]
+        alias = rec[3]
+        hrname = rec[4]
+        custno = rec[5]
+        custname = rec[6]
+        acctcode = rec[9]
+        acctnoc = rec[10]
 
-    if brcust > 0:
-        for code, count in err_counts.items():
-            if count != 0:
-                rpt_file.write(f"{error_desc_map[code]:<45}{count:>9}\n")
-        rpt_file.write(f"{'TOTAL ERRORS':<45}{brcust:>9}\n\n")
+        rpt.write(f"{(staffid or ''):<10}{(alias or ''):<16}{(hrname or ''):<40}{(remarks or ''):<25}"
+                  f"{(custno or ''):<11}{(acctcode or ''):<6}{(acctnoc or ''):<20}\n")
 
-    rpt_file.write(f"GRAND TOTAL OF ALL BRANCHES = {grcust}\n")
+        # NAME DISCREPANCY
+        if remarks.strip() == '004 NAME DISCREPANCY':
+            rpt.write(f"{'':27}{(custname or ''):<40}\n")
+            linecnt += 1
 
-print("Detailed central report TXT generated.")
+        if linecnt >= 40:
+            new_page_header()
 
-# -----------------------------
-# PART 2: CENTRAL SUMMARY REPORT
-# -----------------------------
-summary_path = csv_output_path(f"CIS_HSEKEEP_CENTRAL_SUM_{report_date}").replace(".csv", ".txt")
+    rpt.write(f"\nTOTAL RECORDS = {grcust}\n")
 
-# Prepare overview and branch summaries
-overview = con.execute(f"""
-SELECT ERRORCODE, 
-       CASE 
-           WHEN ERRORCODE='001' THEN '001 EMPTY CITIZENSHIP'
-           WHEN ERRORCODE='002' THEN '002 EMPTY INDIVIDUAL ID'
-           WHEN ERRORCODE='003' THEN '003 EMPTY ORGANISATION ID'
-           WHEN ERRORCODE='004' THEN '004 EMPTY DATE OF BIRTH'
-           WHEN ERRORCODE='005' THEN '005 EMPTY DATE OF REGISTRATION'
-           WHEN ERRORCODE='100' THEN '100 EMPTY POSTCODE'
-       END AS ERRORDESC,
-       COUNT(*) AS ERRORTOTAL
-FROM ERRFILE_SORTED
-GROUP BY ERRORCODE
-ORDER BY ERRORCODE
-""").fetchall()
-
-branch_summary = con.execute(f"""
-SELECT BRANCH, ERRORCODE,
-       CASE 
-           WHEN ERRORCODE='001' THEN 'TOTAL UNKNOWN CITIZENSHIP'
-           WHEN ERRORCODE='002' THEN 'TOTAL BLANK ID (INDV)'
-           WHEN ERRORCODE='003' THEN 'TOTAL BLANK ID (ORG)'
-           WHEN ERRORCODE='004' THEN 'TOTAL BLANK DATE OF BIRTH'
-           WHEN ERRORCODE='005' THEN 'TOTAL BLANK DATE OF REG'
-           WHEN ERRORCODE='100' THEN 'TOTAL INVALID POSTCODE'
-       END AS ERRORDESC,
-       COUNT(*) AS ERRORTOTAL
-FROM ERRFILE_SORTED
-GROUP BY BRANCH, ERRORCODE
-ORDER BY BRANCH, ERRORCODE
-""").fetchall()
-
-# Aggregate branch totals
-from collections import defaultdict
-
-branch_totals = defaultdict(int)
-for rec in branch_summary:
-    branch_totals[rec[0]] += rec[3]
-
-grand_total = sum(rec[2] for rec in overview)
-
-# Write summary TXT
-with open(summary_path, "w") as f:
-    f.write(f"REPORT ID   : CIS HSEKEEP SUM{'':23}PUBLIC BANK BERHAD                         PAGE        :    1\n")
-    f.write(f"PROGRAM ID  : CIHKCTRL{'':65}        REPORT DATE : {day}/{month}/{year}\n")
-    f.write(f"BRANCH      : 0000000                         DATA SCRUBBING SUMMARY REPORT    \n")
-    f.write("                                              =============================\n\n")
-    f.write("******    OVERVIEW    ******\n\n")
-    f.write(f"{'ERROR DESCRIPTION':<40}{'TOTAL RECORDS':>20}\n")
-    f.write(f"{'='*17:<40}{'='*12:>20}\n")
-    for rec in overview:
-        f.write(f"{rec[1]:<40}{rec[2]:>20}\n")
-    f.write(f"{'    GRAND TOTAL  =':<40}{grand_total:>20}\n\n")
-
-    f.write("******    SUMMARY BY BRANCH AND ERROR TYPE      ******\n\n")
-    f.write(f"{'BRANCH':<8}{'ERROR DESCRIPTION':<45}{'TOTAL RECORD':>15}\n")
-    f.write(f"{'------':<8}{'-----------------':<45}{'------------':>15}\n")
-
-    current_branch = None
-    for rec in branch_summary:
-        br, code, desc, count = rec
-        if current_branch != br:
-            if current_branch is not None:
-                f.write(f"{current_branch:<8}{'TOTAL ERRORS':<45}{branch_totals[current_branch]:>15} **\n")
-                f.write("-"*70 + "\n")
-            current_branch = br
-        f.write(f"{br:<8}{desc:<45}{count:>15}\n")
-    if current_branch is not None:
-        f.write(f"{current_branch:<8}{'TOTAL ERRORS':<45}{branch_totals[current_branch]:>15} **\n")
-
-print("Central summary TXT generated successfully.")
+print("Detailed employee report TXT generated.")
