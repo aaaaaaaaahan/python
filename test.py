@@ -2,128 +2,171 @@ convert program to python with duckdb and pyarrow
 duckdb for process input file and output parquet&txt
 assumed all the input file ady convert to parquet can directly use it
 
-//CIBRRPTB JOB BR-FILE,'BRANCH-INFO-RPT',MSGCLASS=A,MSGLEVEL=(1,1),     JOB14350
-//         USER=OPCC,
-//         REGION=64M,NOTIFY=&SYSUID,CLASS=A
-//*
-/*JOBPARM S=S1M2
-//*
-//**********************************************************************
-//*         E-BANKING - PRINT BRANCH GENERAL INFO REPORT (PBB)
-//**********************************************************************
-//*
+
+//CIBNCTL1 JOB MSGCLASS=X,MSGLEVEL=(1,1),REGION=64M,NOTIFY=&SYSUID      JOB71402
 //*********************************************************************
-//* DELETE OUTPUT FILES
+//** FORMAT FILE TO ONE LINE
 //*********************************************************************
-//*DELETE   EXEC PGM=IEFBR14,COND=(0,NE)
-//*DEL1     DD DSN=EBANK.BRANCH.OFFICER.COMBINE.RPT,
-//*         DISP=(MOD,DELETE,DELETE),
-//*         SPACE=(CYL,(100,200),RLSE)
-//**********************************************************************
-//SAS609   EXEC SAS609,REGION=0M,WORK='50000,50000'
-//CONFIG    DD DISP=SHR,DSN=SYS3.SAS.V609.CNTL(BATCHXA)
-//STEPLIB   DD DISP=(SHR,PASS),DSN=&LOAD
-//          DD DISP=SHR,DSN=SYS3.SAS.V609.LIBRARY
-//IEFRDER   DD DUMMY
-//INSFILE   DD DSN=EBANK.BRANCH.OFFICER.COMBINE,
-//          DISP=SHR
-//*OUTRPT    DD DSN=EBANK.BRANCH.OFFICER.COMBINE.RPT,
-//*          DISP=(NEW,CATLG,DELETE),
-//*          UNIT=(SYSDA,5),
-//*          SPACE=(CYL,(100,50),RLSE),
-//*          DCB=(LRECL=133,BLKSIZE=0,RECFM=FB)
-//DFSVSAMP  DD DSN=RBP2.IB330P.CONTROL(IBAMS#00),DISP=SHR
-//SASLIST   DD SYSOUT=X
-//SYSIN     DD *
-OPTIONS IMSDEBUG=N YEARCUTOFF=1950 SORTDEV=3390 ERRORS=0;
-OPTIONS NODATE NONUMBER;
-TITLE;
+//FORMAT1  EXEC SAS609
+//CTRFILE  DD DISP=SHR,DSN=BNMCTR.ACCTDAT1.EDITS
+//ONELINE  DD DSN=BNMCTR.ACCTDAT1.ONELINE,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
 
- /*----------------------------------------------------------------*/
- /*          PRINT 'BRANCH GENERAL INFO REPORT' (PBB)              */
- /*----------------------------------------------------------------*/
+DATA CTR;
+   INFILE CTRFILE;
+     INPUT   @01      CUSTNO1            $11.
+             @407     TOWN1              $30.
+             @457     POSTCODE1          $05.
+             @467     STATE_ID1          $02.
+             @8225    ADDREF1            PD6.
 
-DATA GETDATE;
-     DT=TODAY();
-     DD=PUT(DAY(DT),Z2.);
-     MM=PUT(MONTH(DT),Z2.);
-     CCYY=PUT(YEAR(DT),Z4.);
-     YY = SUBSTR(PUT(CCYY, 4.),3,2);
-     CALL SYMPUT('DAY', PUT(DD,2.));
-     CALL SYMPUT('MONTH', PUT(MM,2.));
-     CALL SYMPUT('YEAR', PUT(YY,2.));
+             @622     CUSTNO2            $11.
+             @1028    TOWN2              $30.
+             @1078    POSTCODE2          $05.
+             @1088    STATE_ID2          $02.
+             @8231    ADDREF2            PD6.
+
+             @1243    CUSTNO3            $11.
+             @1649    TOWN3              $30.
+             @1699    POSTCODE3          $05.
+             @1709    STATE_ID3          $02.
+             @8237    ADDREF3            PD6.
+
+             @1864    CUSTNO4            $11.
+             @2270    TOWN4              $30.
+             @2320    POSTCODE4          $05.
+             @2330    STATE_ID4          $02.
+             @8243    ADDREF4            PD6.
+
+             @2485    CUSTNO5            $11.
+             @2891    TOWN5              $30.
+             @2941    POSTCODE5          $05.
+             @2951    STATE_ID5          $02.
+             @8249    ADDREF5            PD6. ;
 RUN;
+PROC PRINT DATA=CTR(OBS=5);TITLE 'CTR';RUN;
 
-DATA BRFILE;
-   INFILE INSFILE;
-   INPUT @1    BANKNBR            $1.
-         @2    BRNBR              7.
-         @9    BRABBRV            $3.
-         @12   BRNAME             $20.
-         @32   BRADDRL1           $35.
-         @67   BRADDRL2           $35.
-         @102  BRADDRL3           $35.
-         @137  BRPHONE            $11.
-         @148  BRSTCODE           3.
-         @150  BRRPS              $4;
-RUN;
-
-DATA _NULL_;
-  SET BRFILE END=EOF;
-  FILE PRINT HEADER=NEWPAGE NOTITLE;
-  LINECNT = 0;
-  FORMAT BANKNAME $45.;
-
-  IF LINECNT >= 52 THEN
-     PUT _PAGE_;
-
-     PUT @1    BRNBR             7.
-         @12   BRABBRV           $3.
-         @20   BRNAME            $20.
-         @45   BRADDRL1          $35.
-         @88   BRPHONE           $11.
-         @105  BRSTCODE          3.
-        /@45   BRADDRL2          $35.
-        /@45   BRADDRL3          $35.///;
-
-    LINECNT + 6;
-    BRCNT + 1;
-
-  IF EOF THEN DO;
-    PUT @1   'TOTAL NUMBER OF BRANCH = ' BRCNT    4.;
+DATA OUT;
+  SET CTR;
+  FILE ONELINE;
+  IF CUSTNO1 NE '' THEN DO;
+    PUT   @01   CUSTNO1            $11.
+          @12   TOWN1              $30.
+          @43   POSTCODE1          $05.
+          @48   STATE_ID1          $02.
+          @50   ADDREF1            Z11. ;
   END;
+  IF CUSTNO2 NE '' THEN DO;
+    PUT   @01   CUSTNO2            $11.
+          @12   TOWN2              $30.
+          @43   POSTCODE2          $05.
+          @48   STATE_ID2          $02.
+          @50   ADDREF2            Z11. ;
+  END;
+  IF CUSTNO3 NE '' THEN DO;
+    PUT   @01   CUSTNO3            $11.
+          @12   TOWN3              $30.
+          @43   POSTCODE3          $05.
+          @48   STATE_ID3          $02.
+          @50   ADDREF3            Z11. ;
+  END;
+  IF CUSTNO4 NE '' THEN DO;
+    PUT   @01   CUSTNO4            $11.
+          @12   TOWN4              $30.
+          @43   POSTCODE4          $05.
+          @48   STATE_ID4          $02.
+          @50   ADDREF4            Z11. ;
+  END;
+  IF CUSTNO5 NE '' THEN DO;
+    PUT   @01   CUSTNO5            $11.
+          @12   TOWN5              $30.
+          @43   POSTCODE5          $05.
+          @48   STATE_ID5          $02.
+          @50   ADDREF5            Z11. ;
+  END;
+
   RETURN;
-
-  NEWPAGE :
-    PAGECNT+1;
-    LINECNT = 0;
-
-    IF BANKNBR = 'B' THEN
-       BANKNAME = 'PUBLIC BANK BERHAD';
-    ELSE IF BANKNBR = 'F' THEN
-            BANKNAME = 'PUBLIC FINANCE BERHAD';
-
-    PUT @1   'REPORT ID   : BNKCTL/BR/FILE/RPTS'
-        @55   BANKNAME
-        @94  'PAGE        : ' PAGECNT   4.
-       /@1   'PROGRAM ID  : CIBRRPTB'
-        @94  'REPORT DATE : ' "&DAY" '/' "&MONTH" '/' "&YEAR"
-       /@52  'BRANCH GENERAL INFO REPORT'
-       /@52  '==========================';
-
-    PUT ///@2   'BR NBR'
-        @12  'ABBRV'
-        @20  'NAME'
-        @45  'ADDRESS'
-        @88  'PHONE'
-        @106 'STATE CODE';
-    PUT @2   '------'
-        @12  '-----'
-        @20  '----'
-        @45  '-------'
-        @88  '-----'
-        @106 '----------';
-
-    LINECNT = 8;
-  RETURN;
+  RUN;
+//*********************************************************************
+//** MATCH FILE FOR UPDATE     PROGRAM CIUPAELE JOB CIUPZIP2
+//*********************************************************************
+//ADRMATCH EXEC SAS609
+//ONELINE  DD DISP=SHR,DSN=BNMCTR.ACCTDAT1.ONELINE
+//ADDRFILE DD DISP=SHR,DSN=CIS.CUST.DAILY.ADDRESS
+//OUTFILE2 DD DSN=BNMCTR.UPDATE.ADR,
+//            DISP=(NEW,CATLG,DELETE),
+//            SPACE=(CYL,(100,100),RLSE),UNIT=SYSDA,
+//            DCB=(LRECL=200,BLKSIZE=0,RECFM=FB)
+//SASLIST  DD SYSOUT=X
+//SYSIN    DD *
+DATA ADDR;
+   INFILE ADDRFILE;
+     INPUT   @01   CUSTNO            $11.
+             @13   ADDREF            $11.
+      /*     @229  STREET            $15. */
+             @244  CITY              $25.
+             @269  STATEX            $03.
+             @272  STATEID           $02.
+             @274  ZIP               $05.
+             @279  ZIP2              $04.
+             @283  COUNTRY           $10. ;
 RUN;
+PROC SORT  DATA=ADDR NODUPKEY; BY ADDREF;RUN;
+PROC PRINT DATA=ADDR(OBS=5);TITLE 'ADDR';RUN;
+
+DATA ONE;
+   INFILE ONELINE;
+     INPUT   @01   ONE_CUSTNO         $11.
+             @12   ONE_TOWN           $30.
+             @43   ONE_POSTCODE       $05.
+             @48   ONE_STATE_ID       $02.
+             @50   ADDREF             $11.;
+     ONE_COUNTRY = 'MALAYSIA';
+     IF ONE_STATE_ID = '17' THEN DELETE;
+     IF ONE_STATE_ID = '  ' THEN DELETE;
+     IF ONE_STATE_ID = '01' THEN ONE_STATE_CODE = 'JOH' ;
+     IF ONE_STATE_ID = '02' THEN ONE_STATE_CODE = 'KED' ;
+     IF ONE_STATE_ID = '03' THEN ONE_STATE_CODE = 'KEL' ;
+     IF ONE_STATE_ID = '04' THEN ONE_STATE_CODE = 'MEL' ;
+     IF ONE_STATE_ID = '05' THEN ONE_STATE_CODE = 'NEG' ;
+     IF ONE_STATE_ID = '06' THEN ONE_STATE_CODE = 'PAH' ;
+     IF ONE_STATE_ID = '07' THEN ONE_STATE_CODE = 'PUL' ;
+     IF ONE_STATE_ID = '08' THEN ONE_STATE_CODE = 'PRK' ;
+     IF ONE_STATE_ID = '09' THEN ONE_STATE_CODE = 'PER' ;
+     IF ONE_STATE_ID = '10' THEN ONE_STATE_CODE = 'SAB' ;
+     IF ONE_STATE_ID = '11' THEN ONE_STATE_CODE = 'SAR' ;
+     IF ONE_STATE_ID = '12' THEN ONE_STATE_CODE = 'SEL' ;
+     IF ONE_STATE_ID = '13' THEN ONE_STATE_CODE = 'TER' ;
+     IF ONE_STATE_ID = '14' THEN ONE_STATE_CODE = 'KUL' ;
+     IF ONE_STATE_ID = '15' THEN ONE_STATE_CODE = 'LAB' ;
+     IF ONE_STATE_ID = '16' THEN ONE_STATE_CODE = 'PUT' ;
+RUN;
+PROC SORT  DATA=ONE NODUPKEY; BY ADDREF;RUN;
+PROC PRINT DATA=ONE(OBS=5);TITLE 'ONE';RUN;
+
+DATA MERGE;
+   MERGE ONE(IN=R)  ADDR(IN=S); BY ADDREF;
+   IF R;
+   IF    ONE_TOWN        = CITY
+   AND   ONE_POSTCODE    = ZIP
+   AND   ONE_STATE_CODE  = STATEX
+   AND   ONE_COUNTRY     = COUNTRY THEN DELETE;
+RUN;
+PROC SORT  DATA=MERGE NODUPKEY; BY ADDREF;RUN;
+PROC PRINT DATA=MERGE(OBS=50);TITLE 'RESULT';RUN;
+
+DATA OUT3;
+  SET MERGE;
+  FILE OUTFILE2;
+    PUT @01   ONE_CUSTNO        $11.
+        @12   ADDREF            $11.
+        @23   ONE_TOWN          $25.
+        @48   ONE_STATE_CODE    $3.
+        @51   ONE_POSTCODE      $05.
+        @56   ONE_COUNTRY       $10. ;
+  RETURN;
+  RUN;
