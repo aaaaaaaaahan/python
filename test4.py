@@ -2,21 +2,18 @@ import duckdb
 import datetime
 from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_path, get_hive_parquet
 
-batch_date = (datetime.date.today() - datetime.timedelta(days=1))
-year, month, day = batch_date.year, batch_date.month, batch_date.day
-report_date = batch_date.strftime("%d-%m-%Y")
-DAY = day
-MONTH = month
-YEAR = year
+# -----------------------------
+# DATE / REPORT PARAMETERS
+# -----------------------------
+batch_date = datetime.date.today() - datetime.timedelta(days=1)
+DAY, MONTH, YEAR = batch_date.day, batch_date.month, batch_date.year
+report_date_str = batch_date.strftime("%d-%m-%Y")
+lines_per_page = 52
 
 # -----------------------------
-# CONNECT DUCKDB
+# CONNECT DUCKDB AND LOAD DATA
 # -----------------------------
 con = duckdb.connect()
-
-# -----------------------------
-# LOAD DATA
-# -----------------------------
 con.execute(f"""
     CREATE OR REPLACE TABLE brfile AS
     SELECT
@@ -32,23 +29,26 @@ con.execute(f"""
         BRRPS
     FROM '{host_parquet_path("EBANK_BRANCH_OFFICER_COMBINE.parquet")}'
 """)
-
 branches = con.execute("SELECT * FROM brfile ORDER BY BRNBR").fetchall()
 
 # -----------------------------
-# REPORT PARAMETERS
+# REPORT OUTPUT
 # -----------------------------
-lines_per_page = 52
+report_path = csv_output_path(f"BRANCH_GENERAL_INFO_{report_date_str}").replace(".csv", ".txt")
 linecnt = 0
 pagecnt = 0
 brcnt = 0
 report_lines = []
 
-def print_page_header(banknbr, pagecnt):
-    if banknbr == 'B':
-        bankname = 'PUBLIC BANK BERHAD'
-    elif banknbr == 'F':
-        bankname = 'PUBLIC FINANCE BERHAD'
+# -----------------------------
+# PAGE HEADER FUNCTION
+# -----------------------------
+def new_page_header(banknbr):
+    global pagecnt, linecnt
+    pagecnt += 1
+    linecnt = 8  # header lines count
+
+    bankname = 'PUBLIC BANK BERHAD' if banknbr == 'B' else 'PUBLIC FINANCE BERHAD'
 
     header = [
         f"REPORT ID   : BNKCTL/BR/FILE/RPTS{'':55}{bankname:<20}PAGE        : {pagecnt:4}",
@@ -59,27 +59,36 @@ def print_page_header(banknbr, pagecnt):
         f"  BR NBR  ABBRV  NAME                 ADDRESS                            PHONE       STATE CODE",
         f"  ------  -----  ----                 -------                            -----       ----------"
     ]
-    return header
+    report_lines.extend(header)
 
 # -----------------------------
 # GENERATE REPORT
 # -----------------------------
-for row in branches:
-    banknbr, brnbr, brabbrv, brname, addr1, addr2, addr3, phone, brstcode, brrps = row
+if len(branches) == 0:
+    new_page_header('B')
+    report_lines.append("\n" + " " * 20 + "******** NO RECORDS TODAY ********\n")
+else:
+    for row in branches:
+        banknbr, brnbr, brabbrv, brname, addr1, addr2, addr3, phone, brstcode, brrps = row
 
-    # Check page break
-    if linecnt == 0 or linecnt >= lines_per_page:
-        pagecnt += 1
-        report_lines.extend(print_page_header(banknbr, pagecnt))
-        linecnt = 8  # header lines
+        # PAGE BREAK
+        if linecnt == 0 or linecnt >= lines_per_page:
+            new_page_header(banknbr)
 
-    # Branch info (exact SAS formatting)
-    report_lines.append(f"{brnbr:>7}  {brabbrv:<3}  {brname:<20}  {addr1:<35}  {phone:<11}  {brstcode:>3}")
-    report_lines.append(f"{'':45}{addr2:<35}")
-    report_lines.append(f"{'':45}{addr3:<35}")
+        # BRANCH DATA (SAS formatting: 3 lines per branch)
+        report_lines.append(f"{brnbr:>7}  {brabbrv:<3}  {brname:<20}  {addr1:<35}  {phone:<11}  {brstcode:>3}")
+        report_lines.append(f"{'':45}{addr2:<35}")
+        report_lines.append(f"{'':45}{addr3:<35}")
 
-    linecnt += 6  # SAS adds 6 per branch (3 lines plus spacing)
-    brcnt += 1
+        linecnt += 6  # 3 lines + 3 spacing (like SAS)
+        brcnt += 1
 
-# Add total at end
-report_lines.append(f"\nTOTAL NUMBER OF BRANCH = {brcnt:4d}")
+    # FINAL TOTAL
+    report_lines.append(f"\nTOTAL NUMBER OF BRANCH = {brcnt:4d}")
+
+# -----------------------------
+# WRITE TO TXT
+# -----------------------------
+with open(report_path, "w") as rpt:
+    for line in report_lines:
+        rpt.write(line + "\n")
