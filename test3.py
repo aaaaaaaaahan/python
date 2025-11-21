@@ -7,26 +7,24 @@ year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
 curdt = batch_date.strftime("%Y%m%d")
 
-# =====================================================
-# FILE PATHS (CHANGE THESE TO YOUR ACTUAL PARQUET FILES)
-# =====================================================
-CIPHONET_PARQUET = "UNLOAD_CIPHONET_FB.parquet"
-CISFILE_PARQUET  = "CIS_CUST_DAILY.parquet"
-DPTRBALS_PARQUET = "DPTRBLGS.parquet"
-
-OUT_PARQUET = "CIPHONET_ATM_CONTACT.parquet"
-OUT_TXT     = "CIPHONET_ATM_CONTACT.txt"
-
-
-# =====================================================
-# DATE HANDLING (REPLACED SRSCTRL1 WITH datetime)
-# =====================================================
-today = datetime.date.today()
-batch_date = today - datetime.timedelta(days=1)   # use yesterday like batch
-curdt = batch_date.strftime("%Y%m%d")            # same as SAS CURDT format: YYYYMMDD
-
-print(">>> CURDT from datetime:", curdt)
-
+#---------------------------------------------------------------------#
+# Original Program: CIBMSPEN                                          #
+#---------------------------------------------------------------------#
+# GET BEFORE AND AFTER EFFECT OF PHONE NUMBERS                        #
+# IMPL       ESMR      DESC                                           #
+# ========== ========= ========================================       #
+# 09/02/2010 2009-1889 UPDATE PHONE NUMBER (ATM)                      #
+# 19/05/2010 2010-733  PB BANK CARD/DAY2DAY SCREEN : INCL CONTACTNO   #
+# 28/07/2010 2010-2215 PROMPT PHONE UPDATE TO ALL ATM TRX TYPES.      #
+# 29/07/2010 2010-1013 UPDATE PHONE NUMBER (EBANK) CIPHONET TABLE     #
+# 05/10/2010 2010-2314 VALIDATE EBANK/ATM PHONE NUMBER                #
+# 26/11/2010 2010-1324 UPDATE PHONE NUMBER (OTC)                      #
+# 05/01/2011 2010-4144 VALIDATION LOGIC FOR PB BANK CARD/DAY2DAY      #
+# 28/03/2011 2011-0502 BLOCK TETI IS PHONE NOT UPDATED                #
+# 21/10/2011 2011-3172 OTC/CASH WITHDRAWAL FD FIXES                   #
+#            2011-3700 ADD NEW FIELD - PHONE NEW (CURRENT CHG)        #
+# 20/04/2012 A2012-7142 INCREASE REGION SIZE FROM 64M TO 256M         #
+#---------------------------------------------------------------------#
 
 # ========================
 # CONNECT TO DUCKDB
@@ -39,17 +37,21 @@ cis = get_hive_parquet('CIS_CUST_DAILY')
 # STEP 1: PHONE DATA
 # =====================================================
 con.execute(f"""
-CREATE OR REPLACE TEMP TABLE PHONE AS
+CREATE OR REPLACE TABLE PHONE AS
 SELECT *,
        TRXAPPLNO AS TRXACCTDP,
-        MAKE_DATE(CAST(UPDTYY AS INTEGER), CAST(UPDTMM AS INTEGER), CAST(UPDTDD AS INTEGER)) AS RECDT
+       TRXAPPLCODE AS TRXAPPL,
+       NEWPHONE AS PHONENEW,
+       LPAD(CAST(UPDTYY AS VARCHAR),4,'0') ||
+       LPAD(CAST(UPDTMM AS VARCHAR),2,'0') ||
+       LPAD(CAST(UPDTDD AS VARCHAR),2,'0') AS RECDT
 FROM '{host_parquet_path("UNLOAD_CIPHONET_FB.parquet")}'
 WHERE UPDSOURCE <> 'INIT'
-  AND RECDT = '{curdt}'
+  AND RECDT = {curdt}
 """)
 
 con.execute("""
-CREATE OR REPLACE TEMP TABLE PHONE_SORT AS
+CREATE OR REPLACE TABLE PHONE_SORT AS
 SELECT * FROM PHONE ORDER BY CUSTNO
 """)
 
@@ -58,7 +60,7 @@ SELECT * FROM PHONE ORDER BY CUSTNO
 # STEP 2: CIS DATA
 # =====================================================
 con.execute(f"""
-CREATE OR REPLACE TEMP TABLE CIS AS
+CREATE OR REPLACE TABLE CIS AS
 SELECT DISTINCT
     CUSTNO,
     CUSTNAME,
@@ -73,7 +75,7 @@ FROM read_parquet('{cis[0]}')
 # STEP 3: MERGE1 (PHONE + CIS)
 # =====================================================
 con.execute("""
-CREATE OR REPLACE TEMP TABLE MRG1 AS
+CREATE OR REPLACE TABLE MRG1 AS
 SELECT 
     P.*,
     C.CUSTNAME,
@@ -91,7 +93,7 @@ ORDER BY P.TRXACCTDP
 # STEP 4: DEPOSIT DATA
 # =====================================================
 con.execute(f"""
-CREATE OR REPLACE TEMP TABLE DEPOSIT AS
+CREATE OR REPLACE TABLE DEPOSIT AS
 SELECT
     CAST(REPTNO AS INTEGER) AS REPTNO,
     CAST(FMTCODE AS INTEGER) AS FMTCODE,
@@ -112,7 +114,7 @@ ORDER BY TRXACCTDP
 # STEP 5: MERGE2 (MRG1 + DEPOSIT)
 # =====================================================
 con.execute("""
-CREATE OR REPLACE TEMP TABLE MRG2 AS
+CREATE OR REPLACE TABLE MRG2 AS
 SELECT 
     M1.*,
     D.ACCTBRCH,
@@ -129,7 +131,7 @@ ORDER BY M1.CUSTNO
 # STEP 6: FINAL OUTPUT TABLE
 # =====================================================
 con.execute("""
-CREATE OR REPLACE TEMP TABLE TEMPOUT AS
+CREATE OR REPLACE TABLE TEMPOUT AS
 SELECT
     '033' AS HDR,
 
@@ -144,9 +146,10 @@ SELECT
     ALIASKEY,
     ALIAS,
 
-    LPAD(CAST(UPDDD AS VARCHAR),2,'0') AS UPDDD,
-    LPAD(CAST(UPDMM AS VARCHAR),2,'0') AS UPDMM,
-    LPAD(CAST(UPDYY AS VARCHAR),4,'0') AS UPDYY,
+    -- Date format EXACT like SAS: DD/MM/YYYY
+    LPAD(CAST(UPDTDD AS VARCHAR),2,'0') || '/' ||
+    LPAD(CAST(UPDTMM AS VARCHAR),2,'0') || '/' ||
+    LPAD(CAST(UPDTYY AS VARCHAR),4,'0') AS UPDDATE,
 
     CASE 
         WHEN UPDSOURCE NOT IN ('ATM','EBK') THEN 'OTC'
@@ -155,3 +158,6 @@ SELECT
 
 FROM MRG2
 """)
+
+print("CIS (first 5 rows):")
+print(con.execute("SELECT * FROM PHONE LIMIT 500").fetchdf())
