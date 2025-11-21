@@ -1,10 +1,24 @@
 error:
-line 19, in <module>
+line 40, in <module>
     con.execute(f"""
-duckdb.duckdb.CatalogException: Catalog Error: Scalar Function with name makedate does not exist!
-Did you mean "make_date"?
+duckdb.duckdb.BinderException: Binder Error: No function matches the given name and argument types 'trunc(VARCHAR)'. You might need to add explicit type casts.
+        Candidate functions:
+        trunc(TINYINT) -> TINYINT
+        trunc(SMALLINT) -> SMALLINT
+        trunc(INTEGER) -> INTEGER
+        trunc(BIGINT) -> BIGINT
+        trunc(HUGEINT) -> HUGEINT
+        trunc(FLOAT) -> FLOAT
+        trunc(DOUBLE) -> DOUBLE
+        trunc(DECIMAL) -> DECIMAL
+        trunc(UTINYINT) -> UTINYINT
+        trunc(USMALLINT) -> USMALLINT
+        trunc(UINTEGER) -> UINTEGER
+        trunc(UBIGINT) -> UBIGINT
+        trunc(UHUGEINT) -> UHUGEINT
 
-LINE 4:        MAKEDATE(UPDTYY, UPDTMM, UPDTDD) AS RECDT
+
+LINE 7:        CAST(TRUNC(PHONEPREV) AS BIGINT) AS PHONEPREV,
 
 program:
 import duckdb
