@@ -1,107 +1,201 @@
 import duckdb
 import pyarrow.parquet as pq
-import pyarrow as pa
-from datetime import date
+import pandas as pd
+from pathlib import Path
 
-# -----------------------------
-# CONFIGURATION
-# -----------------------------
-insfile_path = 'EBANK.BRANCH.OFFICER.COMBINE.parquet'  # Input Parquet
-txt_output_path = 'BRANCH_GENERAL_INFO_REPORT.txt'     # Output text file
-parquet_output_path = 'BRANCH_GENERAL_INFO_REPORT.parquet'  # Optional Parquet output
+# =========================
+# Paths
+# =========================
+CTRFILE = "BNMCTR.ACCTDAT1.EDITS.parquet"
+ADDRFILE = "CIS.CUST.DAILY.ADDRESS.parquet"
 
-# -----------------------------
-# DATE VARIABLES
-# -----------------------------
-today = date.today()
-DAY = f"{today.day:02d}"
-MONTH = f"{today.month:02d}"
-YEAR = str(today.year)[2:]  # last 2 digits
+ONELINE_PARQUET = "BNMCTR.ACCTDAT1.ONELINE.parquet"
+ONELINE_TXT = "BNMCTR.ACCTDAT1.ONELINE.txt"
 
-# -----------------------------
-# CONNECT DUCKDB AND LOAD DATA
-# -----------------------------
+OUTFILE2_PARQUET = "BNMCTR.UPDATE.ADR.parquet"
+OUTFILE2_TXT = "BNMCTR.UPDATE.ADR.txt"
+
+# =========================
+# DuckDB Connection
+# =========================
 con = duckdb.connect()
 
+# =========================
+# 1. FORMAT STEP: Expand to 1-line format
+# =========================
+
 con.execute(f"""
-    CREATE OR REPLACE TABLE brfile AS
-    SELECT
-        BANKNBR,
-        CAST(BRNBR AS INTEGER) AS BRNBR,
-        BRABBRV,
-        BRNAME,
-        BRADDRL1,
-        BRADDRL2,
-        BRADDRL3,
-        BRPHONE,
-        CAST(BRSTCODE AS INTEGER) AS BRSTCODE,
-        BRRPS
-    FROM read_parquet('{insfile_path}')
+CREATE OR REPLACE TABLE CTR AS
+SELECT
+    CUSTNO1, TOWN1, POSTCODE1, STATE_ID1, ADDREF1,
+    CUSTNO2, TOWN2, POSTCODE2, STATE_ID2, ADDREF2,
+    CUSTNO3, TOWN3, POSTCODE3, STATE_ID3, ADDREF3,
+    CUSTNO4, TOWN4, POSTCODE4, STATE_ID4, ADDREF4,
+    CUSTNO5, TOWN5, POSTCODE5, STATE_ID5, ADDREF5
+FROM read_parquet('{CTRFILE}');
 """)
 
-branches = con.execute("SELECT * FROM brfile ORDER BY BRNBR").fetchall()
+# Generate ONELINE rows (mimic multiple PUT blocks)
+con.execute("""
+CREATE OR REPLACE TABLE ONELINE AS
 
-# -----------------------------
-# REPORT PARAMETERS
-# -----------------------------
-lines_per_page = 52
-linecnt = 0
-pagecnt = 0
-brcnt = 0
-report_lines = []
+SELECT CUSTNO1 AS ONE_CUSTNO,
+       TOWN1   AS ONE_TOWN,
+       POSTCODE1 AS ONE_POSTCODE,
+       STATE_ID1 AS ONE_STATE_ID,
+       ADDREF1 AS ADDREF
+FROM CTR WHERE CUSTNO1 <> ''
 
-def print_page_header(banknbr, pagecnt):
-    bankname = 'UNKNOWN BANK'
-    if banknbr == 'B':
-        bankname = 'PUBLIC BANK BERHAD'
-    elif banknbr == 'F':
-        bankname = 'PUBLIC FINANCE BERHAD'
+UNION ALL
+SELECT CUSTNO2, TOWN2, POSTCODE2, STATE_ID2, ADDREF2
+FROM CTR WHERE CUSTNO2 <> ''
 
-    header = [
-        f"REPORT ID   : BNKCTL/BR/FILE/RPTS{'':55}{bankname:<20}PAGE        : {pagecnt:4}",
-        f"PROGRAM ID  : CIBRRPTB{'':70}REPORT DATE : {DAY}/{MONTH}/{YEAR}",
-        f"{'':52}BRANCH GENERAL INFO REPORT",
-        f"{'':52}==========================",
-        "",
-        f"  BR NBR  ABBRV  NAME                 ADDRESS                            PHONE       STATE CODE",
-        f"  ------  -----  ----                 -------                            -----       ----------"
-    ]
-    return header
+UNION ALL
+SELECT CUSTNO3, TOWN3, POSTCODE3, STATE_ID3, ADDREF3
+FROM CTR WHERE CUSTNO3 <> ''
 
-# -----------------------------
-# GENERATE REPORT
-# -----------------------------
-for row in branches:
-    banknbr, brnbr, brabbrv, brname, addr1, addr2, addr3, phone, brstcode, brrps = row
+UNION ALL
+SELECT CUSTNO4, TOWN4, POSTCODE4, STATE_ID4, ADDREF4
+FROM CTR WHERE CUSTNO4 <> ''
 
-    # Check page break
-    if linecnt == 0 or linecnt >= lines_per_page:
-        pagecnt += 1
-        report_lines.extend(print_page_header(banknbr, pagecnt))
-        linecnt = 8  # header lines
+UNION ALL
+SELECT CUSTNO5, TOWN5, POSTCODE5, STATE_ID5, ADDREF5
+FROM CTR WHERE CUSTNO5 <> '';
+""")
 
-    # Branch info (exact SAS formatting)
-    report_lines.append(f"{brnbr:>7}  {brabbrv:<3}  {brname:<20}  {addr1:<35}  {phone:<11}  {brstcode:>3}")
-    report_lines.append(f"{'':45}{addr2:<35}")
-    report_lines.append(f"{'':45}{addr3:<35}")
+# Save parquet version
+con.execute(f"COPY ONELINE TO '{ONELINE_PARQUET}' (FORMAT PARQUET);")
 
-    linecnt += 6  # SAS adds 6 per branch (3 lines plus spacing)
-    brcnt += 1
+# =========================
+# 1b. Write fixed-width ONELINE txt
+# =========================
 
-# Add total at end
-report_lines.append(f"\nTOTAL NUMBER OF BRANCH = {brcnt:4d}")
+df_oneline = con.execute("SELECT * FROM ONELINE").df()
 
-# -----------------------------
-# WRITE TXT REPORT
-# -----------------------------
-with open(txt_output_path, 'w') as f:
-    for line in report_lines:
-        f.write(line + '\n')
+with open(ONELINE_TXT, "w", encoding="utf-8") as f:
+    for _, row in df_oneline.iterrows():
+        line = (
+            f"{str(row.ONE_CUSTNO):<11}"
+            f"{str(row.ONE_TOWN):<30}"
+            f"{str(row.ONE_POSTCODE):<5}"
+            f"{str(row.ONE_STATE_ID):<2}"
+            f"{str(int(row.ADDREF)).zfill(11)}"
+        )
+        f.write(line + "\n")
 
-# -----------------------------
-# WRITE PARQUET (OPTIONAL)
-# -----------------------------
-table = pa.Table.from_pandas(con.execute("SELECT * FROM brfile ORDER BY BRNBR").fetch_df())
-pq.write_table(table, parquet_output_path)
+print("ONELINE file created.")
 
-print(f"Report generated: {txt_output_path}")
+
+# =========================
+# 2. ADDRESS FILE PROCESS
+# =========================
+
+con.execute(f"""
+CREATE OR REPLACE TABLE ADDR AS
+SELECT DISTINCT
+    ADDREF,
+    CITY,
+    STATEX,
+    STATEID,
+    ZIP,
+    ZIP2,
+    COUNTRY
+FROM read_parquet('{ADDRFILE}');
+""")
+
+# =========================
+# 3. ONE Processing
+# =========================
+
+con.execute("""
+CREATE OR REPLACE TABLE ONE AS
+SELECT
+    ONE_CUSTNO,
+    ONE_TOWN,
+    ONE_POSTCODE,
+    ONE_STATE_ID,
+    ADDREF,
+    'MALAYSIA' AS ONE_COUNTRY,
+
+    CASE ONE_STATE_ID
+        WHEN '01' THEN 'JOH'
+        WHEN '02' THEN 'KED'
+        WHEN '03' THEN 'KEL'
+        WHEN '04' THEN 'MEL'
+        WHEN '05' THEN 'NEG'
+        WHEN '06' THEN 'PAH'
+        WHEN '07' THEN 'PUL'
+        WHEN '08' THEN 'PRK'
+        WHEN '09' THEN 'PER'
+        WHEN '10' THEN 'SAB'
+        WHEN '11' THEN 'SAR'
+        WHEN '12' THEN 'SEL'
+        WHEN '13' THEN 'TER'
+        WHEN '14' THEN 'KUL'
+        WHEN '15' THEN 'LAB'
+        WHEN '16' THEN 'PUT'
+        ELSE NULL
+    END AS ONE_STATE_CODE
+
+FROM ONELINE
+WHERE ONE_STATE_ID NOT IN ('17', '  ');
+""")
+
+
+# =========================
+# 4. MERGE Step
+# =========================
+
+con.execute("""
+CREATE OR REPLACE TABLE MERGE AS
+SELECT *
+FROM ONE O
+LEFT JOIN ADDR A
+ON O.ADDREF = A.ADDREF
+WHERE NOT (
+    O.ONE_TOWN       = A.CITY
+AND O.ONE_POSTCODE  = A.ZIP
+AND O.ONE_STATE_CODE= A.STATEX
+AND O.ONE_COUNTRY   = A.COUNTRY
+);
+""")
+
+
+# =========================
+# 5. Final Output File
+# =========================
+
+con.execute(f"""
+CREATE OR REPLACE TABLE OUT3 AS
+SELECT
+    ONE_CUSTNO,
+    ADDREF,
+    ONE_TOWN,
+    ONE_STATE_CODE,
+    ONE_POSTCODE,
+    ONE_COUNTRY
+FROM MERGE
+GROUP BY ALL;
+""")
+
+# Save parquet
+con.execute(f"COPY OUT3 TO '{OUTFILE2_PARQUET}' (FORMAT PARQUET);")
+
+# =========================
+# 5b. Write fixed-width OUTFILE txt
+# =========================
+df_out = con.execute("SELECT * FROM OUT3").df()
+
+with open(OUTFILE2_TXT, "w", encoding="utf-8") as f:
+    for _, row in df_out.iterrows():
+        line = (
+            f"{str(row.ONE_CUSTNO):<11}"
+            f"{str(row.ADDREF):<11}"
+            f"{str(row.ONE_TOWN):<25}"
+            f"{str(row.ONE_STATE_CODE):<3}"
+            f"{str(row.ONE_POSTCODE):<5}"
+            f"{str(row.ONE_COUNTRY):<10}"
+        )
+        f.write(line + "\n")
+
+print("UPDATE.ADR output created.")
