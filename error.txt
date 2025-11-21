@@ -1,8 +1,7 @@
 error:
-line 40, in <module>
-    con.execute(f"""
-duckdb.duckdb.ConversionException: Conversion Error: Could not convert string '\0\0\0\0
-                                                                                       \0\0\0' to DOUBLE when casting from source column PHONEPREV
+line 81, in <module>
+    report_lines.append(f"{'':45}{addr3:<35}")
+TypeError: unsupported format string passed to NoneType.__format__
 
 program:
 import duckdb
