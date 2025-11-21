@@ -7,25 +7,6 @@ year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
 curdt = batch_date.strftime("%Y%m%d")
 
-#---------------------------------------------------------------------#
-# Original Program: CIBMSPEN                                          #
-#---------------------------------------------------------------------#
-# GET BEFORE AND AFTER EFFECT OF PHONE NUMBERS                        #
-# IMPL       ESMR      DESC                                           #
-# ========== ========= ========================================       #
-# 09/02/2010 2009-1889 UPDATE PHONE NUMBER (ATM)                      #
-# 19/05/2010 2010-733  PB BANK CARD/DAY2DAY SCREEN : INCL CONTACTNO   #
-# 28/07/2010 2010-2215 PROMPT PHONE UPDATE TO ALL ATM TRX TYPES.      #
-# 29/07/2010 2010-1013 UPDATE PHONE NUMBER (EBANK) CIPHONET TABLE     #
-# 05/10/2010 2010-2314 VALIDATE EBANK/ATM PHONE NUMBER                #
-# 26/11/2010 2010-1324 UPDATE PHONE NUMBER (OTC)                      #
-# 05/01/2011 2010-4144 VALIDATION LOGIC FOR PB BANK CARD/DAY2DAY      #
-# 28/03/2011 2011-0502 BLOCK TETI IS PHONE NOT UPDATED                #
-# 21/10/2011 2011-3172 OTC/CASH WITHDRAWAL FD FIXES                   #
-#            2011-3700 ADD NEW FIELD - PHONE NEW (CURRENT CHG)        #
-# 20/04/2012 A2012-7142 INCREASE REGION SIZE FROM 64M TO 256M         #
-#---------------------------------------------------------------------#
-
 # =====================================================
 # FILE PATHS (CHANGE THESE TO YOUR ACTUAL PARQUET FILES)
 # =====================================================
