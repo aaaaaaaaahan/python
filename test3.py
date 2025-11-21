@@ -5,7 +5,8 @@ from CIS_PY_READER import host_parquet_path, parquet_output_path, csv_output_pat
 batch_date = (datetime.date.today() - datetime.timedelta(days=1))
 year, month, day = batch_date.year, batch_date.month, batch_date.day
 report_date = batch_date.strftime("%d-%m-%Y")
-curdt = batch_date.strftime("%Y%m%d")
+#curdt = batch_date.strftime("%Y%m%d")
+curdt = 20211101
 
 #---------------------------------------------------------------------#
 # Original Program: CIBMSPEN                                          #
@@ -41,10 +42,9 @@ CREATE OR REPLACE TABLE PHONE AS
 SELECT *,
        TRXAPPLNO AS TRXACCTDP,
        TRXAPPLCODE AS TRXAPPL,
-       NEWPHONE AS PHONENEW,
-       LPAD(CAST(UPDTYY AS VARCHAR),4,'0') ||
-       LPAD(CAST(UPDTMM AS VARCHAR),2,'0') ||
-       LPAD(CAST(UPDTDD AS VARCHAR),2,'0') AS RECDT
+       LPAD(CAST(CAST(NEWPHONE AS BIGINT) AS VARCHAR),12,'0') AS PHONENEW,
+       PHONEPREV,
+       STRFTIME(MAKE_DATE(CAST(UPDTYY AS INTEGER), CAST(UPDTMM AS INTEGER), CAST(UPDTDD AS INTEGER)), '%Y%m%d') AS RECDT
 FROM '{host_parquet_path("UNLOAD_CIPHONET_FB.parquet")}'
 WHERE UPDSOURCE <> 'INIT'
   AND RECDT = {curdt}
@@ -146,7 +146,7 @@ SELECT
     ALIASKEY,
     ALIAS,
 
-    -- Date format EXACT like SAS: DD/MM/YYYY
+    -- Date format: DD/MM/YYYY
     LPAD(CAST(UPDTDD AS VARCHAR),2,'0') || '/' ||
     LPAD(CAST(UPDTMM AS VARCHAR),2,'0') || '/' ||
     LPAD(CAST(UPDTYY AS VARCHAR),4,'0') AS UPDDATE,
@@ -160,4 +160,4 @@ FROM MRG2
 """)
 
 print("CIS (first 5 rows):")
-print(con.execute("SELECT * FROM PHONE LIMIT 500").fetchdf())
+print(con.execute("SELECT * FROM TEMPOUT LIMIT 500").fetchdf())
